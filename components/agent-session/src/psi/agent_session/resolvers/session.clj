@@ -3,7 +3,9 @@
   (:require
    [clojure.string :as str]
    [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.agent-core.core :as agent]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.message-text :as message-text]
    [psi.agent-session.resolvers.support :as support]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]
@@ -22,6 +24,7 @@
    ::pco/output [:psi.agent-session/session-id
                  :psi.agent-session/session-file
                  :psi.agent-session/session-name
+                 :psi.agent-session/session-display-name
                  :psi.agent-session/context-session-count
                  {:psi.agent-session/context-sessions
                   [:psi.session-info/id
@@ -29,31 +32,41 @@
                    :psi.session-info/cwd
                    :psi.session-info/worktree-path
                    :psi.session-info/name
+                   :psi.session-info/display-name
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
                    :psi.session-info/created]}]}
-  (let [sd       (support/session-data agent-session-ctx)
-        state    @(:state* agent-session-ctx)
-        sessions (get-in state [:agent-session :sessions])
-        hs       (->> (vals sessions)
-                      (map :data)
-                      (filter some?)
-                      (sort-by :session-id)
-                      vec)]
+  (let [resolver-sid (support/resolver-session-id agent-session-ctx)
+        sd           (support/session-data agent-session-ctx)
+        state        @(:state* agent-session-ctx)
+        sessions     (get-in state [:agent-session :sessions])
+        hs           (->> (vals sessions)
+                          (map :data)
+                          (filter some?)
+                          (sort-by :session-id)
+                          vec)
+        messages     (when resolver-sid
+                       (support/agent-core-messages agent-session-ctx))]
     {:psi.agent-session/session-id                 (:session-id sd)
      :psi.agent-session/session-file               (:session-file sd)
      :psi.agent-session/session-name               (:session-name sd)
+     :psi.agent-session/session-display-name       (message-text/session-display-name
+                                                    (:session-name sd)
+                                                    messages)
      :psi.agent-session/context-session-count      (count hs)
      :psi.agent-session/context-sessions
      (mapv (fn [m]
-             {:psi.session-info/id                  (:session-id m)
-              :psi.session-info/path                (:session-file m)
-              :psi.session-info/cwd                 (:worktree-path m)
-              :psi.session-info/worktree-path       (:worktree-path m)
-              :psi.session-info/name                (:session-name m)
-              :psi.session-info/parent-session-id   (:parent-session-id m)
-              :psi.session-info/parent-session-path (:parent-session-path m)
-              :psi.session-info/created             (:created-at m)})
+             (let [sid      (:session-id m)
+                   messages (:messages (agent/get-data-in (ss/agent-ctx-in agent-session-ctx sid)))]
+               {:psi.session-info/id                  sid
+                :psi.session-info/path                (:session-file m)
+                :psi.session-info/cwd                 (:worktree-path m)
+                :psi.session-info/worktree-path       (:worktree-path m)
+                :psi.session-info/name                (:session-name m)
+                :psi.session-info/display-name        (message-text/session-display-name (:session-name m) messages)
+                :psi.session-info/parent-session-id   (:parent-session-id m)
+                :psi.session-info/parent-session-path (:parent-session-path m)
+                :psi.session-info/created             (:created-at m)}))
            hs)}))
 
 ;; ── Phase and streaming state ───────────────────────────

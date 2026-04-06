@@ -14,6 +14,7 @@ value FooterInputs {
     worktree_path: String
     git_branch: String?
     session_name: String?
+    session_display_name: String?
 
     usage_input: Integer
     usage_output: Integer
@@ -63,7 +64,8 @@ rule FooterReadsCanonicalProjectionAttributes {
         "psi.agent-session/worktree_path",
         "psi.agent-session/git-branch",
         "psi.agent-session/session-name",
-        "psi.agent-session/usage-input",
+        "psi.agent-session/session-display-name",
+        "psi.agent-session/usage-input", 
         "psi.agent-session/usage-output",
         "psi.agent-session/usage-cache-read",
         "psi.agent-session/usage-cache-write",
@@ -87,6 +89,7 @@ rule FooterInputsUseSafeFallbacks {
     ensures: FooterInputsFor(footer).worktree_path = FirstNonNull(QueryValue("psi.agent-session/worktree_path"), footer.cwd_fallback, "")
     ensures: FooterInputsFor(footer).git_branch = QueryValue("psi.agent-session/git-branch")
     ensures: FooterInputsFor(footer).session_name = QueryValue("psi.agent-session/session-name")
+    ensures: FooterInputsFor(footer).session_display_name = FirstNonNull(QueryValue("psi.agent-session/session-display-name"), QueryValue("psi.agent-session/session-name"), null)
 
     ensures: FooterInputsFor(footer).usage_input = QueryValueOrDefault("psi.agent-session/usage-input", 0)
     ensures: FooterInputsFor(footer).usage_output = QueryValueOrDefault("psi.agent-session/usage-output", 0)
@@ -111,7 +114,7 @@ rule FooterRendered {
 
     let inputs = FooterInputsFor(footer)
     let context = FooterContextFor(inputs.context_fraction, inputs.context_window, inputs.auto_compaction_enabled)
-    let path_line = FooterPathLine(inputs.worktree_path, inputs.git_branch, inputs.session_name, width)
+    let path_line = FooterPathLine(inputs.worktree_path, inputs.git_branch, inputs.session_display_name, width)
 
     let left_stats = LeftStatsLine(inputs, context)
     let right_stats = RightStatsLine(inputs)

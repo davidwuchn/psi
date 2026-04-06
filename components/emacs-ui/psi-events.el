@@ -137,9 +137,12 @@ If frontend state has no known session id yet, also allow the event."
   "Return display name for session SLOT map.
 
 Supports both event slots (`:id`/`:name`) and backend command payloads
-(`:session-id`/`:session-name`). Uses name if non-empty, else falls back to
-`(session <8-char id prefix>)`."
-  (let ((name (psi-emacs--event-data-get slot '(:name name
+(`:session-id`/`:session-name`). Prefers explicit display/name fields, else
+falls back to `(session <8-char id prefix>)`."
+  (let ((name (psi-emacs--event-data-get slot '(:display-name display-name
+                                                :session-display-name session-display-name
+                                                :sessionDisplayName sessionDisplayName
+                                                :name name
                                                 :session-name session-name
                                                 :sessionName sessionName))))
     (if (and (stringp name) (not (string-empty-p (string-trim name))))

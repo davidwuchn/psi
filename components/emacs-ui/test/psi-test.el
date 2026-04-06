@@ -552,6 +552,9 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (setf (psi-emacs-state-rpc-client psi-emacs--state)
+          (psi-rpc-make-client :process-state 'running :transport-state 'ready))
+    (setf (psi-emacs-state-transport-state psi-emacs--state) 'ready)
     (unwind-protect
         (progn
           (insert "prefix\nTAIL")
@@ -567,6 +570,8 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (setf (psi-emacs-state-rpc-client psi-emacs--state)
+          (psi-rpc-make-client :process-state 'running :transport-state 'ready))
     (unwind-protect
         (progn
           (insert "transcript\n")
@@ -1301,9 +1306,11 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (setf (psi-emacs-state-rpc-client psi-emacs--state)
+          (psi-rpc-make-client :process-state 'running :transport-state 'ready))
+    (setf (psi-emacs-state-transport-state psi-emacs--state) 'ready)
     (unwind-protect
-        (let ((rpc-calls nil)
-              (cleared-before-replay nil))
+        (let ((rpc-calls nil))
           (insert "old transcript")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state)
                 (copy-marker (1+ (length "old transcript")) nil))
@@ -1318,26 +1325,33 @@
                          (funcall callback
                                   '((:kind . :response)
                                     (:ok . t)
-                                    (:data . ((:session-id . "s-new"))))))
+                                    (:data . ((:session-id . "s-new")))))
+                         t)
                         ((and callback (equal op "get_messages"))
-                         (setq cleared-before-replay
-                               (and (not (string-match-p "old transcript" (buffer-string)))
-                                    (null (psi-emacs-state-last-error psi-emacs--state))
-                                    (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
                          (funcall callback
                                   '((:kind . :response)
                                     (:ok . t)
                                     (:data . ((:messages .
                                               [((:role . :user) (:text . "First"))
-                                               ((:role . :assistant) (:text . "Second"))]))))))))))
+                                               ((:role . :assistant) (:text . "Second"))])))))
+                         t)
+                        ((and callback (equal op "query_eql"))
+                         (funcall callback
+                                  '((:kind . :response)
+                                    (:ok . t)
+                                    (:data . ((:result . ((:psi.agent-session/tool-lifecycle-summaries . [])
+                                                          (:psi.turn/is-streaming . nil)
+                                                          (:psi.turn/text . nil)
+                                                          (:psi.turn/tool-calls . [])))))))
+                         t)
+                        (t t))))
             (psi-emacs--handle-rpc-event
              '((:event . "command-result")
                (:data . ((:type . "session_switch")
                          (:session-id . "s-new"))))))
           (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '("switch_session" "get_messages") (mapcar #'car rpc-calls)))
+          (should (equal '("switch_session" "get_messages" "query_eql") (mapcar #'car rpc-calls)))
           (should (equal '((:session-id . "s-new")) (cadr (car rpc-calls))))
-          (should cleared-before-replay)
           (should (string-prefix-p "User: First
 ψ: Second
 " (buffer-string)))
@@ -3438,10 +3452,27 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
              (psi-emacs-state-tool-rows psi-emacs--state))
     (cl-letf (((symbol-value 'psi-emacs--send-request-function)
-               (lambda (_state op params &optional _callback)
-                 (when (equal op "command")
-                   (should (equal '((:text . "/tree s2")) params)))
-                 t)))
+               (lambda (_state op params &optional callback)
+                 (cond
+                  ((equal op "command")
+                   (should (equal '((:text . "/tree s2")) params))
+                   t)
+                  ((and callback (equal op "get_messages"))
+                   (funcall callback
+                            '((:kind . :response)
+                              (:ok . t)
+                              (:data . ((:messages . [((:role . :assistant) (:text . "switched"))])))))
+                   t)
+                  ((and callback (equal op "query_eql"))
+                   (funcall callback
+                            '((:kind . :response)
+                              (:ok . t)
+                              (:data . ((:result . ((:psi.agent-session/tool-lifecycle-summaries . [])
+                                                    (:psi.turn/is-streaming . nil)
+                                                    (:psi.turn/text . nil)
+                                                    (:psi.turn/tool-calls . [])))))))
+                   t)
+                  (t t)))))
       (insert (propertize "switch to s2"
                           'psi-widget-command "/tree s2"
                           'keymap psi-emacs--projection-widget-action-keymap))
@@ -3452,11 +3483,6 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
          (:data . ((:session-id . "s2")
                    (:session-file . "/tmp/s2.ndedn")
                    (:message-count . 1)))))
-      (psi-emacs--handle-rpc-event
-       '((:event . "session/rehydrated")
-         (:data . ((:messages . [((:role . :assistant) (:text . "switched"))])
-                   (:tool-calls . ())
-                   (:tool-order . ())))))
       (should-not (string-match-p "old transcript" (buffer-string)))
       (should (string-match-p "ψ: switched\n" (buffer-string)))
       (should (equal "footer" (psi-emacs-state-projection-footer psi-emacs--state)))
@@ -4414,6 +4440,40 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
       (should (equal "switch_session" (caar calls)))
       (should (equal "s2" (alist-get :session-id (cadar calls) nil nil #'equal))))))
 
+(ert-deftest psi-switch-rehydration-query-restores-completed-and-live-session-output ()
+  "Switch rehydration should restore completed tool rows and in-progress stream text.
+
+Regression: after fixing wrong-session event leakage, switching back lost output
+that arrived while another session was selected because the frontend only
+replayed persisted messages."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--replay-session-messages '(((:role . :assistant) (:text . "persisted reply"))))
+    (let ((frame '((:kind . :response)
+                   (:ok . t)
+                   (:data . ((:result . ((:psi.agent-session/tool-lifecycle-summaries .
+                                          [((:psi.tool-lifecycle.summary/tool-id . "tool-1")
+                                            (:psi.tool-lifecycle.summary/tool-name . "bash")
+                                            (:psi.tool-lifecycle.summary/arguments . "{\"command\":\"ls\"}")
+                                            (:psi.tool-lifecycle.summary/parsed-args . nil)
+                                            (:psi.tool-lifecycle.summary/result-text . "tool output")
+                                            (:psi.tool-lifecycle.summary/is-error . nil)
+                                            (:psi.tool-lifecycle.summary/completed? . t))])
+                                         (:psi.turn/is-streaming . t)
+                                         (:psi.turn/text . "live tail")
+                                         (:psi.turn/tool-calls .
+                                          [((:id . "tool-2")
+                                            (:name . "read")
+                                            (:arguments . "{\"path\":\"foo.clj\"}"))]))))))))
+      (psi-emacs--rehydrate-switch-state-from-query-frame psi-emacs--state frame))
+    (let ((text (buffer-string)))
+      (should (string-match-p "persisted reply" text))
+      (should (string-match-p "tool-1 success" text))
+      (should (string-match-p "tool output" text))
+      (should (string-match-p "tool-2 pending" text))
+      (should (string-match-p "ψ: live tail" text))))))
+
 (ert-deftest psi-tree-slash-command-no-op-when-already-active ()
   "'/tree <active-id>' appends a message and sends no RPC."
   (with-temp-buffer
@@ -4473,6 +4533,19 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
   (should (equal "(session abc12345)"
                  (psi-emacs--session-display-name
                   '((:session-id . "abc123456789") (:session-name . nil))))))
+
+(ert-deftest psi-session-display-name-prefers-derived-display-name ()
+  "psi-emacs--session-display-name prefers explicit derived display-name fields."
+  (should (equal "Investigate failing tests"
+                 (psi-emacs--session-display-name
+                  '((:session-id . "abc123456789")
+                    (:session-display-name . "Investigate failing tests")
+                    (:session-name . nil)))))
+  (should (equal "Tree label"
+                 (psi-emacs--session-display-name
+                  '((:id . "abc123456789")
+                    (:display-name . "Tree label")
+                    (:name . nil))))))
 
 (ert-deftest psi-session-clock-label-renders-hour-minute-shape ()
   "session clock labels render HH:MM shape when timestamp is available."

@@ -781,6 +781,7 @@
     (let [q (str/lower-case (str/trim query))]
       (filterv (fn [s]
                  (or (str/includes? (str/lower-case (or (:first-message s) "")) q)
+                     (str/includes? (str/lower-case (or (:display-name s) "")) q)
                      (str/includes? (str/lower-case (or (:name s) "")) q)
                      (str/includes? (str/lower-case (or (:cwd s) "")) q)
                      (str/includes? (str/lower-case (or (:session-id s) "")) q)
@@ -792,6 +793,7 @@
     [:psi.session-info/id
      :psi.session-info/path
      :psi.session-info/name
+     :psi.session-info/display-name
      :psi.session-info/parent-session-id]}])
 
 (defn- session-selector-init
@@ -816,6 +818,7 @@
     {:session-id        (:psi.session-info/id m)
      :path              (:psi.session-info/path m)
      :name              (:psi.session-info/name m)
+     :display-name      (:psi.session-info/display-name m)
      :parent-session-id (:psi.session-info/parent-session-id m)
      :is-streaming      (boolean (or (:psi.session-info/is-streaming m)
                                      (:is-streaming m)))
@@ -2131,6 +2134,7 @@
   [:psi.agent-session/cwd
    :psi.agent-session/git-branch
    :psi.agent-session/session-name
+   :psi.agent-session/session-display-name
    :psi.agent-session/usage-input
    :psi.agent-session/usage-output
    :psi.agent-session/usage-cache-read
@@ -2212,12 +2216,13 @@
 
 (defn- footer-path-line
   [d state width]
-  (let [cwd          (or (:psi.agent-session/cwd d) (:cwd state) "")
-        git-branch   (:psi.agent-session/git-branch d)
-        session-name (:psi.agent-session/session-name d)
-        path0        (replace-home-with-tilde cwd)
-        path1        (if (seq git-branch) (str path0 " (" git-branch ")") path0)
-        path2        (if (seq session-name) (str path1 " • " session-name) path1)]
+  (let [cwd                  (or (:psi.agent-session/cwd d) (:cwd state) "")
+        git-branch           (:psi.agent-session/git-branch d)
+        session-display-name (or (:psi.agent-session/session-display-name d)
+                                 (:psi.agent-session/session-name d))
+        path0                (replace-home-with-tilde cwd)
+        path1                (if (seq git-branch) (str path0 " (" git-branch ")") path0)
+        path2                (if (seq session-display-name) (str path1 " • " session-display-name) path1)]
     (charm/render dim-style (middle-truncate path2 (max 1 width)))))
 
 (defn- footer-left-parts
@@ -2501,10 +2506,11 @@
 (defn- selector-label-base
   [info]
   (let [sid-str (some-> (:session-id info) str)]
-    (-> (or (:name info)
+    (-> (or (:display-name info)
+            (:name info)
+            (:first-message info)
             (when sid-str
               (str "session-" (subs sid-str 0 (min 8 (count sid-str)))))
-            (:first-message info)
             "(empty)")
         (str/replace #"\n" " "))))
 

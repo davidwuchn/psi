@@ -243,6 +243,7 @@ surface TuiResumeSelectorContract {
         -- /resume opens from a backend-requested frontend action for selector-capable runtimes.
         -- Selector starts in current-project scope; Tab toggles current/all.
         -- Search is case-insensitive over session name, first message, and worktree_path.
+        -- Live `/tree` session rows may prefer a derived display-name over persisted session name.
         -- Selection index is clamped after every scope/search/list change.
         -- Enter rehydrates transcript + tool rows from resume callback output.
         -- Escape cancels; Ctrl+C exits.

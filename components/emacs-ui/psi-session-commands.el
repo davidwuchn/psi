@@ -582,6 +582,119 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
      ((listp messages) messages)
      (t nil))))
 
+(defun psi-emacs--frame-result-map (frame)
+  "Extract `:result` map from a successful `query_eql` FRAME, or nil."
+  (let ((data (alist-get :data frame nil nil #'equal)))
+    (and (listp data)
+         (alist-get :result data nil nil #'equal))))
+
+(defun psi-emacs--rehydrate-switch-query ()
+  "Return EQL query for switch-time transcript + live turn reconstruction."
+  "[:psi.agent-session/messages
+    {:psi.agent-session/tool-lifecycle-summaries
+     [:psi.tool-lifecycle.summary/tool-id
+      :psi.tool-lifecycle.summary/tool-name
+      :psi.tool-lifecycle.summary/arguments
+      :psi.tool-lifecycle.summary/parsed-args
+      :psi.tool-lifecycle.summary/result-text
+      :psi.tool-lifecycle.summary/is-error
+      :psi.tool-lifecycle.summary/completed?]}
+    :psi.turn/phase
+    :psi.turn/is-streaming
+    :psi.turn/text
+    {:psi.turn/tool-calls [:id :name :arguments]}
+    :psi.turn/tool-call-count]")
+
+(defun psi-emacs--rehydrate-switch-extras-query ()
+  "Return EQL query for switch-time non-message reconstruction only."
+  "[{:psi.agent-session/tool-lifecycle-summaries
+     [:psi.tool-lifecycle.summary/tool-id
+      :psi.tool-lifecycle.summary/tool-name
+      :psi.tool-lifecycle.summary/arguments
+      :psi.tool-lifecycle.summary/parsed-args
+      :psi.tool-lifecycle.summary/result-text
+      :psi.tool-lifecycle.summary/is-error
+      :psi.tool-lifecycle.summary/completed?]}
+    :psi.turn/phase
+    :psi.turn/is-streaming
+    :psi.turn/text
+    {:psi.turn/tool-calls [:id :name :arguments]}
+    :psi.turn/tool-call-count]")
+
+(defun psi-emacs--rehydrate-tool-summaries (tool-summaries)
+  "Replay completed TOOL-SUMMARIES into tool rows."
+  (dolist (summary tool-summaries)
+    (when (listp summary)
+      (let ((tool-id (or (alist-get :psi.tool-lifecycle.summary/tool-id summary nil nil #'equal)
+                         (alist-get 'psi.tool-lifecycle.summary/tool-id summary nil nil #'equal)))
+            (tool-name (or (alist-get :psi.tool-lifecycle.summary/tool-name summary nil nil #'equal)
+                           (alist-get 'psi.tool-lifecycle.summary/tool-name summary nil nil #'equal)))
+            (arguments (or (alist-get :psi.tool-lifecycle.summary/arguments summary nil nil #'equal)
+                           (alist-get 'psi.tool-lifecycle.summary/arguments summary nil nil #'equal)))
+            (parsed-args (or (alist-get :psi.tool-lifecycle.summary/parsed-args summary nil nil #'equal)
+                             (alist-get 'psi.tool-lifecycle.summary/parsed-args summary nil nil #'equal)))
+            (result-text (or (alist-get :psi.tool-lifecycle.summary/result-text summary nil nil #'equal)
+                             (alist-get 'psi.tool-lifecycle.summary/result-text summary nil nil #'equal)
+                             ""))
+            (is-error (or (alist-get :psi.tool-lifecycle.summary/is-error summary nil nil #'equal)
+                          (alist-get 'psi.tool-lifecycle.summary/is-error summary nil nil #'equal)))
+            (completed? (or (alist-get :psi.tool-lifecycle.summary/completed? summary nil nil #'equal)
+                            (alist-get 'psi.tool-lifecycle.summary/completed? summary nil nil #'equal))))
+        (when (and tool-id completed?)
+          (psi-emacs--upsert-tool-row tool-id "result" result-text tool-name arguments parsed-args is-error nil))))))
+
+(defun psi-emacs--rehydrate-live-turn-tool-calls (tool-calls)
+  "Replay in-progress TOOL-CALLS into pending tool rows."
+  (dolist (tool-call tool-calls)
+    (when (listp tool-call)
+      (let ((tool-id (or (alist-get :id tool-call nil nil #'equal)
+                         (alist-get 'id tool-call nil nil #'equal)))
+            (tool-name (or (alist-get :name tool-call nil nil #'equal)
+                           (alist-get 'name tool-call nil nil #'equal)))
+            (arguments (or (alist-get :arguments tool-call nil nil #'equal)
+                           (alist-get 'arguments tool-call nil nil #'equal)
+                           "")))
+        (when tool-id
+          (psi-emacs--upsert-tool-row tool-id "start" "" tool-name arguments nil nil nil))))))
+
+(defun psi-emacs--rehydrate-switch-state-from-query-frame (state frame)
+  "Restore transcript-adjacent switch state for STATE from `query_eql` FRAME."
+  (when (and state (eq state psi-emacs--state))
+    (let* ((result (psi-emacs--frame-result-map frame))
+           (messages (or (alist-get :psi.agent-session/messages result nil nil #'equal)
+                         (alist-get 'psi.agent-session/messages result nil nil #'equal)
+                         '()))
+           (tool-summaries (or (alist-get :psi.agent-session/tool-lifecycle-summaries result nil nil #'equal)
+                               (alist-get 'psi.agent-session/tool-lifecycle-summaries result nil nil #'equal)
+                               '()))
+           (turn-is-streaming (or (alist-get :psi.turn/is-streaming result nil nil #'equal)
+                                  (alist-get 'psi.turn/is-streaming result nil nil #'equal)))
+           (turn-text (or (alist-get :psi.turn/text result nil nil #'equal)
+                          (alist-get 'psi.turn/text result nil nil #'equal)))
+           (turn-tool-calls (or (alist-get :psi.turn/tool-calls result nil nil #'equal)
+                                (alist-get 'psi.turn/tool-calls result nil nil #'equal)
+                                '())))
+      (psi-emacs--replay-session-messages
+       (cond
+        ((vectorp messages) (append messages nil))
+        ((listp messages) messages)
+        (t nil)))
+      (psi-emacs--rehydrate-tool-summaries
+       (cond
+        ((vectorp tool-summaries) (append tool-summaries nil))
+        ((listp tool-summaries) tool-summaries)
+        (t nil)))
+      (when turn-is-streaming
+        (psi-emacs--rehydrate-live-turn-tool-calls
+         (cond
+          ((vectorp turn-tool-calls) (append turn-tool-calls nil))
+          ((listp turn-tool-calls) turn-tool-calls)
+          (t nil)))
+        (when (and (stringp turn-text)
+                   (not (string-empty-p turn-text)))
+          (setf (psi-emacs-state-assistant-in-progress state) turn-text)
+          (psi-emacs--assistant-delta turn-text))))))
+
 (defun psi-emacs--message-text-from-content (content)
   "Extract display text from message CONTENT payload."
   (cond
@@ -652,9 +765,12 @@ since the backend serialises role as the string \"user\" which
     (when follow-anchor
       (psi-emacs--set-draft-anchor-to-end))))
 
-(defun psi-emacs--request-get-messages-for-switch (state)
-  "Request `get_messages` and replay transcript for switched STATE."
+(defun psi-emacs--request-switch-rehydration (state)
+  "Request transcript + tool/live-turn rehydration for switched STATE."
   (let ((buffer (current-buffer)))
+    ;; Keep canonical message replay on get_messages, then layer in non-message
+    ;; reconstruction from query_eql so output produced while another session was
+    ;; selected becomes visible when switching back.
     (psi-emacs--dispatch-request
      "get_messages"
      nil
@@ -664,8 +780,16 @@ since the backend serialises role as the string \"user\" which
            (when (eq state psi-emacs--state)
              (psi-emacs--replay-session-messages
               (psi-emacs--frame-messages-list messages-frame))
-             (psi-emacs--set-run-state state 'idle)
-             (psi-emacs--refresh-header-line))))))))
+             (psi-emacs--dispatch-request
+              "query_eql"
+              `((:query . ,(psi-emacs--rehydrate-switch-extras-query)))
+              (lambda (frame)
+                (when (buffer-live-p buffer)
+                  (with-current-buffer buffer
+                    (when (eq state psi-emacs--state)
+                      (psi-emacs--rehydrate-switch-state-from-query-frame state frame)
+                      (psi-emacs--set-run-state state 'idle)
+                      (psi-emacs--refresh-header-line)))))))))))))
 
 (defun psi-emacs--switch-session-error-message (frame)
   "Return deterministic `/resume` switch failure text derived from FRAME."
@@ -704,7 +828,7 @@ Failure path appends deterministic assistant-visible feedback, sets
           (when (fboundp 'psi-emacs--focus-input-area)
             (psi-emacs--focus-input-area (current-buffer)))
           (psi-emacs--set-run-state state 'streaming)
-          (psi-emacs--request-get-messages-for-switch state))
+          (psi-emacs--request-switch-rehydration state))
       (let ((message (psi-emacs--switch-session-error-message frame)))
         (psi-emacs--append-assistant-message message)
         (psi-emacs--set-last-error state message)))))

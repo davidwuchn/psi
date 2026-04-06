@@ -143,3 +143,33 @@
                  errors (into errors))]
     (when (seq parts)
       (str/join "\n" parts))))
+
+(def ^:private default-display-name-max-chars 48)
+
+(defn short-display-text
+  "Normalize whitespace in `text` and truncate to a compact single-line display form."
+  ([text]
+   (short-display-text text default-display-name-max-chars))
+  ([text max-chars]
+   (let [normalized (some-> text
+                            str
+                            (str/replace #"\s+" " ")
+                            str/trim)]
+     (when (seq normalized)
+       (if (> (count normalized) max-chars)
+         (str (subs normalized 0 (max 1 (dec max-chars))) "…")
+         normalized)))))
+
+(defn last-user-message-text
+  "Return the most recent user message text from agent-core `messages`, or nil."
+  [messages]
+  (some->> (reverse (vec (or messages [])))
+           (some (fn [msg]
+                   (when (= "user" (:role msg))
+                     (short-display-text (content-text (:content msg))))))))
+
+(defn session-display-name
+  "Return live display name from explicit `session-name` or the latest user message."
+  [session-name messages]
+  (or (short-display-text session-name)
+      (last-user-message-text messages)))

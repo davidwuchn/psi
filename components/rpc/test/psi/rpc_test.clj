@@ -95,6 +95,7 @@
                                   {:psi.agent-session/cwd cwd
                                    :psi.agent-session/git-branch "master"
                                    :psi.agent-session/session-name "xhig"
+                                   :psi.agent-session/session-display-name "xhig"
                                    :psi.agent-session/usage-input 172000
                                    :psi.agent-session/usage-output 17000
                                    :psi.agent-session/usage-cache-read 5200000
@@ -123,6 +124,36 @@
       (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
              (:status-line payload))))))
 
+(deftest footer-updated-payload-prefers-session-display-name-test
+  (testing "footer payload uses derived display name when explicit session name is absent"
+    (let [home    (System/getProperty "user.home")
+          cwd     (str home "/projects/hugoduncan/psi/psi-main")
+          [ctx _] (create-session-context {:cwd cwd})
+          payload (with-redefs [session/query-in
+                                (fn [_ctx q]
+                                  (is (= @#'rpc.events/footer-query q))
+                                  {:psi.agent-session/cwd cwd
+                                   :psi.agent-session/git-branch "master"
+                                   :psi.agent-session/session-name nil
+                                   :psi.agent-session/session-display-name "Investigate failing tests"
+                                   :psi.agent-session/usage-input 0
+                                   :psi.agent-session/usage-output 0
+                                   :psi.agent-session/usage-cache-read 0
+                                   :psi.agent-session/usage-cache-write 0
+                                   :psi.agent-session/usage-cost-total 0.0
+                                   :psi.agent-session/context-fraction nil
+                                   :psi.agent-session/context-window 272000
+                                   :psi.agent-session/auto-compaction-enabled false
+                                   :psi.agent-session/model-provider "openai-codex"
+                                   :psi.agent-session/model-id "gpt-5.3-codex"
+                                   :psi.agent-session/model-reasoning true
+                                   :psi.agent-session/thinking-level :high
+                                   :psi.agent-session/effective-reasoning-effort "high"
+                                   :psi.ui/statuses []})]
+                    (rpc.events/footer-updated-payload ctx))]
+      (is (= "~/projects/hugoduncan/psi/psi-main (master) • Investigate failing tests"
+             (:path-line payload))))))
+
 (deftest session-updated-payload-includes-model-metadata-test
   (testing "session payload includes model metadata for frontend header projection"
     (let [[ctx _] (create-session-context {:session-defaults {:session-id "sess-123"
@@ -144,6 +175,14 @@
       (is (= "high" (:effective-reasoning-effort payload)))
       (is (= 2 (:pending-message-count payload)))
       (is (= 2 (:retry-attempt payload))))))
+
+(deftest session-updated-payload-includes-derived-session-display-name-test
+  (testing "session payload includes derived display name from latest user message"
+    (let [[ctx sid] (create-session-context)
+          _         (runtime/journal-user-message-in! ctx sid "Investigate failing tests in RPC footer" nil)
+          payload   (rpc.events/session-updated-payload ctx sid)]
+      (is (= "Investigate failing tests in RPC footer"
+             (:session-display-name payload))))))
 
 (deftest run-stdio-loop-validates-request-envelopes-test
   (testing "returns canonical protocol/transport errors for invalid input frames"

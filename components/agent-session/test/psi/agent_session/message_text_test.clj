@@ -27,3 +27,27 @@
          (message-text/content-display-text
           {:kind :structured
            :blocks [{:kind :error :text "broken"}]}))))
+
+(deftest short-display-text-normalizes-and-truncates-test
+  (is (= "hello world"
+         (message-text/short-display-text " hello\n\tworld  ")))
+  (is (= "abcd…"
+         (message-text/short-display-text "abcdef" 5))))
+
+(deftest last-user-message-text-picks-most-recent-user-message-test
+  (is (= "latest user text"
+         (message-text/last-user-message-text
+          [{:role "user" :content [{:type :text :text "first"}]}
+           {:role "assistant" :content [{:type :text :text "reply"}]}
+           {:role "user" :content [{:type :text :text "latest  user\ntext"}]}]))))
+
+(deftest session-display-name-prefers-explicit-name-over-last-user-message-test
+  (is (= "Named"
+         (message-text/session-display-name
+          "Named"
+          [{:role "user" :content [{:type :text :text "ignored"}]}])))
+  (is (= "latest"
+         (message-text/session-display-name
+          nil
+          [{:role "user" :content [{:type :text :text "latest"}]}])))
+  (is (nil? (message-text/session-display-name nil []))))

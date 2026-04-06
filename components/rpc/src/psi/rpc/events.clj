@@ -2,6 +2,7 @@
   "RPC event topics and payload projection helpers."
   (:require
    [clojure.string :as str]
+   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.session-state :as ss]
@@ -150,13 +151,16 @@
   ([ctx]
    (session-updated-payload ctx (default-session-id-in ctx)))
   ([ctx session-id]
-   (let [sd               (ss/get-session-data-in ctx session-id)
-         model            (:model sd)
-         thinking-level   (:thinking-level sd)
-         effective-effort (effective-reasoning-effort model thinking-level)]
+   (let [sd                 (ss/get-session-data-in ctx session-id)
+         model              (:model sd)
+         thinking-level     (:thinking-level sd)
+         effective-effort   (effective-reasoning-effort model thinking-level)
+         messages           (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))
+         session-display-name (message-text/session-display-name (:session-name sd) messages)]
      {:session-id                  (:session-id sd)
       :session-file                (:session-file sd)
       :session-name                (:session-name sd)
+      :session-display-name        session-display-name
       :phase                       (some-> (ss/sc-phase-in ctx (:session-id sd)) name)
       :is-streaming                (boolean (:is-streaming sd))
       :is-compacting               (boolean (:is-compacting sd))
@@ -198,10 +202,16 @@
                                 (sort-by (juxt :updated-at :session-id))
                                 vec)
                            [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at :updated-at])])
+        current-display-name (message-text/session-display-name
+                              (:session-name sd)
+                              (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id))))
         active-id*       (or active-id current-id)
         slots            (mapv (fn [m]
                                  {:id                (:session-id m)
                                   :name              (:session-name m)
+                                  :display-name      (if (= (:session-id m) current-id)
+                                                       current-display-name
+                                                       (message-text/short-display-text (:session-name m)))
                                   :worktree-path     (:worktree-path m)
                                   :is-streaming      (boolean
                                                       (and (= (:session-id m) current-id)
@@ -218,6 +228,7 @@
   [:psi.agent-session/cwd
    :psi.agent-session/git-branch
    :psi.agent-session/session-name
+   :psi.agent-session/session-display-name
    :psi.agent-session/usage-input
    :psi.agent-session/usage-output
    :psi.agent-session/usage-cache-read
@@ -288,17 +299,18 @@
 
 (defn- footer-path-line
   [ctx session-id d]
-  (let [cwd          (or (:psi.agent-session/cwd d)
-                         (ss/effective-cwd-in ctx session-id)
-                         "")
-        git-branch   (:psi.agent-session/git-branch d)
-        session-name (:psi.agent-session/session-name d)
-        path0        (replace-home-with-tilde cwd)
-        path1        (if (seq git-branch)
-                       (str path0 " (" git-branch ")")
-                       path0)]
-    (if (seq session-name)
-      (str path1 " • " session-name)
+  (let [cwd                  (or (:psi.agent-session/cwd d)
+                                 (ss/effective-cwd-in ctx session-id)
+                                 "")
+        git-branch           (:psi.agent-session/git-branch d)
+        session-display-name (or (:psi.agent-session/session-display-name d)
+                                 (:psi.agent-session/session-name d))
+        path0                (replace-home-with-tilde cwd)
+        path1                (if (seq git-branch)
+                               (str path0 " (" git-branch ")")
+                               path0)]
+    (if (seq session-display-name)
+      (str path1 " • " session-display-name)
       path1)))
 
 (defn- footer-stats-line

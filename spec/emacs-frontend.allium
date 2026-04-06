@@ -364,6 +364,10 @@ rule ContextUpdatedRendersSessionTreeWidget {
         placement: "left",
         content: SessionTreeWidgetLines(payload.sessions, payload.active_session_id)
     )
+
+    @guidance
+        -- Live tree/session widgets should prefer payload.display_name when present.
+        -- Persisted resume selectors remain description-first over persisted metadata.
 }
 
 rule SessionTreeWidgetLineIsActive {
@@ -418,8 +422,16 @@ rule SessionAgeLabelUsesCompactRelativeUnits {
         -- Frontends may choose compact units like `53m` and `2h`.
 }
 
+rule SessionDisplayNameUsesDerivedDisplayNameWhenPresent {
+    when: SessionDisplayName(slot)
+    requires: slot.display_name != null
+
+    ensures: SessionDisplayName(slot) = slot.display_name
+}
+
 rule SessionDisplayNameUsesNameOrFallback {
     when: SessionDisplayName(slot)
+    requires: slot.display_name = null
     requires: slot.name != null
 
     ensures: SessionDisplayName(slot) = slot.name
@@ -427,6 +439,7 @@ rule SessionDisplayNameUsesNameOrFallback {
 
 rule SessionDisplayNameFallsBackToIdPrefix {
     when: SessionDisplayName(slot)
+    requires: slot.display_name = null
     requires: slot.name = null
 
     ensures: SessionDisplayName(slot) = "(session " + StringPrefix(slot.id, 8) + ")"

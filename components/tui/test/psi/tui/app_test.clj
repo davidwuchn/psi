@@ -327,6 +327,7 @@
                        [{:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"
+                         :psi.session-info/display-name "Root"
                          :psi.session-info/worktree-path "/tmp/psi-test/root"}]})
           [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
                                                               :cwd "/tmp/psi-test"
@@ -369,10 +370,12 @@
                          [{:psi.session-info/id "s1"
                            :psi.session-info/path "/tmp/psi-test/a.ndedn"
                            :psi.session-info/name "Root"
+                           :psi.session-info/display-name "Root"
                            :psi.session-info/worktree-path "/tmp/psi-test/root"}
                           {:psi.session-info/id "s2"
                            :psi.session-info/path "/tmp/psi-test/b.ndedn"
                            :psi.session-info/name "Child"
+                           :psi.session-info/display-name "Child"
                            :psi.session-info/worktree-path "/tmp/psi-test/child"
                            :psi.session-info/parent-session-id "s1"}]})
           [state _]   ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
@@ -403,11 +406,13 @@
                        [{:psi.session-info/id "s2"
                          :psi.session-info/path "/tmp/psi-test/b.ndedn"
                          :psi.session-info/name "Child"
+                         :psi.session-info/display-name "Child"
                          :psi.session-info/worktree-path "/tmp/psi-test/child"
                          :psi.session-info/parent-session-id "s1"}
                         {:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"
+                         :psi.session-info/display-name "Root"
                          :psi.session-info/worktree-path "/tmp/psi-test/root"}]})
           [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
                                                               :cwd "/tmp/psi-test"
@@ -436,10 +441,12 @@
                        [{:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"
+                         :psi.session-info/display-name "Root"
                          :psi.session-info/worktree-path "/tmp/psi-test/root"}
                         {:psi.session-info/id "s2"
                          :psi.session-info/path "/tmp/psi-test/b.ndedn"
                          :psi.session-info/name "Child"
+                         :psi.session-info/display-name "Child"
                          :psi.session-info/worktree-path "/tmp/psi-test/child"
                          :psi.session-info/parent-session-id "s1"
                          :is-streaming true}]})
@@ -466,6 +473,34 @@
       (is (= expected-stream-col stream-col))
       ;; session-id suffix column stays aligned row-to-row
       (is (= root-id-col child-id-col)))))
+
+(deftest tree-selector-view-prefers-display-name-test
+  (testing "tree selector uses derived display-name for live sessions"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          qfn       (fn [_q]
+                      {:psi.agent-session/context-active-session-id "s1"
+                       :psi.agent-session/context-sessions
+                       [{:psi.session-info/id "s1"
+                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                         :psi.session-info/name nil
+                         :psi.session-info/display-name "Investigate failing tests"
+                         :psi.session-info/worktree-path "/tmp/psi-test/root"}
+                        {:psi.session-info/id "s2"
+                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
+                         :psi.session-info/name nil
+                         :psi.session-info/display-name "Refactor selector"
+                         :psi.session-info/worktree-path "/tmp/psi-test/child"
+                         :psi.session-info/parent-session-id "s1"}]})
+          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                              :cwd "/tmp/psi-test"
+                                                              :focus-session-id "s1"}))
+          typed     (type-text update-fn state "/tree")
+          [s1 _]    (update-fn typed (msg/key-press :enter))
+          plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))]
+      (is (str/includes? plain "Investigate failing tests"))
+      (is (str/includes? plain "Refactor selector"))
+      (is (not (str/includes? plain "session-s1")))
+      (is (not (str/includes? plain "session-s2"))))))
 
 ;;;; Update — agent results
 
@@ -797,6 +832,7 @@
                 {:psi.agent-session/cwd "/repo/project"
                  :psi.agent-session/git-branch "master"
                  :psi.agent-session/session-name "session-a"
+                 :psi.agent-session/session-display-name "session-a"
                  :psi.agent-session/usage-input 76000
                  :psi.agent-session/usage-output 3600
                  :psi.agent-session/usage-cache-read 1400000
@@ -824,6 +860,31 @@ clojure-lsp"}]})
       (is (str/includes? out "(openai) gpt-5.3-codex • xhigh"))
       ;; status sort + sanitization (a before b, newline collapsed to space)
       (is (str/includes? out "Clojure-LSP clojure-lsp TS+ESL,Prett")))))
+
+(deftest view-renders-footer-using-session-display-name-test
+  (testing "footer uses derived display name when explicit session name is absent"
+    (let [qfn (fn [_q]
+                {:psi.agent-session/cwd "/repo/project"
+                 :psi.agent-session/git-branch "master"
+                 :psi.agent-session/session-name nil
+                 :psi.agent-session/session-display-name "Investigate failing tests"
+                 :psi.agent-session/usage-input 0
+                 :psi.agent-session/usage-output 0
+                 :psi.agent-session/usage-cache-read 0
+                 :psi.agent-session/usage-cache-write 0
+                 :psi.agent-session/usage-cost-total 0.0
+                 :psi.agent-session/context-fraction nil
+                 :psi.agent-session/context-window 400000
+                 :psi.agent-session/auto-compaction-enabled false
+                 :psi.agent-session/model-provider "openai"
+                 :psi.agent-session/model-id "gpt-5.3-codex"
+                 :psi.agent-session/model-reasoning true
+                 :psi.agent-session/thinking-level :high
+                 :psi.ui/statuses []})
+          init-fn (app/make-init "test-model" qfn nil nil {:cwd "/repo/project"})
+          [state _] (init-fn)
+          out (app/view (assoc state :width 120))]
+      (is (str/includes? out "/repo/project (master) • Investigate failing tests")))))
 
 (deftest view-separators-track-terminal-width-test
   (testing "chat separators render to current terminal width"

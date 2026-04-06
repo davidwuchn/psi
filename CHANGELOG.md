@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-05
+
+- λ Δ Live session displays now project a derived session display name without persisting a real session rename:
+  - added derived `:psi.agent-session/session-display-name` from explicit session name or compact last user message
+  - TUI footer now shows the derived display name for the active live session
+  - TUI `/tree` live session rows now prefer the derived/display-name field too
+  - RPC footer/session update payloads now include the derived display name for live frontend rendering
+  - Emacs live session labels now prefer `display-name` / `session-display-name` before falling back to persisted name or session id prefix
+  - persisted resume/session lists remain unchanged; this only affects live session display surfaces
+- ✓ Verification:
+  - targeted unit tests for message text helpers, TUI footer, and RPC payload projection
+
 ## 2026-04-03
 
 - λ Δ Made tool execution boundary dispatch-owned end-to-end:

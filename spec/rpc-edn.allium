@@ -59,6 +59,7 @@ value ErrorFrame {
 
 value SessionUpdatedPayload {
     id: String
+    session_display_name: String?
     phase: String
     is_streaming: Boolean
     is_compacting: Boolean
@@ -79,6 +80,7 @@ value FooterUpdatedPayload {
 value ContextSessionSlot {
     id: String
     name: String?
+    display_name: String?
     worktree_path: String?
     is_streaming: Boolean
     is_active: Boolean
