@@ -6,6 +6,7 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.ai.models :as ai-models]
+   [psi.agent-core.core :as agent]
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
@@ -1313,7 +1314,40 @@
       ;; Tree direct-switch emits canonical rehydrate event; exact message replay is
       ;; covered by the /resume regression tests.
       (is (vector? (get-in (some #(when (= "session/rehydrated" (:event %)) %) events)
-                           [:data :messages]))))))
+                           [:data :messages])))))
+
+  (testing "switch_session and get_messages derive transcript from ctx journal when agent messages drift"
+    (let [[ctx _]            (create-session-context {:persist? false})
+          sd1                (session/new-session-in! ctx nil {})
+          sid1               (:session-id sd1)
+          canonical-messages [{:role "user" :content "who are you?"}
+                              {:role "assistant" :content [{:type :text :text "I am psi."}]}]
+          _                  (doseq [m canonical-messages]
+                               (ss/journal-append-in! ctx sid1 (persist/message-entry m)))
+          ;; Simulate the regression: the loaded session's canonical journal is
+          ;; correct, but agent-core's cached transcript has drifted.
+          _                  (agent/replace-messages-in! (ss/agent-ctx-in ctx sid1)
+                                                        [{:role "assistant"
+                                                          :content [{:type :text :text "stale in-memory tail"}]}])
+          state              (atom {:ready? true
+                                    :pending {}
+                                    :subscribed-topics #{"session/resumed" "session/rehydrated"}})
+          handler            (make-handler ctx state)
+          input              (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                                  "{:id \"s1\" :kind :request :op \"switch_session\" :params {:session-id \"" sid1 "\"}}\n"
+                                  "{:id \"g1\" :kind :request :op \"get_messages\" :params {:session-id \"" sid1 "\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames             (parse-frames out-lines)
+          rehydrate-event    (some #(when (and (= :event (:kind %))
+                                               (= "session/rehydrated" (:event %))) %)
+                                   frames)
+          get-messages-resp  (some #(when (and (= :response (:kind %))
+                                               (= "get_messages" (:op %))) %)
+                                   frames)]
+      (is (= canonical-messages
+             (get-in rehydrate-event [:data :messages])))
+      (is (= canonical-messages
+             (get-in get-messages-resp [:data :messages]))))))
 
 (deftest rpc-multi-session-context-routing-test
   (testing "list_sessions returns context snapshot with active-session-id"

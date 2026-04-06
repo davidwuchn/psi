@@ -3,7 +3,6 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.runtime :as runtime]
@@ -11,6 +10,7 @@
    [psi.ai.models :as ai-models]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
+   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn handle-prompt-command-result!
@@ -142,7 +142,7 @@
 (defn- emit-session-rehydration-from-sid!
   [ctx state emit! sid]
   (let [sd   (ss/get-session-data-in ctx sid)
-        msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
+        msgs (message-source/session-messages ctx sid)]
     (events/set-focus-session-id! state sid)
     (emit/emit-session-rehydration!
      emit!
@@ -248,7 +248,7 @@
               sd        (when new-sid (ss/get-session-data-in ctx new-sid))
               msgs      (or (:agent-messages rehydrate)
                             (when new-sid
-                              (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
+                              (message-source/session-messages ctx new-sid)))]
           (emit/emit-session-rehydration!
            emit!
            {:session-id (:session-id sd)

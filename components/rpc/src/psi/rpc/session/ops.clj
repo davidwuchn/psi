@@ -3,10 +3,10 @@
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.events :as events]
+   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [error-frame protocol-version response-frame supported-rpc-ops]]))
 
@@ -193,7 +193,7 @@
 
 (defn handle-get-messages
   [{:keys [ctx request session-id]}]
-  (response-frame (:id request) (:op request) true {:messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))}))
+  (response-frame (:id request) (:op request) true {:messages (message-source/session-messages ctx session-id)}))
 
 (defn handle-get-session-stats
   [{:keys [ctx request session-id]}]

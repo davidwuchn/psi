@@ -3,11 +3,11 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
+   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn handle-new-session!
@@ -22,7 +22,7 @@
         _         (events/set-focus-session-id! state new-sid)
         sd        (ss/get-session-data-in ctx new-sid)
         msgs      (or (:agent-messages rehydrate)
-                      (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid))))
+                      (message-source/session-messages ctx new-sid))
         emit!     (emit/make-request-emitter (:emit-frame! request) state (:id request))]
     (emit/emit-session-rehydration!
      emit!
@@ -46,7 +46,7 @@
       (let [_    (session/ensure-session-loaded-in! ctx session-id sid)
             _    (events/set-focus-session-id! state sid)
             sd   (ss/get-session-data-in ctx sid)
-            msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))
+            msgs (message-source/session-messages ctx sid)
             emit! (emit/make-request-emitter (:emit-frame! request) state (:id request))]
         (emit/emit-session-rehydration!
          emit!
@@ -69,7 +69,7 @@
       (let [sd          (session/resume-session-in! ctx session-id session-path)
             sid         (:session-id sd)
             _           (events/set-focus-session-id! state sid)
-            msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))
+            msgs        (message-source/session-messages ctx sid)
             emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))]
         (emit/emit-session-rehydration!
          emit!

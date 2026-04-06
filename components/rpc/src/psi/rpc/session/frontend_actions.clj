@@ -2,11 +2,11 @@
   "Frontend action result handlers for RPC session workflows."
   (:require
    [clojure.java.io :as io]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
+   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn handle-frontend-action-result!
@@ -39,7 +39,7 @@
               (let [sd          (session/resume-session-in! ctx session-id value)
                     sid         (:session-id sd)
                     _           (events/set-focus-session-id! state sid)
-                    msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
+                    msgs        (message-source/session-messages ctx sid)]
                 (emit/emit-session-rehydration!
                  emit!
                  {:session-id sid
@@ -55,7 +55,7 @@
             (session/ensure-session-loaded-in! ctx session-id value)
             (let [_    (events/set-focus-session-id! state value)
                   sd   (ss/get-session-data-in ctx value)
-                  msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx value)))]
+                  msgs (message-source/session-messages ctx value)]
               (emit/emit-session-rehydration!
                emit!
                {:session-id (:session-id sd)
