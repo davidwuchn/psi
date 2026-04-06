@@ -1758,7 +1758,7 @@
       (is (= (str user-ts) (:updated-at session-slot)) "updated-at should reflect latest message timestamp"))))
 
 (deftest rpc-fork-emits-context-updated-test
-  (testing "fork emits context/updated with new session in sessions list"
+  (testing "fork emits rehydration and context/updated with new session in sessions list"
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-fork-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
           [ctx session-id] (create-session-context {:cwd cwd})
@@ -1766,20 +1766,26 @@
           ;; Append a message entry so fork has an entry-id to branch from
           entry   (persist/message-entry {:role "user" :content "hi"})
           _       (ss/journal-append-in! ctx session-id entry)
+          _       (ss/journal-append-in! ctx session-id (persist/message-entry {:role "assistant" :content [{:type :text :text "reply"}]}))
           entry-id (:id entry)
           state   (atom {:ready? true
                          :pending {}
-                         :subscribed-topics #{"context/updated"}})
+                         :subscribed-topics #{"context/updated" "session/rehydrated"}})
           handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"f1\" :kind :request :op \"fork\" :params {:entry-id \"" entry-id "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
-          frames    (parse-frames out-lines)
-          fork-resp (some #(when (and (= :response (:kind %)) (= "fork" (:op %))) %) frames)
-          context-evt  (some #(when (= "context/updated" (:event %)) %) frames)
-          new-sid   (get-in fork-resp [:data :session-id])]
+          frames      (parse-frames out-lines)
+          fork-resp   (some #(when (and (= :response (:kind %)) (= "fork" (:op %))) %) frames)
+          rehyd-evt   (some #(when (= "session/rehydrated" (:event %)) %) frames)
+          context-evt (some #(when (= "context/updated" (:event %)) %) frames)
+          new-sid     (get-in fork-resp [:data :session-id])]
       (is (some? fork-resp) "fork must return a response")
       (is (string? new-sid) "fork must return a new session-id")
+      (is (some? rehyd-evt) "fork must emit session/rehydrated")
+      (is (= [{:role "user" :content "hi"}
+              {:role "assistant" :content [{:type :text :text "reply"}]}]
+             (get-in rehyd-evt [:data :messages])))
       (is (some? context-evt) "fork must emit context/updated")
       (is (= new-sid (get-in context-evt [:data :active-session-id]))
           "context/updated active-session-id must be the forked session")
@@ -1787,7 +1793,7 @@
           "context/updated sessions must include the forked session")
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions])))))
 
   (testing "frontend_action_result context-session-selector accepts fork-point payload and forks"
     (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-rpc-frontend-fork-" (java.util.UUID/randomUUID))
@@ -1795,6 +1801,7 @@
           [ctx sid] (create-session-context {:cwd cwd})
           entry     (persist/message-entry {:role "user" :content "branch here"})
           _         (ss/journal-append-in! ctx sid entry)
+          _         (ss/journal-append-in! ctx sid (persist/message-entry {:role "assistant" :content [{:type :text :text "reply here"}]}))
           state     (atom {:ready? true
                            :pending {}
                            :subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}})
@@ -1813,7 +1820,10 @@
       (is (string? new-sid))
       (is (not= sid new-sid))
       (is (= new-sid (get-in context-evt [:data :active-session-id])))
-      (is (vector? (get-in rehyd-evt [:data :messages]))))))
+      (is (= [{:role "user" :content "branch here"}
+              {:role "assistant" :content [{:type :text :text "reply here"}]}]
+             (get-in rehyd-evt [:data :messages])))))
+  )
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"

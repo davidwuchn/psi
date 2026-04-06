@@ -520,10 +520,12 @@
                          :psi.session-info/parent-session-id "s1"}]
                        :psi.agent-session/session-entries
                        [{:psi.session-entry/id "e1"
+                         :psi.session-entry/timestamp #inst "2026-04-06T12:00:00.000Z"
                          :psi.session-entry/kind :message
                          :psi.session-entry/data {:message {:role "user"
                                                             :content [{:type :text :text "Investigate prompt lifecycle convergence"}]}}}
                         {:psi.session-entry/id "e2"
+                         :psi.session-entry/timestamp #inst "2026-04-06T12:01:00.000Z"
                          :psi.session-entry/kind :message
                          :psi.session-entry/data {:message {:role "user"
                                                             :content [{:type :text :text "/tree"}]}}}]})
@@ -532,11 +534,19 @@
                                                               :focus-session-id "s1"}))
           typed     (type-text update-fn state "/tree")
           [s1 _]    (update-fn typed (msg/key-press :enter))
-          plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))]
+          plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))
+          root-idx  (.indexOf plain "● Root")
+          child-idx (.indexOf plain "└─ Child")
+          fork-idx  (.indexOf plain "⎇ Investigate prompt lifecycle convergence")]
       (is (str/includes? plain "Root"))
       (is (str/includes? plain "Investigate prompt lifecycle convergence"))
       (is (str/includes? plain "fork"))
-      (is (not (str/includes? plain "⎇ /tree"))))))
+      (is (not (str/includes? plain "⎇ /tree")))
+      (is (and (>= root-idx 0)
+               (>= child-idx 0)
+               (>= fork-idx 0)
+               (< root-idx fork-idx)
+               (< fork-idx child-idx))))))
 
 (deftest tree-selector-enter-on-fork-point-forks-and-selects-fork-test
   (testing "enter on a prompt row forks from its entry and selects the fork"
@@ -557,6 +567,7 @@
                                :psi.session-info/parent-session-id "s1"}]
                              :psi.agent-session/session-entries
                              [{:psi.session-entry/id "e1"
+                               :psi.session-entry/timestamp #inst "2026-04-06T12:00:00.000Z"
                                :psi.session-entry/kind :message
                                :psi.session-entry/data {:message {:role "user"
                                                                   :content [{:type :text :text "Branch from here"}]}}}]})
@@ -566,8 +577,10 @@
                                                                     :fork-session-fn! (fn [entry-id]
                                                                                         (reset! forked-entry-id entry-id)
                                                                                         {:session-id "s3"
-                                                                                         :messages [{:role :assistant
-                                                                                                      :text "forked s3"}]
+                                                                                         :messages [{:role :user
+                                                                                                      :text "Branch from here"}
+                                                                                                    {:role :assistant
+                                                                                                      :text "reply included"}]
                                                                                          :tool-calls {}
                                                                                          :tool-order []})}))
           typed           (type-text update-fn state "/tree")
@@ -577,7 +590,8 @@
       (is (= "e1" @forked-entry-id))
       (is (= :idle (:phase s3)))
       (is (= "s3" (:focus-session-id s3)))
-      (is (= "forked s3" (get-in s3 [:messages 0 :text])))
+      (is (= "Branch from here" (get-in s3 [:messages 0 :text])))
+      (is (= "reply included" (get-in s3 [:messages 1 :text])))
       (is (:force-clear? s3)))))
 
 (deftest tree-rename-result-renders-status-message-test

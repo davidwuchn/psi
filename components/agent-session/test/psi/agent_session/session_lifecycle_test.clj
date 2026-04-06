@@ -268,6 +268,9 @@
         entry-id           (:id (ss/journal-append-in! ctx parent-id (persist/message-entry {:role "user"
                                                                                              :content [{:type :text :text "branch-here"}]
                                                                                              :timestamp (java.time.Instant/now)})))
+        _                  (ss/journal-append-in! ctx parent-id (persist/message-entry {:role "assistant"
+                                                                                         :content [{:type :text :text "reply-here"}]
+                                                                                         :timestamp (java.time.Instant/now)}))
         child-sd           (session/fork-session-in! ctx parent-id entry-id)
         child-id           (:session-id child-sd)
         ctx                (retarget ctx child-sd)]
@@ -279,7 +282,38 @@
       (is (= parent-file (get-in loaded-child [:header :parent-session])))
       (is (= parent-id (get-in loaded-child [:header :parent-session-id])))
       (is (= child-id (get-in loaded-child [:header :id])))
-      (is (= (count (persist/all-entries-in ctx child-id)) (count (:entries loaded-child)))))))
+      (is (= (count (persist/all-entries-in ctx child-id)) (count (:entries loaded-child))))
+      (is (= ["user" "assistant"]
+             (->> (:entries loaded-child)
+                  (filter #(= :message (:kind %)))
+                  (mapv #(get-in % [:data :message :role]))))))))
+
+(deftest fork-session-includes-selected-user-reply-turn-test
+  (let [[ctx session-id] (test-support/make-session-ctx {})
+        parent-sd        (session/new-session-in! ctx nil {})
+        parent-id        (:session-id parent-sd)
+        ctx              (retarget ctx parent-sd)
+        user-entry       (persist/message-entry {:role "user"
+                                                 :content [{:type :text :text "branch-here"}]
+                                                 :timestamp (java.time.Instant/now)})
+        _                (ss/journal-append-in! ctx parent-id user-entry)
+        _                (ss/journal-append-in! ctx parent-id
+                                                (persist/message-entry {:role "assistant"
+                                                                        :content [{:type :text :text "reply-here"}]
+                                                                        :timestamp (java.time.Instant/now)}))
+        _                (ss/journal-append-in! ctx parent-id
+                                                (persist/message-entry {:role "user"
+                                                                        :content [{:type :text :text "later-turn"}]
+                                                                        :timestamp (java.time.Instant/now)}))
+        child-sd         (session/fork-session-in! ctx parent-id (:id user-entry))
+        child-id         (:session-id child-sd)
+        ctx              (retarget ctx child-sd)
+        entries          (persist/all-entries-in ctx child-id)
+        message-entries  (filterv #(= :message (:kind %)) entries)]
+    (is (= ["user" "assistant"]
+           (mapv #(get-in % [:data :message :role]) message-entries)))
+    (is (= ["branch-here" "reply-here"]
+           (mapv #(-> % :data :message :content first :text) message-entries)))))
 
 (deftest resume-session-model-fallback-test
   (testing "resume-session-in! keeps current model when resumed journal has no model entry"

@@ -803,6 +803,7 @@
      :psi.session-info/is-streaming]}
    {:psi.agent-session/session-entries
     [:psi.session-entry/id
+     :psi.session-entry/timestamp
      :psi.session-entry/kind
      :psi.session-entry/data]}])
 
@@ -911,39 +912,50 @@
 
 (defn- current-session-user-prompt-items
   [entries active-id]
-  (->> (or entries [])
-       (keep (fn [entry]
-               (let [kind    (:psi.session-entry/kind entry)
-                     data    (:psi.session-entry/data entry)
-                     message (:message data)
-                     text    (message-text/user-message-display-text message)]
-                 (when (and (= :message kind)
-                            (= "user" (:role message))
-                            (string? text)
-                            (not (str/blank? text)))
-                   {:item-kind         :fork-point
-                    :session-id        active-id
-                    :entry-id          (:psi.session-entry/id entry)
-                    :prompt-text       text
-                    :display-name      text
-                    :parent-session-id active-id
-                    :tree-depth        1
-                    :tree-prefix       "↳ "}))))
-       vec))
+  (let [entries* (vec (or entries []))
+        prompt-entry? (fn [entry]
+                        (let [kind    (:psi.session-entry/kind entry)
+                              data    (:psi.session-entry/data entry)
+                              message (:message data)
+                              text    (message-text/user-message-display-text message)]
+                          (when (and (= :message kind)
+                                     (= "user" (:role message))
+                                     (string? text)
+                                     (not (str/blank? text)))
+                            {:item-kind         :fork-point
+                             :session-id        active-id
+                             :entry-id          (:psi.session-entry/id entry)
+                             :prompt-text       text
+                             :display-name      text
+                             :parent-session-id active-id
+                             :created-at        (:psi.session-entry/timestamp entry)
+                             :tree-depth        1
+                             :tree-prefix       "↳ "})))]
+    (->> entries*
+         (keep prompt-entry?)
+         vec)))
 
-(defn- inject-current-session-prompts
+(defn- interleave-current-session-prompts
   [sessions active-id prompt-items]
   (if (or (str/blank? active-id) (empty? prompt-items))
     sessions
-    (loop [remaining sessions
-           acc       []]
-      (if-let [item (first remaining)]
-        (let [acc' (conj acc item)]
-          (if (and (= :session (:item-kind item :session))
-                   (= active-id (:session-id item)))
-            (into acc' (concat prompt-items (rest remaining)))
-            (recur (rest remaining) acc')))
-        acc))))
+    (let [prompts-by-parent (group-by :parent-session-id prompt-items)]
+      (loop [remaining sessions
+             acc       []]
+        (if-let [item (first remaining)]
+          (let [acc'      (conj acc item)
+                prompts   (when (and (= :session (:item-kind item :session))
+                                     (= active-id (:session-id item)))
+                            (get prompts-by-parent active-id))
+                children  (when (and (= :session (:item-kind item :session))
+                                     (= active-id (:session-id item)))
+                            (take-while #(not= :session (:item-kind % :session))
+                                        (rest remaining)))
+                after-children (when prompts (drop (count children) (rest remaining)))]
+            (if prompts
+              (recur after-children (into acc' (concat children prompts)))
+              (recur (rest remaining) acc')))
+          acc)))))
 
 (defn- session-selector-init-from-context
   "Build selector state from the live context snapshot query.
@@ -963,7 +975,7 @@
                                 tree-sort-context-sessions)
               prompt-items (current-session-user-prompt-items (:psi.agent-session/session-entries data)
                                                               active-id)
-              items        (inject-current-session-prompts sessions active-id prompt-items)
+              items        (interleave-current-session-prompts sessions active-id prompt-items)
               selected     (selected-index-for-session-id items active-id)]
           {:sessions              items
            :all-sessions          nil

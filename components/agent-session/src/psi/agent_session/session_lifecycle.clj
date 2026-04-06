@@ -137,12 +137,41 @@
             (ext/dispatch-in reg "session_switch" {:reason :resume})
             (session/get-session-data-in ctx session-id)))))))
 
+(defn- fork-branch-entries
+  "Return branch entries for a fork rooted at `entry-id`.
+
+   Includes the selected entry and, when that entry is a user message, the
+   immediately following contiguous non-user turn entries until the next user
+   message. This preserves the selected prompt together with its reply."
+  [ctx parent-session-id entry-id]
+  (let [entries    (vec (persist/all-entries-in ctx parent-session-id))
+        idx        (first (keep-indexed #(when (= (:id %2) entry-id) %1) entries))
+        selected   (when (some? idx) (nth entries idx))
+        msg        (get-in selected [:data :message])
+        user-fork? (and selected
+                        (= :message (:kind selected))
+                        (= "user" (:role msg)))]
+    (if (and user-fork? (some? idx))
+      (let [prefix (subvec entries 0 (inc idx))
+            tail   (loop [i   (inc idx)
+                          acc []]
+                     (if (>= i (count entries))
+                       acc
+                       (let [entry     (nth entries i)
+                             entry-msg (get-in entry [:data :message])]
+                         (if (and (= :message (:kind entry))
+                                  (= "user" (:role entry-msg)))
+                           acc
+                           (recur (inc i) (conj acc entry))))))]
+        (vec (concat prefix tail)))
+      (vec (persist/entries-up-to-in ctx parent-session-id entry-id)))))
+
 (defn fork-session-in!
   "Fork the session from `entry-id`, creating a new session branch.
 
   Persistence semantics:
   - child session gets a new session id and its own session file
-  - child journal contains entries/messages up to `entry-id`
+  - child journal contains entries/messages through the selected turn
   - child session file is written immediately with `:parent-session`
     pointing at the parent session file (when available)"
   [ctx parent-session-id entry-id]
@@ -151,8 +180,8 @@
     (let [parent-sd           (session/get-session-data-in ctx parent-session-id)
           parent-session-file (:session-file parent-sd)
           new-session-id      (str (java.util.UUID/randomUUID))
-          messages            (vec (persist/messages-up-to-in ctx parent-session-id entry-id))
-          branch-entries      (vec (persist/entries-up-to-in ctx parent-session-id entry-id))
+          branch-entries      (fork-branch-entries ctx parent-session-id entry-id)
+          messages            (compaction/rebuild-messages-from-journal-entries branch-entries)
           session-file        (when (:persist? ctx)
                                 (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx parent-session-id))
                                       file        (persist/new-session-file-path session-dir new-session-id)]
@@ -181,7 +210,7 @@
                  (-> state
                      (assoc-in [:agent-session :sessions new-session-id :agent-ctx] (:agent-ctx fresh))
                      (assoc-in [:agent-session :sessions new-session-id :sc-session-id] (:sc-session-id fresh))))))
-     ;; Fork persistence: create/write child file immediately with lineage header.
+      ;; Fork persistence: create/write child file immediately with lineage header.
       (when session-file
         (let [file (io/file session-file)]
           (persist/flush-journal! file

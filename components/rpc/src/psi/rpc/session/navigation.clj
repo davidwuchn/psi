@@ -92,7 +92,16 @@
         sd                (session/fork-session-in! ctx session-id entry-id)
         sid               (:session-id sd)
         _                 (events/set-focus-session-id! state sid)
+        msgs              (message-source/session-messages ctx sid)
         emit!             (emit/make-request-emitter (:emit-frame! request) state (:id request))]
+    (emit/emit-session-rehydration!
+     emit!
+     {:session-id (:session-id sd)
+      :session-file (:session-file sd)
+      :message-count (count msgs)
+      :messages msgs
+      :tool-calls {}
+      :tool-order []})
     (emit/emit-context-updated! emit! ctx state sid)
     (response-frame (:id request) "fork" true {:session-id (:session-id sd)
                                                 :session-file (:session-file sd)})))
