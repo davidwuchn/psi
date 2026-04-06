@@ -249,18 +249,18 @@ Child sessions and fork-points are indented beneath their parent session."
                              (when is-active " ← active")))
               (text         (concat indent base-label suffix)))
          (cond
-          (and (equal item-kind "session") is-active)
-          `((:text . ,text))
+          ((and (equal item-kind "session") is-active)
+           `((:text . ,text)))
 
-          (equal item-kind "fork-point")
-          `((:text . ,text)
-            (:action . ((:type . "command")
-                        (:command . ,(concat "/fork " entry-id)))))
+          ((equal item-kind "fork-point")
+           `((:text . ,text)
+             (:action . ((:type . "command")
+                         (:command . ,(concat "/fork " entry-id))))))
 
-          :else
-          `((:text . ,text)
-            (:action . ((:type . "command")
-                        (:command . ,(concat "/tree " id))))))))
+          (t
+           `((:text . ,text)
+             (:action . ((:type . "command")
+                         (:command . ,(concat "/tree " id)))))))))
      slots)))
 
 (defun psi-emacs--handle-context-updated-event (data)

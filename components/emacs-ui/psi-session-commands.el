@@ -965,7 +965,7 @@ or an alist payload for fork-point selection."
                (equal (alist-get :type selected-value nil nil #'equal) "fork-point"))
           (let ((entry-id (alist-get :entry-id selected-value nil nil #'equal)))
             (when (and (stringp entry-id) (not (string-empty-p entry-id)))
-              (psi-emacs--dispatch-request "fork" `((:entry-id . ,entry-id)))))
+              (psi-emacs--dispatch-request "fork" `((:entry-id . ,entry-id))))))
          (t
           (psi-emacs--request-switch-session-by-id state selected-value)))))))
 
