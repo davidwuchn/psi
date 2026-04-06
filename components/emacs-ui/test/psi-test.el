@@ -3428,8 +3428,12 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
         (should (equal '(("command" ((:text . "/chain-rm run-1"))))
                        calls))))))
 
-(ert-deftest psi-projection-tree-widget-action-uses-command-op ()
-  "Widget action `/tree <id>` should route via backend command dispatch."
+(ert-deftest psi-projection-tree-widget-action-uses-switch-session-by-id ()
+  "Widget action `/tree <id>` should switch directly by session id.
+
+This preserves canonical switch rehydration semantics, including tool-row
+metadata and toggle behavior, instead of routing through backend `/tree`
+command rehydration." 
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -3443,11 +3447,11 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
                             'keymap psi-emacs--projection-widget-action-keymap))
         (goto-char (point-min))
         (psi-emacs--projection-activate-widget-action)
-        (should (equal '(("command" ((:text . "/tree s2"))))
+        (should (equal '(("switch_session" ((:session-id . "s2"))))
                        calls))))))
 
 (ert-deftest psi-projection-tree-widget-action-clears-transcript-via-rehydrate-events ()
-  "Widget `/tree <id>` activation should clear stale transcript when rehydrate events arrive."
+  "Widget `/tree <id>` activation should clear stale transcript via switch-session rehydration."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -3457,29 +3461,21 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     (setf (psi-emacs-state-projection-footer psi-emacs--state) "footer")
     (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
              (psi-emacs-state-tool-rows psi-emacs--state))
-    (cl-letf (((symbol-value 'psi-emacs--send-request-function)
-               (lambda (_state op params &optional _callback)
-                 (when (equal op "command")
-                   (should (equal '((:text . "/tree s2")) params)))
-                 t)))
+    (cl-letf (((symbol-function 'psi-emacs--request-switch-session-by-id)
+               (lambda (_state sid)
+                 (should (equal "s2" sid))
+                 (psi-emacs--reset-transcript-state)
+                 (setf (psi-emacs-state-session-id psi-emacs--state) sid)
+                 (setf (psi-emacs-state-projection-footer psi-emacs--state) "footer")
+                 (psi-emacs--replay-session-messages '(((:role . :assistant) (:text . "switched")))))))
       (insert (propertize "switch to s2"
                           'psi-widget-command "/tree s2"
                           'keymap psi-emacs--projection-widget-action-keymap))
-      (goto-char (point-max))
+      (goto-char (max (point-min) (1- (point-max))))
       (psi-emacs--projection-activate-widget-action)
-      (psi-emacs--handle-rpc-event
-       '((:event . "session/resumed")
-         (:data . ((:session-id . "s2")
-                   (:session-file . "/tmp/s2.ndedn")
-                   (:message-count . 1)))))
-      (psi-emacs--handle-rpc-event
-       '((:event . "session/rehydrated")
-         (:data . ((:session-id . "s2")
-                   (:messages . [((:role . :assistant) (:text . "switched"))])
-                   (:tool-calls . ())
-                   (:tool-order . ())))))
-      (should-not (string-match-p "old transcript" (buffer-string)))
-      (should (string-match-p "ψ: switched\n" (buffer-string)))
+      (let ((text (buffer-string)))
+        (should (string-match-p "ψ: switched\n" text))
+        (should-not (string-match-p "old transcript\(?:\n\|$\)" text)))
       (should (equal "footer" (psi-emacs-state-projection-footer psi-emacs--state)))
       (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
       (should (psi-emacs--input-separator-marker-valid-p)))))
@@ -4510,6 +4506,65 @@ persisted transcript that existed before switching away."
       (let ((text (buffer-string)))
         (should (string-match-p "persisted from b" text))
         (should (string-match-p "live tail from b" text))))))
+
+(ert-deftest psi-projection-tree-widget-switch-preserves-tool-row-metadata-and-toggle ()
+  "Projection `/tree <id>` switching should preserve switch-session rehydration semantics.
+
+Regression: routing tree widget actions through backend `/tree` command used the
+canonical event rehydrate path, which restores less tool-row metadata than the
+explicit `switch_session` + targeted rehydration flow. That dropped argument
+summaries and made toggling body visibility ineffective after returning." 
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((rpc-calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional callback)
+                   (push (list op params) rpc-calls)
+                   (cond
+                    ((and callback (equal op "switch_session"))
+                     (funcall callback
+                              '((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:session-id . "s2")))))
+                     t)
+                    ((and callback (equal op "get_messages"))
+                     (funcall callback
+                              '((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:messages . [((:role . :assistant) (:text . "back on s2"))])))))
+                     t)
+                    ((and callback (equal op "query_eql"))
+                     (funcall callback
+                              `((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:result . ((:psi.agent-session/tool-lifecycle-summaries .
+                                                       [((:psi.tool-lifecycle.summary/tool-id . "tool-1")
+                                                         (:psi.tool-lifecycle.summary/tool-name . "bash")
+                                                         (:psi.tool-lifecycle.summary/arguments . "{\"command\":\"ls\"}")
+                                                         (:psi.tool-lifecycle.summary/parsed-args . nil)
+                                                         (:psi.tool-lifecycle.summary/result-text . "tool output")
+                                                         (:psi.tool-lifecycle.summary/is-error . nil)
+                                                         (:psi.tool-lifecycle.summary/completed? . t))])
+                                                      (:psi.turn/is-streaming . nil)
+                                                      (:psi.turn/text . nil)
+                                                      (:psi.turn/tool-calls . [])))))))
+                     t)
+                    (t t)))))
+        (insert (propertize "switch to s2"
+                            'psi-widget-command "/tree s2"
+                            'keymap psi-emacs--projection-widget-action-keymap))
+        (goto-char (point-min))
+        (psi-emacs--projection-activate-widget-action)
+        (setq rpc-calls (nreverse rpc-calls))
+        (should (equal '("switch_session" "get_messages" "query_eql")
+                       (mapcar #'car rpc-calls)))
+        (let ((text (buffer-string)))
+          (should (string-match-p "\$ ls success" text))
+          (should-not (string-match-p "tool output" text))
+          (psi-emacs-toggle-tool-output-view)
+          (let ((expanded (buffer-string)))
+            (should (string-match-p "\$ ls success: tool output" expanded))))))))
 
 (ert-deftest psi-tree-slash-command-no-op-when-already-active ()
   "'/tree <active-id>' appends a message and sends no RPC."

@@ -36,6 +36,16 @@
                (not (string-empty-p (string-trim command))))
       (string-trim command))))
 
+(defun psi-emacs--projection-tree-command-session-id (command)
+  "Return session id for `/tree <id>` COMMAND, or nil when not applicable."
+  (when (stringp command)
+    (let* ((trimmed (string-trim command))
+           (tail (and (string-prefix-p "/tree" trimmed)
+                      (string-trim (string-remove-prefix "/tree" trimmed)))))
+      (when (and (stringp tail)
+                 (not (string-empty-p tail)))
+        tail))))
+
 (defun psi-emacs--projection-activate-widget-action (&optional event)
   "Activate widget action at point or mouse EVENT."
   (interactive)
@@ -51,6 +61,7 @@
       (let* ((trimmed (string-trim command))
              (slash-candidate? (and (not (string-empty-p trimmed))
                                     (string-prefix-p "/" trimmed)))
+             (tree-session-id (psi-emacs--projection-tree-command-session-id command))
              (prompt-fallback
               (lambda ()
                 (when (functionp psi-emacs--send-request-function)
@@ -59,6 +70,9 @@
                            "prompt"
                            `((:message . ,command)))))))
         (cond
+         ((and tree-session-id
+               (fboundp 'psi-emacs--request-switch-session-by-id))
+          (psi-emacs--request-switch-session-by-id psi-emacs--state tree-session-id))
          ((fboundp 'psi-emacs--dispatch-compose-message)
           (psi-emacs--dispatch-compose-message command))
          ((and slash-candidate?
