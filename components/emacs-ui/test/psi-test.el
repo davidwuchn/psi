@@ -1328,6 +1328,7 @@
                                     (:data . ((:session-id . "s-new")))))
                          t)
                         ((and callback (equal op "get_messages"))
+                         (should (equal '((:session-id . "s-new")) params))
                          (funcall callback
                                   '((:kind . :response)
                                     (:ok . t)
@@ -1336,6 +1337,9 @@
                                                ((:role . :assistant) (:text . "Second"))])))))
                          t)
                         ((and callback (equal op "query_eql"))
+                         (should (equal `((:session-id . "s-new")
+                                           (:query . ,(psi-emacs--rehydrate-switch-extras-query)))
+                                        params))
                          (funcall callback
                                   '((:kind . :response)
                                     (:ok . t)
@@ -1344,14 +1348,16 @@
                                                           (:psi.turn/text . nil)
                                                           (:psi.turn/tool-calls . [])))))))
                          t)
-                        (t t))))
+                        (t t)))))
             (psi-emacs--handle-rpc-event
              '((:event . "command-result")
                (:data . ((:type . "session_switch")
                          (:session-id . "s-new"))))))
           (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '("switch_session" "get_messages" "query_eql") (mapcar #'car rpc-calls)))
-          (should (equal '((:session-id . "s-new")) (cadr (car rpc-calls))))
+          (should (equal '("switch_session" "get_messages" "query_eql")
+                         (mapcar #'car rpc-calls)))
+          (should (equal '((:session-id . "s-new"))
+                         (cadr (car rpc-calls))))
           (should (string-prefix-p "User: First
 ψ: Second
 " (buffer-string)))
@@ -3452,27 +3458,10 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
              (psi-emacs-state-tool-rows psi-emacs--state))
     (cl-letf (((symbol-value 'psi-emacs--send-request-function)
-               (lambda (_state op params &optional callback)
-                 (cond
-                  ((equal op "command")
-                   (should (equal '((:text . "/tree s2")) params))
-                   t)
-                  ((and callback (equal op "get_messages"))
-                   (funcall callback
-                            '((:kind . :response)
-                              (:ok . t)
-                              (:data . ((:messages . [((:role . :assistant) (:text . "switched"))])))))
-                   t)
-                  ((and callback (equal op "query_eql"))
-                   (funcall callback
-                            '((:kind . :response)
-                              (:ok . t)
-                              (:data . ((:result . ((:psi.agent-session/tool-lifecycle-summaries . [])
-                                                    (:psi.turn/is-streaming . nil)
-                                                    (:psi.turn/text . nil)
-                                                    (:psi.turn/tool-calls . [])))))))
-                   t)
-                  (t t)))))
+               (lambda (_state op params &optional _callback)
+                 (when (equal op "command")
+                   (should (equal '((:text . "/tree s2")) params)))
+                 t)))
       (insert (propertize "switch to s2"
                           'psi-widget-command "/tree s2"
                           'keymap psi-emacs--projection-widget-action-keymap))
@@ -3483,6 +3472,12 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
          (:data . ((:session-id . "s2")
                    (:session-file . "/tmp/s2.ndedn")
                    (:message-count . 1)))))
+      (psi-emacs--handle-rpc-event
+       '((:event . "session/rehydrated")
+         (:data . ((:session-id . "s2")
+                   (:messages . [((:role . :assistant) (:text . "switched"))])
+                   (:tool-calls . ())
+                   (:tool-order . ())))))
       (should-not (string-match-p "old transcript" (buffer-string)))
       (should (string-match-p "ψ: switched\n" (buffer-string)))
       (should (equal "footer" (psi-emacs-state-projection-footer psi-emacs--state)))
@@ -4449,6 +4444,7 @@ replayed persisted messages."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'expanded)
     (psi-emacs--replay-session-messages '(((:role . :assistant) (:text . "persisted reply"))))
     (let ((frame '((:kind . :response)
                    (:ok . t)
@@ -4469,10 +4465,51 @@ replayed persisted messages."
       (psi-emacs--rehydrate-switch-state-from-query-frame psi-emacs--state frame))
     (let ((text (buffer-string)))
       (should (string-match-p "persisted reply" text))
-      (should (string-match-p "tool-1 success" text))
+      (should (string-match-p "\$ ls success" text))
       (should (string-match-p "tool output" text))
-      (should (string-match-p "tool-2 pending" text))
-      (should (string-match-p "ψ: live tail" text))))))
+      (should (string-match-p "read foo\.clj pending" text))
+      (should (string-match-p "ψ: live tail" text)))))
+
+(ert-deftest psi-switch-session-rehydration-targets-selected-session-explicitly ()
+  "Switch rehydration must target the selected session explicitly.
+
+Regression: if the backend focus drifts before follow-up reads run, Emacs can
+rehydrate only the tail/live extras from the intended session while missing the
+persisted transcript that existed before switching away."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((rpc-calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional callback)
+                   (push (list op params) rpc-calls)
+                   (cond
+                    ((and callback (equal op "get_messages"))
+                     (should (equal '((:session-id . "s-b")) params))
+                     (funcall callback
+                              '((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:messages . [((:role . :assistant) (:text . "persisted from b"))])))))
+                     t)
+                    ((and callback (equal op "query_eql"))
+                     (should (equal `((:session-id . "s-b")
+                                       (:query . ,(psi-emacs--rehydrate-switch-extras-query)))
+                                    params))
+                     (funcall callback
+                              '((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:result . ((:psi.agent-session/tool-lifecycle-summaries . [])
+                                                      (:psi.turn/is-streaming . t)
+                                                      (:psi.turn/text . "live tail from b")
+                                                      (:psi.turn/tool-calls . [])))))))
+                     t)
+                    (t t)))))
+        (psi-emacs--request-switch-rehydration psi-emacs--state "s-b"))
+      (setq rpc-calls (nreverse rpc-calls))
+      (should (equal '("get_messages" "query_eql") (mapcar #'car rpc-calls)))
+      (let ((text (buffer-string)))
+        (should (string-match-p "persisted from b" text))
+        (should (string-match-p "live tail from b" text))))))
 
 (ert-deftest psi-tree-slash-command-no-op-when-already-active ()
   "'/tree <active-id>' appends a message and sends no RPC."

@@ -765,15 +765,21 @@ since the backend serialises role as the string \"user\" which
     (when follow-anchor
       (psi-emacs--set-draft-anchor-to-end))))
 
-(defun psi-emacs--request-switch-rehydration (state)
-  "Request transcript + tool/live-turn rehydration for switched STATE."
-  (let ((buffer (current-buffer)))
+(defun psi-emacs--request-switch-rehydration (state &optional target-session-id)
+  "Request transcript + tool/live-turn rehydration for switched STATE.
+
+When TARGET-SESSION-ID is non-nil, target both reads explicitly so transcript
+rehydration remains correct even if backend focus changes concurrently."
+  (let ((buffer (current-buffer))
+        (target-params (when (and (stringp target-session-id)
+                                  (not (string-empty-p target-session-id)))
+                         `((:session-id . ,target-session-id)))))
     ;; Keep canonical message replay on get_messages, then layer in non-message
     ;; reconstruction from query_eql so output produced while another session was
     ;; selected becomes visible when switching back.
     (psi-emacs--dispatch-request
      "get_messages"
-     nil
+     target-params
      (lambda (messages-frame)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
@@ -782,7 +788,8 @@ since the backend serialises role as the string \"user\" which
               (psi-emacs--frame-messages-list messages-frame))
              (psi-emacs--dispatch-request
               "query_eql"
-              `((:query . ,(psi-emacs--rehydrate-switch-extras-query)))
+              (append target-params
+                      `((:query . ,(psi-emacs--rehydrate-switch-extras-query))))
               (lambda (frame)
                 (when (buffer-live-p buffer)
                   (with-current-buffer buffer
@@ -813,13 +820,23 @@ Failure path appends deterministic assistant-visible feedback, sets
 `last-error`, and does not run success-only side effects."
   (when (and state (eq state psi-emacs--state))
     (if (psi-emacs--rpc-frame-success-p frame)
-        (progn
+        (let* ((data (alist-get :data frame nil nil #'equal))
+               (target-session-id (or (alist-get :session-id data nil nil #'equal)
+                                      (alist-get 'session-id data nil nil #'equal)
+                                      (and psi-emacs--state
+                                           (psi-emacs-state-session-id psi-emacs--state)))))
           ;; footer/updated + session/updated events arrive before the response frame
-          ;; and correctly set projection-footer.  Capture it before reset-transcript-state
+          ;; and correctly set projection-footer. Capture it before reset-transcript-state
           ;; clears it, then restore after so the footer survives the buffer wipe.
+          ;;
+          ;; Also pin the selected session id locally before follow-up reads so
+          ;; explicit rehydration targets the switched session deterministically,
+          ;; even if another session emits activity concurrently.
           (let ((saved-footer (and psi-emacs--state
                                    (psi-emacs-state-projection-footer psi-emacs--state))))
             (psi-emacs--reset-transcript-state)
+            (when (and target-session-id psi-emacs--state)
+              (setf (psi-emacs-state-session-id psi-emacs--state) target-session-id))
             (when (and saved-footer psi-emacs--state)
               (setf (psi-emacs-state-projection-footer psi-emacs--state) saved-footer)
               (when (fboundp 'psi-emacs--upsert-projection-block)
@@ -828,7 +845,7 @@ Failure path appends deterministic assistant-visible feedback, sets
           (when (fboundp 'psi-emacs--focus-input-area)
             (psi-emacs--focus-input-area (current-buffer)))
           (psi-emacs--set-run-state state 'streaming)
-          (psi-emacs--request-switch-rehydration state))
+          (psi-emacs--request-switch-rehydration state target-session-id))
       (let ((message (psi-emacs--switch-session-error-message frame)))
         (psi-emacs--append-assistant-message message)
         (psi-emacs--set-last-error state message)))))
