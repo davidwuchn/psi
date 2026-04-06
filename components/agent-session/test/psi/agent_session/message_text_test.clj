@@ -41,6 +41,18 @@
            {:role "assistant" :content [{:type :text :text "reply"}]}
            {:role "user" :content [{:type :text :text "latest  user\ntext"}]}]))))
 
+(deftest last-user-message-text-ignores-slash-commands-test
+  (is (= "Investigate prompt lifecycle"
+         (message-text/last-user-message-text
+          [{:role "user" :content [{:type :text :text "Investigate prompt lifecycle"}]}
+           {:role "user" :content [{:type :text :text "/tree"}]}])))
+  (is (= "Implement naming"
+         (message-text/last-user-message-text
+          [{:role "user" :content [{:type :text :text "Implement naming"}]}
+           {:role "user" :content [{:type :text :text "/tree name abc123 Session name"}]}])))
+  (is (nil? (message-text/last-user-message-text
+             [{:role "user" :content [{:type :text :text "/status"}]}]))))
+
 (deftest session-display-name-prefers-explicit-name-over-last-user-message-test
   (is (= "Named"
          (message-text/session-display-name

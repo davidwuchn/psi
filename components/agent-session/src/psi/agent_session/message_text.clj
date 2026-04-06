@@ -160,13 +160,25 @@
          (str (subs normalized 0 (max 1 (dec max-chars))) "…")
          normalized)))))
 
+(defn- slash-command-text?
+  [text]
+  (let [trimmed (some-> text str/trim)]
+    (and (seq trimmed)
+         (str/starts-with? trimmed "/"))))
+
 (defn last-user-message-text
-  "Return the most recent user message text from agent-core `messages`, or nil."
+  "Return the most recent non-command user message text from agent-core `messages`, or nil.
+
+   Slash-command inputs (for example `/tree`, `/status`, `/tree name ...`) are
+   ignored so session display names reflect actual conversational/task content
+   rather than navigation commands."
   [messages]
   (some->> (reverse (vec (or messages [])))
            (some (fn [msg]
                    (when (= "user" (:role msg))
-                     (short-display-text (content-text (:content msg))))))))
+                     (let [text (short-display-text (content-text (:content msg)))]
+                       (when-not (slash-command-text? text)
+                         text)))))))
 
 (defn session-display-name
   "Return live display name from explicit `session-name` or the latest user message."

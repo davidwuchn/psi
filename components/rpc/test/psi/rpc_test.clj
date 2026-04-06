@@ -183,9 +183,10 @@
       (is (= 2 (:retry-attempt payload))))))
 
 (deftest session-updated-payload-includes-derived-session-display-name-test
-  (testing "session payload includes derived display name from latest user message"
+  (testing "session payload includes derived display name from latest non-command user message"
     (let [[ctx sid] (create-session-context)
           _         (runtime/journal-user-message-in! ctx sid "Investigate failing tests in RPC footer" nil)
+          _         (runtime/journal-user-message-in! ctx sid "/tree" nil)
           payload   (rpc.events/session-updated-payload ctx sid)]
       (is (= "Investigate failing tests in RPC footer"
              (:session-display-name payload))))))
