@@ -38,6 +38,54 @@
   (should (equal (append psi-rpc-core-topics psi-rpc-extension-topics)
                  psi-rpc-default-topics)))
 
+(ert-deftest psi-rpc-first-event-after-handshake-promotes-connected-to-ready ()
+  (let* ((states nil)
+         (events nil)
+         (errors nil)
+         (client (psi-rpc-make-client
+                  :on-state-change (lambda (c)
+                                     (push (list (psi-rpc-client-process-state c)
+                                                 (psi-rpc-client-transport-state c))
+                                           states))
+                  :on-event (lambda (frame)
+                              (push frame events))
+                  :on-rpc-error (lambda (code message _frame)
+                                  (push (list code message) errors))))
+         (process nil))
+    (setf (psi-rpc-client-send-function client)
+          (lambda (_proc payload)
+            (pcase (psi-rpc--parse-line (string-trim-right payload))
+              (`(:ok ,frame)
+               (let ((id (alist-get :id frame))
+                     (op (alist-get :op frame)))
+                 (when (equal op "handshake")
+                   (psi-rpc--handle-frame
+                    client
+                    `((:id . ,id) (:kind . :response) (:op . "handshake") (:ok . t)
+                      (:data . ((:server-info . ((:protocol-version . "1.0")))))))
+                   ;; Simulate subscribed traffic arriving before the subscribe
+                   ;; response callback is observed.
+                   (psi-rpc--handle-frame
+                    client
+                    '((:kind . :event) (:event . "footer/updated")
+                      (:data . ((:path-line . "x") (:stats-line . "y")))))))))))
+    (unwind-protect
+        (progn
+          (psi-rpc-start! client #'psi-rpc-test--spawn-cat '("cat") psi-rpc-default-topics)
+          (setq process (psi-rpc-client-process client))
+          (sleep-for 0.02)
+          (should (equal '(running ready)
+                         (list (psi-rpc-client-process-state client)
+                               (psi-rpc-client-transport-state client))))
+          (should (equal psi-rpc-default-topics (psi-rpc-client-subscribed-topics client)))
+          (should (null errors))
+          (should (member '(running handshaking) states))
+          (should (member '(running connected) states))
+          (should (member '(running ready) states))
+          (should (= 1 (length events))))
+      (when (and process (process-live-p process))
+        (delete-process process)))))
+
 (defun psi-rpc-test--spawn-cat (_command)
   "Spawn a long-lived process used in rpc transport tests."
   (make-process
@@ -297,6 +345,7 @@
           (should (equal psi-rpc-default-topics (psi-rpc-client-subscribed-topics client)))
           (should (null errors))
           (should (member '(running handshaking) states))
+          (should (member '(running connected) states))
           (should (member '(running ready) states)))
       (when (and process (process-live-p process))
         (delete-process process)))))
@@ -374,9 +423,11 @@
           (should (equal psi-rpc-default-topics subscribed-topics))
           (should (null errors))
           (should (member '(running handshaking) states))
+          (should (member '(running connected) states))
           (should (member '(running ready) states)))
       (when (and process (process-live-p process))
         (delete-process process)))))
+
 
 (provide 'psi-rpc-test)
 

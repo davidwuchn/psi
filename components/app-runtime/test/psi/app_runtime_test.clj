@@ -436,6 +436,33 @@
         (System/setProperty "user.dir" orig-user-dir)
         (reset! app-runtime/nrepl-runtime orig-runtime)))))
 
+(deftest start-nrepl-redirects-startup-chatter-to-stderr-test
+  (let [orig-runtime @app-runtime/nrepl-runtime
+        out          (java.io.StringWriter.)
+        err          (java.io.StringWriter.)]
+    (try
+      (with-redefs [requiring-resolve (fn [sym]
+                                        (case sym
+                                          nrepl.server/start-server
+                                          (fn [& {:keys [port]}]
+                                            (println "nREPL server started on port" (or port 0))
+                                            (.println System/out (str "system-out port " (or port 0)))
+                                            {:port (or port 5555)})
+                                          nrepl.server/stop-server
+                                          (fn [_] nil)))]
+        (binding [*out* out
+                  *err* err]
+          (let [srv (#'app-runtime/start-nrepl! 5555)]
+            (is (= 5555 (:port srv)))
+            (is (not (str/includes? (str out) "nREPL server started on port")))
+            (is (not (str/includes? (str out) "system-out port 5555")))
+            (is (str/includes? (str err) "nREPL server started on port"))
+            (is (str/includes? (str err) "system-out port 5555"))
+            (is (str/includes? (str err) "nREPL : localhost:5555"))
+            (#'app-runtime/stop-nrepl! srv))))
+      (finally
+        (reset! app-runtime/nrepl-runtime orig-runtime)))))
+
 (deftest bootstrap-runtime-session-applies-project-preferences-test
   (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-main-project-prefs-" (java.util.UUID/randomUUID))
         _   (.mkdirs (java.io.File. cwd))]

@@ -103,12 +103,19 @@
 
 (defn start-nrepl!
   "Start an nREPL server on `port` (0 = random). Returns the server.
-   Writes the bound port to .nrepl-port for editor auto-discovery."
+   Writes the bound port to .nrepl-port for editor auto-discovery.
+   Any startup chatter from nREPL is redirected to stderr so RPC stdout stays protocol-only."
   [port]
-  (let [start-server (requiring-resolve 'nrepl.server/start-server)
-        server       (start-server :port port)
-        host         "localhost"
-        port-file    (java.io.File. ".nrepl-port")]
+  (let [start-server       (requiring-resolve 'nrepl.server/start-server)
+        original-systemout System/out
+        server             (try
+                             (binding [*out* *err*]
+                               (System/setOut (java.io.PrintStream. System/err true))
+                               (start-server :port port))
+                             (finally
+                               (System/setOut original-systemout)))
+        host               "localhost"
+        port-file          (java.io.File. ".nrepl-port")]
     (reset! nrepl-runtime {:host host
                            :port (:port server)
                            :endpoint (str host ":" (:port server))})

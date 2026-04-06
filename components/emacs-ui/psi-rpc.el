@@ -64,6 +64,7 @@ Includes only terminal-boundary tool lifecycle topics (no tool/delta).")
   transport-state
   protocol-version
   subscribed-topics
+  requested-topics
   line-buffer
   next-request-id
   pending-callbacks
@@ -84,6 +85,7 @@ Includes only terminal-boundary tool lifecycle topics (no tool/delta).")
           (psi-rpc-client-transport-state client) 'disconnected
           (psi-rpc-client-protocol-version client) nil
           (psi-rpc-client-subscribed-topics client) nil
+          (psi-rpc-client-requested-topics client) nil
           (psi-rpc-client-line-buffer client) ""
           (psi-rpc-client-next-request-id client) 0
           (psi-rpc-client-pending-callbacks client) (make-hash-table :test #'equal)
@@ -100,6 +102,7 @@ Includes only terminal-boundary tool lifecycle topics (no tool/delta).")
           (:transport-state (setf (psi-rpc-client-transport-state client) v))
           (:protocol-version (setf (psi-rpc-client-protocol-version client) v))
           (:subscribed-topics (setf (psi-rpc-client-subscribed-topics client) v))
+          (:requested-topics (setf (psi-rpc-client-requested-topics client) v))
           (:line-buffer (setf (psi-rpc-client-line-buffer client) v))
           (:next-request-id (setf (psi-rpc-client-next-request-id client) v))
           (:pending-callbacks (setf (psi-rpc-client-pending-callbacks client) v))
@@ -441,6 +444,16 @@ Returns non-nil when a pending callback was found and invoked."
                                   (or (alist-get :error-message frame) "rpc error")
                                   frame))))
       (:event
+       (when (and (eq (psi-rpc-client-transport-state client) 'connected)
+                  (psi-rpc-client-requested-topics client)
+                  (null (psi-rpc-client-subscribed-topics client)))
+         ;; Live backend startup can deliver subscribed events before the explicit
+         ;; subscribe response callback is observed. Treat first post-handshake
+         ;; event as proof that subscriptions are active so UI does not remain
+         ;; stuck in `handshaking` forever.
+         (setf (psi-rpc-client-subscribed-topics client)
+               (psi-rpc-client-requested-topics client))
+         (psi-rpc--set-state client 'running 'ready))
        (when-let ((f (psi-rpc-client-on-event client)))
          (funcall f frame)))
       (_
@@ -497,6 +510,7 @@ Returns non-nil when a pending callback was found and invoked."
 
 TOPICS defaults to `psi-rpc-default-topics'."
   (let ((topics* (or topics psi-rpc-default-topics)))
+    (setf (psi-rpc-client-requested-topics client) topics*)
     (psi-rpc-send-request!
      client
      "handshake"
@@ -511,6 +525,9 @@ TOPICS defaults to `psi-rpc-default-topics'."
              (setf (psi-rpc-client-protocol-version client)
                    (or (alist-get :protocol-version (alist-get :server-info (alist-get :data frame)))
                        psi-rpc-protocol-version))
+             ;; Handshake itself succeeded; keep transport visibly progressing even
+             ;; if subscribe reply is delayed behind early event traffic.
+             (psi-rpc--set-state client 'running 'connected)
              (psi-rpc-send-request!
               client
               "subscribe"

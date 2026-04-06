@@ -1785,9 +1785,9 @@
           "context/updated active-session-id must be the forked session")
       (is (some #(= new-sid (:id %)) (get-in context-evt [:data :sessions]))
           "context/updated sessions must include the forked session")
-      (is (every? #(contains? % :worktree-path) (remove #(= "fork-point" (:item-kind %)) (get-in context-evt [:data :sessions]))))
-      (is (every? #(contains? % :created-at) (remove #(= "fork-point" (:item-kind %)) (get-in context-evt [:data :sessions]))))
-      (is (every? #(contains? % :updated-at) (remove #(= "fork-point" (:item-kind %)) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
+      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
+      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
 
   (testing "frontend_action_result context-session-selector accepts fork-point payload and forks"
     (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-rpc-frontend-fork-" (java.util.UUID/randomUUID))
