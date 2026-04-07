@@ -284,8 +284,7 @@
              Integer/parseInt)))
 
 (defn- handle-handshake!
-  [request _emit-frame! state {:keys [handshake-server-info-fn
-                                      handshake-context-updated-payload-fn]}]
+  [request _emit-frame! state {:keys [handshake-server-info-fn]}]
   (let [version (or (get-in request [:params :client-info :protocol-version])
                     (get-in request [:params :protocol-version]))
         major   (protocol-major version)]
@@ -303,7 +302,6 @@
       :else
       (let [server-info-fn (or handshake-server-info-fn
                                (fn [_state] {:protocol-version protocol-version}))
-            _context-payload-fn handshake-context-updated-payload-fn
             server-info (merge {:protocol-version protocol-version}
                                (or (server-info-fn state)
                                    {}))]
@@ -340,7 +338,7 @@
         {:ok true}))))
 
 (defn- process-request!
-  [request {:keys [state request-handler emit-tracked! handshake-server-info-fn handshake-context-updated-payload-fn]}]
+  [request {:keys [state request-handler emit-tracked! handshake-server-info-fn]}]
   (let [op (:op request)
         ready? (rpc.state/ready? state)]
     (cond
@@ -352,8 +350,7 @@
       (= "handshake" op)
       (if-let [error (:error (accept-request! request state))]
         (emit-tracked! error)
-        (emit-tracked! (handle-handshake! request emit-tracked! state {:handshake-server-info-fn handshake-server-info-fn
-                                                                       :handshake-context-updated-payload-fn handshake-context-updated-payload-fn})))
+        (emit-tracked! (handle-handshake! request emit-tracked! state {:handshake-server-info-fn handshake-server-info-fn})))
 
       :else
       (if-let [error (:error (accept-request! request state))]
@@ -395,9 +392,8 @@
    - :request-handler  (fn [request emit-frame! state] -> frame | [frame*] | nil)
    - :state            mutable transport state passed to request-handler
    - :trace-fn         optional (fn [{:dir :in|:out :raw string :frame map :parse-error string?}])
-   - :handshake-server-info-fn optional fn of state -> server-info map
-   - :handshake-context-updated-payload-fn optional fn of state -> context payload map"
-  [{:keys [in out err request-handler state trace-fn handshake-server-info-fn handshake-context-updated-payload-fn]
+   - :handshake-server-info-fn optional fn of state -> server-info map"
+  [{:keys [in out err request-handler state trace-fn handshake-server-info-fn]
     :or   {in *in*
            out *out*
            err *err*
@@ -434,8 +430,7 @@
                   (process-request! ok {:state state
                                         :request-handler request-handler
                                         :emit-tracked! emit-tracked!
-                                        :handshake-server-info-fn handshake-server-info-fn
-                                        :handshake-context-updated-payload-fn handshake-context-updated-payload-fn}))))))
+                                        :handshake-server-info-fn handshake-server-info-fn}))))))
         (finally
           (stop-all-managed-threads! state))))))
 

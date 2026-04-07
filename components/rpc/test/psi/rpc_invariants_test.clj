@@ -105,9 +105,7 @@
           right-called?   (atom false)
           state           (atom {:handshake-server-info-fn (fn [_] (reset! wrong-called? true)
                                                              {:protocol-version "WRONG"})
-                                 :handshake-context-updated-payload-fn (fn [_] (reset! wrong-called? true)
-                                                                         {:active-session-id "wrong"
-                                                                          :sessions [{:id "wrong"}]})})
+                                 :handshake-context-updated-payload-fn :obsolete})
           handler         (rpc/make-session-request-handler ctx)
           out             (java.io.StringWriter.)
           err             (java.io.StringWriter.)]
@@ -119,10 +117,7 @@
                             :handshake-server-info-fn (fn [_state]
                                                         (reset! right-called? true)
                                                         (assoc (rpc.events/session->handshake-server-info ctx sid)
-                                                               :ui-type :emacs))
-                            :handshake-context-updated-payload-fn (fn [_state]
-                                                                    {:active-session-id sid
-                                                                     :sessions []})})
+                                                               :ui-type :emacs))})
       (let [[frame] (parse-frames (->> (str/split-lines (str out))
                                        (remove str/blank?)
                                        vec))]
