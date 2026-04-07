@@ -548,6 +548,47 @@
                (< root-idx fork-idx)
                (< fork-idx child-idx))))))
 
+(deftest tree-selector-view-renders-shared-selector-order-test
+  (testing "tree selector can consume shared app-runtime selector order directly"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          selector-fn (fn []
+                        {:selector/kind :context-session
+                         :selector/active-item-id [:session "s1"]
+                         :selector/items [{:item/id [:session "s1"]
+                                           :item/kind :session
+                                           :item/session-id "s1"
+                                           :item/display-name "Root"
+                                           :item/is-active true
+                                           :item/worktree-path "/tmp/psi-test/root"}
+                                          {:item/id [:session "s2"]
+                                           :item/kind :session
+                                           :item/session-id "s2"
+                                           :item/parent-id [:session "s1"]
+                                           :item/display-name "Child"
+                                           :item/worktree-path "/tmp/psi-test/child"}
+                                          {:item/id [:fork-point "e1"]
+                                           :item/kind :fork-point
+                                           :item/session-id "s1"
+                                           :item/entry-id "e1"
+                                           :item/parent-id [:session "s1"]
+                                           :item/display-name "Branch from here"}]})
+          [state _] ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
+                                                               :cwd "/tmp/psi-test"
+                                                               :focus-session-id "s1"
+                                                               :session-selector-fn selector-fn}))
+          typed     (type-text update-fn state "/tree")
+          [s1 _]    (update-fn typed (msg/key-press :enter))
+          plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))
+          lines     (vec (str/split-lines plain))
+          root-idx  (first (keep-indexed (fn [i line] (when (str/includes? line "Root") i)) lines))
+          child-idx (first (keep-indexed (fn [i line] (when (str/includes? line "Child") i)) lines))
+          fork-idx  (first (keep-indexed (fn [i line] (when (str/includes? line "Branch from here") i)) lines))]
+      (is (and (some? root-idx)
+               (some? child-idx)
+               (some? fork-idx)
+               (< root-idx child-idx)
+               (< child-idx fork-idx))))))
+
 (deftest tree-selector-enter-on-fork-point-forks-and-selects-fork-test
   (testing "enter on a prompt row forks from its entry and selects the fork"
     (let [forked-entry-id (atom nil)

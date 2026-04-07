@@ -957,6 +957,77 @@
               (recur (rest remaining) acc')))
           acc)))))
 
+(defn- selector-item->tui-session
+  [cwd item]
+  (let [worktree-path (or (:item/worktree-path item) cwd)
+        parent-id     (some-> (:item/parent-id item) second)]
+    {:item-kind         (:item/kind item)
+     :session-id        (:item/session-id item)
+     :entry-id          (:item/entry-id item)
+     :path              nil
+     :name              (:item/display-name item)
+     :display-name      (:item/display-name item)
+     :parent-session-id parent-id
+     :is-streaming      (boolean (:item/is-streaming item))
+     :first-message     ""
+     :message-count     0
+     :modified          (:item/updated-at item)
+     :created-at        (:item/created-at item)
+     :updated-at        (:item/updated-at item)
+     :cwd               worktree-path
+     :worktree-path     worktree-path
+     :tree-depth        0
+     :tree-prefix       ""}))
+
+(defn- selector-items->tui-sessions
+  [cwd items]
+  (let [sessions         (mapv #(selector-item->tui-session cwd %) items)
+        session-items    (filterv #(= :session (:item-kind % :session)) sessions)
+        by-id            (into {} (map (juxt :session-id identity) session-items))
+        children-by-parent
+        (reduce (fn [acc s]
+                  (let [parent-id      (:parent-session-id s)
+                        parent-exists? (and parent-id (contains? by-id parent-id))
+                        parent-key     (if parent-exists? parent-id ::root)]
+                    (update acc parent-key (fnil conj []) s)))
+                {}
+                session-items)
+        prefix-by-id
+        (letfn [(tree-prefix [ancestor-has-next last-sibling?]
+                  (str (apply str (map #(if % "│ " "  ") ancestor-has-next))
+                       (if last-sibling? "└─ " "├─ ")))
+                (walk [node depth ancestor-has-next last-sibling? acc]
+                  (let [sid        (:session-id node)
+                        node*      (assoc node
+                                          :tree-depth depth
+                                          :tree-prefix (if (zero? depth)
+                                                         ""
+                                                         (tree-prefix ancestor-has-next last-sibling?)))
+                        children   (get children-by-parent sid [])
+                        child-path (if (zero? depth)
+                                     ancestor-has-next
+                                     (conj ancestor-has-next (not last-sibling?)))
+                        child-count (count children)
+                        acc*       (assoc acc sid node*)]
+                    (reduce (fn [acc2 [idx child]]
+                              (walk child (inc depth) child-path (= idx (dec child-count)) acc2))
+                            acc*
+                            (map-indexed vector children))))]
+          (let [roots (get children-by-parent ::root [])]
+            (reduce (fn [acc [idx root]]
+                      (walk root 0 [] (= idx (dec (count roots))) acc))
+                    {}
+                    (map-indexed vector roots))))]
+    (mapv (fn [item]
+            (if (= :session (:item-kind item :session))
+              (get prefix-by-id (:session-id item) item)
+              (let [parent-depth (or (some-> (get prefix-by-id (:parent-session-id item)) :tree-depth) 0)
+                    spaces       (apply str (repeat parent-depth "  "))]
+                (assoc item
+                       :tree-depth (inc parent-depth)
+                       :tree-prefix (str spaces "↳ ")))))
+          sessions)))
+
 (defn- session-selector-init-from-context
   "Build selector state from the live context snapshot query.
    Falls back to persisted /resume-style listing when query is unavailable.
@@ -965,9 +1036,29 @@
   (let [cwd                  (:cwd state)
         current-session-file (:current-session-file state)
         active-id            (:focus-session-id state)
+        selector-fn          (:session-selector-fn state)
         query-fn             (:query-fn state)]
-    (if-not query-fn
+    (cond
+      selector-fn
+      (try
+        (let [selector (selector-fn)
+              items    (selector-items->tui-sessions cwd (:selector/items selector))
+              selected (selected-index-for-session-id items active-id)]
+          {:sessions              items
+           :all-sessions          nil
+           :scope                 :current
+           :search                ""
+           :selected              selected
+           :loading?              false
+           :current-session-file  current-session-file
+           :active-session-id     active-id})
+        (catch Exception _
+          (session-selector-init cwd current-session-file)))
+
+      (not query-fn)
       (session-selector-init cwd current-session-file)
+
+      :else
       (try
         (let [data         (or (query-fn tree-selector-query) {})
               sessions     (->> (or (:psi.agent-session/context-sessions data) [])
@@ -1112,6 +1203,7 @@
                               returns {:messages [...], :tool-calls {...}, :tool-order [...]} | nil
      :fork-session-fn!     — (fn [entry-id]) called by /tree fork-point selection;
                               returns {:session-id ... :messages [...], :tool-calls {...}, :tool-order [...]} | nil
+     :session-selector-fn  — optional (fn []) -> adapter-neutral selector model from app-runtime
      :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
      :on-interrupt-fn!     — (fn [state]) -> {:queued-text str? :message str?} | nil
      :on-queue-input-fn!   — (fn [text state]) -> {:message str?} | nil
@@ -1165,6 +1257,7 @@
          :resume-fn!            (:resume-fn! opts)
          :switch-session-fn!    (:switch-session-fn! opts)
          :fork-session-fn!      (:fork-session-fn! opts)
+         :session-selector-fn   (:session-selector-fn opts)
          :session-selector      nil   ;; non-nil when /resume or /tree picker is active
          :session-selector-mode nil   ;; :resume | :tree
          :prompt-input-state    (initial-prompt-input-state)

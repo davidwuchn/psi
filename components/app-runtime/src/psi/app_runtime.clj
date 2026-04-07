@@ -61,6 +61,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.app-runtime.selectors :as selectors]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.config-resolution :as config-res]
    [psi.agent-session.skills :as skills]
@@ -858,6 +859,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 
      (tui-start-fn! (:name ai-model) run-agent-fn!
                     {:query-fn             (fn [q] (session/query-in ctx @tui-focus* q))
+                     :session-selector-fn  (fn [] (selectors/context-session-selector ctx @tui-focus*))
                      :ui-read-fn       (fn [] (ss/get-state-value-in ctx (ss/state-path :ui-state)))
                      :ui-dispatch-fn   (fn [event-type payload]
                                          (dispatch/dispatch! ctx event-type payload {:origin :tui}))
