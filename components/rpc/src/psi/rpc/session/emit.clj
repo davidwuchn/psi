@@ -95,9 +95,14 @@
   (emit! "command-result" payload))
 
 (defn emit-frontend-action-request!
-  [emit! request-id cmd-result]
-  (emit! "ui/frontend-action-requested"
-         {:request-id request-id
-          :action-name (some-> (:action-name cmd-result) name)
-          :prompt (:prompt cmd-result)
-          :payload (:payload cmd-result)}))
+  [emit! request-id action]
+  (let [legacy (:ui/legacy action)]
+    (emit! "ui/frontend-action-requested"
+           {:request-id request-id
+            :action-name (or (:action-name legacy)
+                             (some-> (:ui/action-name action) name))
+            :prompt (or (:ui/prompt action)
+                        (:prompt legacy))
+            :payload (or (:payload legacy)
+                         legacy)
+            :ui/action action})))

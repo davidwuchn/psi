@@ -10,10 +10,24 @@
    [psi.rpc.session.message-source :as message-source]
    [psi.rpc.transport :refer [response-frame]]))
 
+(defn- normalize-action-key
+  [ui-action action-name]
+  (let [k (keyword (or (some-> ui-action :ui/action-name name)
+                       action-name
+                       ""))]
+    (case k
+      :resume-selector :select-resume-session
+      :context-session-selector :select-session
+      :model-picker :select-model
+      :thinking-picker :select-thinking-level
+      k)))
+
 (defn handle-frontend-action-result!
   [{:keys [ctx request params state session-id resolve-model]}]
   (let [request-id  (:request-id params)
         action-name (:action-name params)
+        ui-action   (:ui/action params)
+        action-key  (normalize-action-key ui-action action-name)
         status      (:status params)
         value       (:value params)
         emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))]
@@ -33,8 +47,8 @@
 
       :else
       (do
-        (case action-name
-          "resume-selector"
+        (case action-key
+          :select-resume-session
           (when (string? value)
             (when (.exists (io/file value))
               (let [sd          (session/resume-session-in! ctx session-id value)
@@ -51,7 +65,7 @@
                   :tool-order []})
                 (emit/emit-context-updated! emit! ctx state sid))))
 
-          "context-session-selector"
+          :select-session
           (cond
             (string? value)
             (do
@@ -125,7 +139,7 @@
                     :tool-order []})
                   (emit/emit-context-updated! emit! ctx state sid)))))
 
-          "model-picker"
+          :select-model
           (when (map? value)
             (let [provider (or (:provider value) (get value "provider"))
                   model-id (or (:id value) (get value "id"))
@@ -137,7 +151,7 @@
                   (emit/emit-command-result! emit! {:type "text"
                                                     :message (str "✓ Model set to " provider-str " " (:id resolved))})))))
 
-          "thinking-picker"
+          :select-thinking-level
           (when (string? value)
             (let [level  (keyword value)
                   result (session/set-thinking-level-in! ctx session-id level)]

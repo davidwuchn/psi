@@ -9,6 +9,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.ai.models :as ai-models]
    [psi.app-runtime.selectors :as selectors]
+   [psi.app-runtime.ui-actions :as ui-actions]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
    [psi.rpc.session.message-source :as message-source]
@@ -163,17 +164,15 @@
 (defn- handle-resume-command!
   [ctx state request-id emit! trimmed session-id]
   (if (= trimmed "/resume")
-    (emit! "ui/frontend-action-requested"
-           {:request-id request-id
-            :action-name "resume-selector"
-            :prompt "Select a session to resume"
-            :payload {:query (session/query-in ctx
-                                               [{:psi.session/list
-                                                 [:psi.session-info/path
-                                                  :psi.session-info/name
-                                                  :psi.session-info/worktree-path
-                                                  :psi.session-info/first-message
-                                                  :psi.session-info/modified]}])}})
+    (let [query-result (session/query-in ctx
+                                         [{:psi.session/list
+                                           [:psi.session-info/path
+                                            :psi.session-info/name
+                                            :psi.session-info/worktree-path
+                                            :psi.session-info/first-message
+                                            :psi.session-info/modified]}])
+          action       (ui-actions/resume-session-action query-result)]
+      (emit/emit-frontend-action-request! emit! request-id action))
     (let [session-path (-> (str/replace trimmed #"^/resume\s+" "") str/trim)]
       (if-not (.exists (io/file session-path))
         (emit-text-command-result! emit! (str "Session file not found: " session-path))
@@ -187,11 +186,7 @@
         selector  (selectors/context-session-selector ctx session-id)
         items     (:selector/items selector)]
     (if (= trimmed "/tree")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "context-session-selector"
-              :prompt "Select a live session"
-              :payload selector})
+      (emit/emit-frontend-action-request! emit! request-id (ui-actions/context-session-action selector))
       (let [arg (-> (str/replace trimmed #"^/tree\s+" "") str/trim)]
         (if (str/starts-with? arg "name ")
           (let [tail        (-> (subs arg 5) str/trim)
@@ -230,24 +225,23 @@
   [request-id emit! trimmed]
   (case trimmed
     "/model"
-    (emit! "ui/frontend-action-requested"
-           {:request-id request-id
-            :action-name "model-picker"
-            :prompt "Select a model"
-            :payload {:models (->> ai-models/all-models
-                                   vals
-                                   (sort-by (juxt :provider :id))
-                                   (mapv (fn [m]
-                                           {:provider (name (:provider m))
-                                            :id (:id m)
-                                            :reasoning (boolean (:supports-reasoning m))})))}})
+    (emit/emit-frontend-action-request!
+     emit!
+     request-id
+     (ui-actions/model-picker-action
+      (->> ai-models/all-models
+           vals
+           (sort-by (juxt :provider :id))
+           (mapv (fn [m]
+                   {:provider (name (:provider m))
+                    :id (:id m)
+                    :reasoning (boolean (:supports-reasoning m))})))))
 
     "/thinking"
-    (emit! "ui/frontend-action-requested"
-           {:request-id request-id
-            :action-name "thinking-picker"
-            :prompt "Select a thinking level"
-            :payload {:levels ["off" "minimal" "low" "medium" "high" "xhigh"]}})))
+    (emit/emit-frontend-action-request!
+     emit!
+     request-id
+     (ui-actions/thinking-picker-action))))
 
 (defn- handle-dispatched-command!
   [ctx state emit-frame! request-id start-daemon-thread! login-handler cmd-result emit!]

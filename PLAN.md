@@ -413,21 +413,21 @@ Goal of the first implementation slice:
 #### Phase 3 — shared picker/action vocabulary
 
 ##### 3A. Define canonical UI action model
-- [ ] define adapter-neutral action kinds in `app_runtime.ui_actions`
-- [ ] define canonical fields for:
-  - [ ] action id
-  - [ ] action kind
-  - [ ] prompt
-  - [ ] order policy
-  - [ ] items
-  - [ ] submit contract
+- [x] define adapter-neutral action kinds in `app_runtime.ui_actions`
+- [x] define canonical fields for:
+  - [x] action id
+  - [x] action kind
+  - [x] prompt
+  - [x] order policy
+  - [x] items
+  - [x] submit contract
 - [ ] define result payload shapes for submitted/cancelled/failed actions
-- [ ] add focused tests for action model construction
+- [x] add focused tests for action model construction
 
 ##### 3B. Migrate RPC frontend-action flows
-- [ ] make RPC `frontend-action-requested` a projection of app-runtime action maps
+- [x] make RPC `frontend-action-requested` a projection of app-runtime action maps
 - [ ] make RPC frontend action result handling route through shared submit/apply semantics where possible
-- [ ] shrink transport-specific naming leaks like `context-session-selector` toward canonical action names
+- [x] shrink transport-specific naming leaks like `context-session-selector` toward canonical action names
 
 ##### 3C. Reuse action model in TUI and Emacs
 - [ ] map TUI picker flows onto canonical action model where practical
