@@ -1385,8 +1385,8 @@
           {:keys [out-lines]} (run-loop input handler state)
           frames              (parse-frames out-lines)
           action-evt          (some #(when (= "ui/frontend-action-requested" (:event %)) %) frames)
-          selector           (get-in action-evt [:data :payload])
-          items              (:selector/items selector)
+          selector           (get-in action-evt [:data :ui/action])
+          items              (mapv :ui.item/meta (:ui/items selector))
           fork-slot          (some #(when (= :fork-point (:item/kind %)) %) items)
           main-idx           (first (keep-indexed (fn [i item]
                                                     (when (and (= :session (:item/kind item))
@@ -1398,7 +1398,7 @@
                                                   items))]
       (is (some? action-evt))
       (is (= "select-session" (get-in action-evt [:data :action-name])))
-      (is (= :context-session (:selector/kind selector)))
+      (is (= :select-session (:ui/action-name selector)))
       (is (vector? items))
       (is (some? fork-slot))
       (is (= (:id entry) (:item/entry-id fork-slot)))

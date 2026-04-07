@@ -339,48 +339,9 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
                   (cons label value)))
               items))))
 
-(defun psi-emacs--frontend-action-map-candidates (action-key payload ui-action)
-  "Return completing-read alist candidates for ACTION-KEY from PAYLOAD/UI-ACTION."
-  (or (psi-emacs--frontend-action-ui-candidates ui-action)
-      (pcase action-key
-        (:select-resume-session
-         (let* ((query (or (alist-get :query payload nil nil #'equal) '()))
-                (result (and (listp query) (alist-get :psi.session/list query nil nil #'equal)))
-                (sessions (cond ((vectorp result) (append result nil))
-                                ((listp result) result)
-                                (t nil))))
-           (when (fboundp 'psi-emacs--resume-session-candidates)
-             (psi-emacs--resume-session-candidates sessions))))
-        (:select-session
-         (let* ((active-item-id (psi-emacs--event-data-get payload '(:selector/active-item-id selector/active-item-id)))
-                (active-id (cond
-                            ((and (vectorp active-item-id) (= 2 (length active-item-id)))
-                             (aref active-item-id 1))
-                            ((and (listp active-item-id) (= 2 (length active-item-id)))
-                             (nth 1 active-item-id))
-                            (t (psi-emacs--event-data-get payload '(:active-session-id active-session-id :activeSessionId activeSessionId)))))
-                (sessions (append (or (psi-emacs--event-data-get payload '(:selector/items selector/items))
-                                      (psi-emacs--event-data-get payload '(:sessions sessions)))
-                                  nil)))
-           (when (fboundp 'psi-emacs--tree-session-candidates)
-             (psi-emacs--tree-session-candidates sessions active-id))))
-        (:select-model
-         (let ((models (append (psi-emacs--event-data-get payload '(:models models)) nil)))
-           (mapcar (lambda (m)
-                     (let ((provider (psi-emacs--event-data-get m '(:provider provider)))
-                           (model-id (psi-emacs--event-data-get m '(:id id)))
-                           (reasoning (psi-emacs--event-data-get m '(:reasoning reasoning))))
-                       (cons (format "%s %s%s"
-                                     provider model-id
-                                     (if reasoning " [reasoning]" ""))
-                             `((:provider . ,provider) (:id . ,model-id)))))
-                   models)))
-        (:select-thinking-level
-         (let ((levels (append (psi-emacs--event-data-get payload '(:levels levels)) nil)))
-           (mapcar (lambda (level)
-                     (cons (format "%s" level) level))
-                   levels)))
-        (_ nil))))
+(defun psi-emacs--frontend-action-map-candidates (_action-key _payload ui-action)
+  "Return completing-read alist candidates from canonical UI-ACTION items."
+  (psi-emacs--frontend-action-ui-candidates ui-action))
 
 (defun psi-emacs--handle-frontend-action-requested (data)
   "Handle backend `ui/frontend-action-requested` event DATA."

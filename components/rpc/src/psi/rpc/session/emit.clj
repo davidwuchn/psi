@@ -107,12 +107,8 @@
 
 (defn emit-frontend-action-request!
   [emit! request-id action]
-  (let [legacy (:ui/legacy action)]
-    (emit! "ui/frontend-action-requested"
-           {:request-id request-id
-            :action-name (some-> (:ui/action-name action) name)
-            :prompt (or (:ui/prompt action)
-                        (:prompt legacy))
-            :payload (or (:payload legacy)
-                         legacy)
-            :ui/action action})))
+  (emit! "ui/frontend-action-requested"
+         {:request-id request-id
+          :action-name (some-> (:ui/action-name action) name)
+          :prompt (:ui/prompt action)
+          :ui/action action}))

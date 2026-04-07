@@ -107,15 +107,14 @@
   ["off" "minimal" "low" "medium" "high" "xhigh"])
 
 (defn select-action
-  [{:keys [action-id action-name prompt order items on-submit legacy]}]
+  [{:keys [action-id action-name prompt order items on-submit]}]
   {:ui/action-id   action-id
    :ui/action-kind :select
    :ui/action-name action-name
    :ui/prompt      prompt
    :ui/order       (or order :default)
    :ui/items       (vec items)
-   :ui/on-submit   on-submit
-   :ui/legacy      legacy})
+   :ui/on-submit   on-submit})
 
 (defn context-session-action
   [selector]
@@ -131,8 +130,7 @@
                     :ui.item/value (:item/action item)
                     :ui.item/meta  item})
                  (:selector/items selector))
-    :on-submit {:submit/kind :selector-action}
-    :legacy {:payload selector}}))
+    :on-submit {:submit/kind :selector-action}}))
 
 (defn resume-session-action
   [query-result]
@@ -149,8 +147,7 @@
                       :ui.item/value (:psi.session-info/path session)
                       :ui.item/meta  session})
                    sessions)
-      :on-submit {:submit/kind :resume-session-path}
-      :legacy {:payload {:query query-result}}})))
+      :on-submit {:submit/kind :resume-session-path}})))
 
 (defn model-picker-action
   [models]
@@ -167,8 +164,7 @@
                                     :id (:id model)}
                     :ui.item/meta  model})
                  models)
-    :on-submit {:submit/kind :set-model}
-    :legacy {:payload {:models (vec models)}}}))
+    :on-submit {:submit/kind :set-model}}))
 
 (defn thinking-picker-action
   ([]
@@ -184,5 +180,4 @@
                      :ui.item/label level
                      :ui.item/value level})
                   levels)
-     :on-submit {:submit/kind :set-thinking-level}
-     :legacy {:payload {:levels (vec levels)}}})))
+     :on-submit {:submit/kind :set-thinking-level}})))

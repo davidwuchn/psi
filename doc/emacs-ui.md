@@ -165,7 +165,7 @@ Reconnect (`C-c C-r`) resets mode to collapsed; `/new` preserves current mode.
 Emacs subscribes to the full default topic set (core + extension/footer topics):
 
 - core: `assistant/*`, `tool/*`, `session/updated`, `command-result`, `error`
-- extension/footer: `ui/*` (including `ui/frontend-action-requested`), `footer/updated`
+- extension/footer: `ui/*` (including canonical `ui/frontend-action-requested` action models), `footer/updated`
 
 ## Reconnect semantics
 

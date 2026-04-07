@@ -70,7 +70,7 @@ Slash-prefixed input is always routed to the backend `command` RPC op, independe
 The backend owns slash parsing and returns either:
 
 - `command-result` — terminal actions and text results
-- `ui/frontend-action-requested` — selector/picker flows completed by Emacs and submitted via `frontend_action_result`
+- `ui/frontend-action-requested` — selector/picker flows carried by canonical `:ui/action` models, completed by Emacs, and submitted via `frontend_action_result`
 
 Common backend-owned slash commands include:
 

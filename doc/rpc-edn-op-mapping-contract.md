@@ -151,7 +151,7 @@ Only catalog topics from `rpc-edn.allium` may be emitted:
 - `tool/update`
 - `tool/result`
 - `ui/dialog-requested`
-- `ui/frontend-action-requested`
+- `ui/frontend-action-requested` (`:ui/action` is the canonical action model; legacy payload duplication removed)
 - `ui/widgets-updated`
 - `ui/status-updated`
 - `ui/notification`
