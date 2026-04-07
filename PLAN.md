@@ -233,6 +233,10 @@ Progress so far:
 - ✓ RPC now delegates extension UI snapshots to app-runtime projections
 - ✓ TUI now consumes canonical extension UI snapshots instead of raw ui-state for dialogs/widgets/notifications ordering
 - ✓ Emacs now preserves backend-owned widget/status ordering instead of re-sorting it locally
+- ✓ canonical background-job summaries now live in `app-runtime.background_jobs`
+- ✓ canonical background-job widget/status projections now live in `app-runtime.background_job_widgets`
+- ✓ runtime installs background-job UI refresh so live jobs project into shared extension UI state
+- ✓ adapters now prefer background-job widget/status projection over transcript-only rendering for the convergence path
 
 #### Phase 0 — scaffold adapter-neutral projection layer
 - [x] add app-runtime projection namespaces:
@@ -471,8 +475,8 @@ Goal of the first implementation slice:
 
 #### Phase 5 — shared public summaries for jobs/context/status
 - [x] identify remaining duplicated presentation-facing summaries across RPC and TUI
-- [ ] extract canonical public summary projections into app-runtime for:
-  - [ ] background jobs
+- [x] extract canonical public summary projections into app-runtime for:
+  - [x] background jobs
   - [ ] context snapshot summaries
   - [x] extension UI/status summaries where shared
 - [x] adapt RPC and TUI to consume shared summaries
