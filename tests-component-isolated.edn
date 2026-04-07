@@ -35,6 +35,11 @@
     :source-paths ["components/ai/src"]
     :ns-patterns [".*-test$"]}
 
+   {:id :app-runtime
+    :test-paths ["components/app-runtime/test"]
+    :source-paths ["components/app-runtime/src"]
+    :ns-patterns [".*-test$"]}
+
    {:id :tui
     :test-paths ["components/tui/test"]
     :source-paths ["components/tui/src"]
