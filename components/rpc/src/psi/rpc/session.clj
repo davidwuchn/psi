@@ -432,6 +432,7 @@
     "new_session" (navigation/handle-new-session! {:ctx ctx
                                                     :request (assoc request :emit-frame! emit-frame!)
                                                     :state state
+                                                    :session-id session-id
                                                     :on-new-session! on-new-session!})
     "switch_session" (navigation/handle-switch-session! (navigation-request ctx request emit-frame! state session-id))
     "list_sessions" (ops/handle-list-sessions {:ctx ctx :request request :state state :session-id session-id})

@@ -4,6 +4,7 @@
    [clojure.string :as str]
    [psi.rpc.events :as events]))
 
+
 (defn make-request-emitter
   [emit-frame! state request-id]
   (fn emit! [event payload]
@@ -95,11 +96,14 @@
   (emit! "command-result" payload))
 
 (defn emit-navigation-result!
-  [emit! ctx state {:keys [nav/session-id nav/rehydration nav/context-snapshot]}]
+  [emit! ctx state {:keys [nav/session-id nav/session-file nav/rehydration nav/context-snapshot]}]
+  (events/set-focus-session-id! state session-id)
   (emit-session-rehydration! emit! rehydration)
   (emit-session-updated! emit! ctx session-id)
   (emit-footer-updated! emit! ctx session-id)
-  (emit! "context/updated" context-snapshot))
+  (emit! "context/updated" context-snapshot)
+  {:session-id session-id
+   :session-file session-file})
 
 (defn emit-frontend-action-request!
   [emit! request-id action]

@@ -69,9 +69,14 @@
     "follow_up"
     "abort"
     "interrupt"
+    "login_begin"
+    "new_session"
+    "switch_session"
+    "list_sessions"
     "list_background_jobs"
     "inspect_background_job"
     "cancel_background_job"
+    "subscribe"
     "fork"
     "set_session_name"
     "set_model"
@@ -83,7 +88,9 @@
     "set_auto_retry"
     "get_state"
     "get_messages"
-    "get_session_stats"})
+    "get_session_stats"
+    "resolve_dialog"
+    "cancel_dialog"})
 
 
 (defn default-session-id-in

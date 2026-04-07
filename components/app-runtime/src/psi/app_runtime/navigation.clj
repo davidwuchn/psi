@@ -63,17 +63,20 @@
 (defn new-session-result
   [ctx state source-session-id {:keys [on-new-session!]}]
   (if on-new-session!
-    (let [rehydrate (on-new-session! source-session-id)
-          sid       (:session-id rehydrate)]
+    (let [rehydrate     (on-new-session! source-session-id)
+          sid           (or (:session-id rehydrate)
+                            (:session-id (ss/get-session-data-in ctx source-session-id)))
+          session-data  (ss/get-session-data-in ctx sid)
+          session-file  (:session-file session-data)
+          messages      (or (:agent-messages rehydrate)
+                            (message-source/session-messages ctx sid))]
       {:nav/op                   :new-session
        :nav/session-id           sid
-       :nav/session-file         (:session-file (ss/get-session-data-in ctx sid))
+       :nav/session-file         session-file
        :nav/rehydration          {:session-id    sid
-                                  :session-file  (:session-file (ss/get-session-data-in ctx sid))
-                                  :message-count (count (or (:agent-messages rehydrate)
-                                                            (message-source/session-messages ctx sid)))
-                                  :messages      (or (:agent-messages rehydrate)
-                                                     (message-source/session-messages ctx sid))
+                                  :session-file  session-file
+                                  :message-count (count messages)
+                                  :messages      messages
                                   :tool-calls    (or (:tool-calls rehydrate) {})
                                   :tool-order    (or (:tool-order rehydrate) [])}
        :nav/context-snapshot     (context-snapshot ctx state sid)
