@@ -229,14 +229,18 @@ Progress so far:
 - ✓ TUI `/tree` now consumes the shared selector model and no longer computes its own query-derived tree model
 - ✓ Emacs now consumes the canonical selector payload from RPC while preserving backend order
 - ✓ selector slice verification is green across app-runtime, RPC, TUI, and Emacs
+- ✓ canonical extension UI/status projection now lives in `app-runtime.projections`
+- ✓ RPC now delegates extension UI snapshots to app-runtime projections
+- ✓ TUI now consumes canonical extension UI snapshots instead of raw ui-state for dialogs/widgets/notifications ordering
+- ✓ Emacs now preserves backend-owned widget/status ordering instead of re-sorting it locally
 
 #### Phase 0 — scaffold adapter-neutral projection layer
 - [x] add app-runtime projection namespaces:
   - [x] `components/app-runtime/src/psi/app_runtime/selectors.clj`
-  - [ ] `components/app-runtime/src/psi/app_runtime/footer.clj`
-  - [ ] `components/app-runtime/src/psi/app_runtime/ui_actions.clj`
-  - [ ] `components/app-runtime/src/psi/app_runtime/navigation.clj`
-  - [ ] `components/app-runtime/src/psi/app_runtime/projections.clj`
+  - [x] `components/app-runtime/src/psi/app_runtime/footer.clj`
+  - [x] `components/app-runtime/src/psi/app_runtime/ui_actions.clj`
+  - [x] `components/app-runtime/src/psi/app_runtime/navigation.clj`
+  - [x] `components/app-runtime/src/psi/app_runtime/projections.clj`
 - [x] define naming/data-shape conventions for adapter-neutral projection maps
 - [x] add app-runtime-focused test namespace(s) for projections and navigation models
 - [x] document the rule: app-runtime exports semantic models, adapters format/render them
@@ -466,12 +470,12 @@ Goal of the first implementation slice:
 - [x] allow TUI transition restore helpers to accept legacy payloads or canonical nav results during migration
 
 #### Phase 5 — shared public summaries for jobs/context/status
-- [ ] identify remaining duplicated presentation-facing summaries across RPC and TUI
+- [x] identify remaining duplicated presentation-facing summaries across RPC and TUI
 - [ ] extract canonical public summary projections into app-runtime for:
   - [ ] background jobs
   - [ ] context snapshot summaries
-  - [ ] extension UI/status summaries where shared
-- [ ] adapt RPC and TUI to consume shared summaries
+  - [x] extension UI/status summaries where shared
+- [x] adapt RPC and TUI to consume shared summaries
 - [ ] remove remaining transport/adapter-local semantic duplication
 
 #### Immediate follow-on checklist
