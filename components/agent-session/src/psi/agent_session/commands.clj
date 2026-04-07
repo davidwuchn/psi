@@ -22,6 +22,7 @@
    [clojure.string :as str]
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as session]
+   [psi.app-runtime.background-jobs :as app-bg-jobs]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
@@ -425,16 +426,7 @@
     (if invalid?
       {:type :text :message "Usage: /jobs [status ...]"}
       {:type :text
-       :message (str "── Background jobs ─────────────────────\n"
-                     (if (empty? jobs)
-                       "  (none)"
-                       (str/join "\n"
-                                 (map (fn [job]
-                                        (str "  " (:job-id job)
-                                             "  [" (name (:status job)) "]"
-                                             "  " (:tool-name job)))
-                                      jobs)))
-                     "\n───────────────────────────────────────")})))
+       :message (:jobs/text (app-bg-jobs/jobs-summary jobs {:statuses (or statuses [:running :pending-cancel])}))})))
 
 (defn- dispatch-job-command
   [ctx session-id trimmed]
@@ -443,9 +435,7 @@
       {:type :text :message "Usage: /job <job-id>"}
       (let [job (bg-rt/inspect-background-job-in! ctx session-id job-id)]
         {:type :text
-         :message (str "── Background job ──────────────────────\n"
-                       (safe-pr-str job)
-                       "\n───────────────────────────────────────")}))))
+         :message (:job/text (app-bg-jobs/job-detail job))}))))
 
 (defn- dispatch-cancel-job-command
   [ctx session-id trimmed]
@@ -454,8 +444,7 @@
       {:type :text :message "Usage: /cancel-job <job-id>"}
       (let [job (bg-rt/cancel-background-job-in! ctx session-id job-id :user)]
         {:type :text
-         :message (str "Cancellation requested for " job-id
-                       " (status=" (name (:status job)) ")")}))))
+         :message (:job/message (app-bg-jobs/cancel-job-summary job-id job))}))))
 
 (defn- dispatch-remember-command
   [ctx session-id trimmed]
