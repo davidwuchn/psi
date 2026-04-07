@@ -88,6 +88,8 @@ The transport op router MUST remain a thin translation boundary over existing `p
 | RPC op | Params contract | Runtime mapping target | Success `:data` shape | Canonical error mapping |
 |---|---|---|---|---|
 | `handshake` | `{:client-info {:name s :version s :protocol-version s :features [s*]?}}` | transport-level negotiation (not session domain op) | `{:server-info {:protocol-version s :features [s*] :session-id s? :model-id s? :thinking-level s?}}` | `protocol/unsupported-version`, `request/invalid-params` |
+
+Handshake remains transport-focused. Initial session/UI snapshots are delivered through normal subscribed events rather than a special handshake bootstrap event.
 | `query_eql` | `{:query <edn-string-vector>}` | `session/query-in` | `{:result any}` | `request/invalid-params`, `request/invalid-query`, `runtime/query-failed` |
 | `command` | `{:text s}` | backend slash-command dispatch | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `frontend_action_result` | `{:request-id s :action-name s :status ("submitted"\|"cancelled"\|"failed") :value ? :error-message s?}` | apply/cancel/fail a backend-requested frontend action | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
@@ -161,7 +163,7 @@ Only catalog topics from `rpc-edn.allium` may be emitted:
 
 Planned source signal exemplars for bridge implementation:
 - executor progress event kinds: `:text-delta`, `:tool-start`, `:tool-delta`, `:tool-executing`, `:tool-execution-update`, `:tool-result`
-- session lifecycle hooks: `session_switch`, resume/bootstrap flows
+- session lifecycle hooks: `session_switch`, resume flows, and subscribed initial snapshot emission
 - UI extension state atom updates for widgets/status/notifications/footer
 
 Bridge requirements:

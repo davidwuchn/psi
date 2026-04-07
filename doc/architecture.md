@@ -39,6 +39,7 @@ Current duplication pressure exists where the same user-visible question is
 answered in more than one adapter path, for example:
 - session selector/tree ordering and fork-point interleaving
 - footer/status semantic composition
+- session summary fragments used by headers/diagnostics
 - picker definitions (`/tree`, `/resume`, `/model`, `/thinking`)
 - session navigation result shaping (`new` / `resume` / `switch` / `fork`)
 - background job and context snapshot presentation data
@@ -58,6 +59,7 @@ Adapters should differ only in:
 - focus-scoped session operations parameterized by adapter-owned focus
 - selector/picker models and item ordering
 - footer semantic model
+- shared session-summary/model-label/status fragments for adapter diagnostics/header use
 - context snapshot / session tree model
 - canonical transcript message reconstruction from journal state
 - transcript rehydration packages and other shared presentation-facing domain projections
@@ -68,6 +70,7 @@ Adapters should differ only in:
 - transport framing
 - subscriptions and event delivery
 - request/response correlation
+- transport-focused handshake / protocol negotiation
 - adaptation of `app-runtime` models onto the RPC protocol
 - explicit `session-id` routing whenever the operation can reasonably carry it
 - RPC-local focus pointer only as transport-scoped adapter fallback state

@@ -133,10 +133,11 @@ source-of-truth identity.
 - ANSI tool output is rendered with faces (no raw escape noise).
 - Header line shows minimal transport + process state + run-state and tool mode:
   `psi [transport/process/run-state] tools:<mode>`.
-  When `session/updated` includes model metadata, header appends
-  `model:(<provider>) <model-id>`.
+  Emacs now consumes the backend-shared session-summary fragment carried on
+  `session/updated` for the header model label.
 - `session/updated` is projected into frontend state for `/status`
-  diagnostics (session id/phase, streaming+compacting flags, pending, retry).
+  diagnostics. Emacs still owns transport/process/run-state/error reporting, but
+  now consumes the backend-shared session-summary line for the session slice.
 - RPC errors are surfaced in minibuffer **and** mirrored as one persistent
   in-buffer `Error: ...` line.
 
@@ -166,6 +167,10 @@ Emacs subscribes to the full default topic set (core + extension/footer topics):
 
 - core: `assistant/*`, `tool/*`, `session/updated`, `command-result`, `error`
 - extension/footer: `ui/*` (including canonical `ui/frontend-action-requested` action models), `footer/updated`
+
+Startup note:
+- RPC handshake is transport-focused and does not bootstrap `context/updated` directly.
+- Initial `session/updated`, `footer/updated`, and `context/updated` snapshots arrive through the normal subscribed event path.
 
 ## Reconnect semantics
 

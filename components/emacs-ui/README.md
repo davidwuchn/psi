@@ -64,6 +64,10 @@ Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
   - `ui/notification`
   - `footer/updated`
 
+Startup note:
+- handshake is transport-only
+- initial `session/updated`, `footer/updated`, and `context/updated` state arrives via subscribed event snapshots, not a handshake bootstrap event
+
 ## Slash commands
 
 Slash-prefixed input is always routed to the backend `command` RPC op, independent of frontend run-state.
@@ -160,12 +164,13 @@ Frontend routing is driven by an explicit run-state:
 - `error` — set on RPC errors or streaming watchdog timeout
 
 Header status includes this state: `psi [transport/process/run-state] tools:<mode>`.
-When `session/updated` carries model metadata, header appends
-`model:(<provider>) <model-id>`.
+When `session/updated` carries the shared session-summary fragments, Emacs uses
+that backend-owned model label in the header.
 
-`session/updated` is projected into frontend state and `/status` diagnostics,
-including: session id, phase, streaming/compacting flags, pending count,
-and retry attempt. `/status` also includes `last-error: ...` when present.
+`session/updated` is projected into frontend state and `/status` diagnostics.
+The frontend still owns transport/process/run-state/error reporting, while the
+session slice now uses the backend-owned session-summary line. `/status` also
+includes `last-error: ...` when present.
 
 ### Transition sketch
 
