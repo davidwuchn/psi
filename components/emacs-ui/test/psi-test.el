@@ -4572,9 +4572,13 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                    t))
                 ((symbol-function 'psi-emacs--session-tree-line-label)
                  (lambda (slot)
-                   (or (alist-get :display-name slot nil nil #'equal)
-                       (alist-get :name slot nil nil #'equal)
-                       "(unknown)"))))
+                   (let ((item-kind (or (alist-get :item-kind slot nil nil #'equal) "session")))
+                     (if (equal item-kind "fork-point")
+                         (concat "⎇ " (or (alist-get :display-name slot nil nil #'equal)
+                                           "(unknown fork point)"))
+                       (or (alist-get :display-name slot nil nil #'equal)
+                           (alist-get :name slot nil nil #'equal)
+                           "(unknown)"))))))
         (psi-emacs--tree-select-and-switch
          psi-emacs--state
          "s1"
@@ -4842,7 +4846,7 @@ summaries and made toggling body visibility ineffective after returning."
           "abc123456789")))
     (should (= 2 (length candidates)))
     (should (equal "abc123456789" (cdar candidates)))
-    (should (equal "Alpha [abc12345] ← active" (caar candidates)))
+    (should (equal "Alpha [abc12345] — 05:12 / 06:47 — /repo/alpha ← active" (caar candidates)))
     (should (equal "def987654321" (cdadr candidates)))
     (should (equal "  (session def98765) [def98765] — 04:00 / 04:05 — /repo/beta"
                    (car (cadr candidates))))))
