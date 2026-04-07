@@ -893,10 +893,13 @@ Failure path appends deterministic assistant-visible feedback, sets
 ;;; ── /tree session picker ─────────────────────────────────────────────────
 
 (defun psi-emacs--tree-session-candidates (slots active-id)
-  "Build completing-read candidates from context session SLOTS with ACTIVE-ID.
+  "Build completing-read candidates from backend-ordered SLOTS with ACTIVE-ID.
+
+The backend owns `/tree` hierarchy and item ordering. This frontend function
+only renders labels and preserves incoming order exactly.
 
 Returns an alist of (label . value), where value is either a session-id string
-or an alist payload for fork-point selection." 
+or an alist payload for fork-point selection."
   (mapcar
    (lambda (slot)
      (let* ((item-kind    (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
@@ -927,7 +930,7 @@ or an alist payload for fork-point selection."
                                 (:session-id . ,id))
                             id)))
        (cons label value)))
-   slots))
+   (append slots nil)))
 
 (defun psi-emacs--request-switch-session-by-id (state session-id)
   "Dispatch `switch_session` for SESSION-ID (in-process context session) from STATE."
@@ -950,9 +953,11 @@ or an alist payload for fork-point selection."
     (if (null candidates)
         (psi-emacs--append-assistant-message "No live sessions available.")
       (let* ((selected-label
-              (completing-read "Switch session: " candidates nil t nil nil
-                               ;; default: active session label
-                               (car (rassoc active-id candidates))))
+              (psi-emacs--ordered-completing-read
+               "Switch session: "
+               candidates
+               ;; default: active session label
+               (car (rassoc active-id candidates))))
              (selected-value (cdr (assoc selected-label candidates))))
         (cond
          ((null selected-value)
@@ -970,26 +975,17 @@ or an alist payload for fork-point selection."
           (psi-emacs--request-switch-session-by-id state selected-value)))))))
 
 (defun psi-emacs--handle-idle-tree-command (state)
-  "Handle `/tree` command.
+  "Handle `/tree` command via backend selector flow.
 
-When a live context snapshot is available locally, open the completing-read
-picker immediately. When no snapshot is available yet, fall back to backend
-`command` dispatch so the canonical frontend-action flow can provide the
-selector."
-  (let* ((snapshot  (and state (psi-emacs-state-context-snapshot state)))
-         (active-id (and snapshot
-                         (psi-emacs--event-data-get snapshot
-                                                    '(:active-session-id active-session-id))))
-         (slots     (and snapshot
-                         (append (psi-emacs--event-data-get snapshot '(:sessions sessions)) nil))))
-    (if slots
-        (psi-emacs--tree-select-and-switch state active-id slots)
-      (let ((sent? (psi-emacs--dispatch-request
-                    "command"
-                    '((:text . "/tree")))))
-        (when sent?
-          (psi-emacs--set-run-state state 'streaming)
-          (psi-emacs--reset-stream-watchdog state))))))
+Always route bare `/tree` through the backend `command` path so the picker can
+include current-session fork points/messages in addition to the live session
+snapshot. Direct `/tree <id>` still switches locally via `switch_session`."
+  (let ((sent? (psi-emacs--dispatch-request
+                "command"
+                '((:text . "/tree")))))
+    (when sent?
+      (psi-emacs--set-run-state state 'streaming)
+      (psi-emacs--reset-stream-watchdog state))))
 
 (defun psi-emacs--default-handle-slash-command (state message)
   "Default slash handler.

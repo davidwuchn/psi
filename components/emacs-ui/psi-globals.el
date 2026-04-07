@@ -55,6 +55,7 @@
 (declare-function psi-emacs--request-switch-session-by-id "psi-session-commands" (state session-id))
 (declare-function psi-emacs--resume-session-candidates "psi-session-commands" (sessions))
 (declare-function psi-emacs--tree-session-candidates "psi-session-commands" (slots active-id))
+(declare-function psi-emacs--ordered-completing-read "psi-events" (prompt candidates &optional default))
 (declare-function psi-emacs--replay-session-messages "psi-session-commands" (messages))
 (declare-function psi-emacs--session-tree-line-label "psi-events" (slot))
 (declare-function psi-emacs--append-assistant-message "psi-compose" (text))

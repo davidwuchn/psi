@@ -307,6 +307,17 @@ Child sessions and fork-points are indented beneath their parent session."
   (when psi-emacs--state
     (psi-emacs--set-run-state psi-emacs--state 'idle)))
 
+(defun psi-emacs--ordered-completing-read (prompt candidates &optional default)
+  "Return selection from CANDIDATES while preserving their given order.
+
+This disables completion UI sort hooks for ordered backend-owned lists such as
+`/tree`, where alphabetical resorting destroys structural meaning."
+  (let ((completion-extra-properties
+         (append completion-extra-properties
+                 '(:display-sort-function identity
+                   :cycle-sort-function identity))))
+    (completing-read prompt candidates nil t nil nil default)))
+
 (defun psi-emacs--frontend-action-map-candidates (action-name payload)
   "Return completing-read alist candidates for ACTION-NAME from PAYLOAD."
   (pcase action-name
@@ -352,7 +363,9 @@ Child sessions and fork-points are indented beneath their parent session."
            (candidates (psi-emacs--frontend-action-map-candidates action-name payload))
            (selected (condition-case nil
                          (when candidates
-                           (let ((label (completing-read (concat prompt " ") candidates nil t)))
+                           (let ((label (psi-emacs--ordered-completing-read
+                                         (concat prompt " ")
+                                         candidates)))
                              (cdr (assoc label candidates))))
                        (quit :cancelled))))
       (cond

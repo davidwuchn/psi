@@ -1228,9 +1228,12 @@
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
-        (let ((rpc-calls nil))
+        (let ((rpc-calls nil)
+              (sort-hooks nil))
           (cl-letf (((symbol-function 'completing-read)
                      (lambda (&rest _args)
+                       (setq sort-hooks (list (plist-get completion-extra-properties :display-sort-function)
+                                              (plist-get completion-extra-properties :cycle-sort-function)))
                        "  ⎇ Branch from here"))
                     ((symbol-value 'psi-emacs--send-request-function)
                      (lambda (_state op params &optional _callback)
@@ -1252,6 +1255,7 @@
                                                      (:display-name . "Branch from here")
                                                      (:parent-session-id . "s1"))])))))))
           (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '(identity identity) sort-hooks))
           (should (equal '(("frontend_action_result"
                             ((:request-id . "req-3")
                              (:action-name . "context-session-selector")
@@ -1261,7 +1265,7 @@
                                         (:session-id . "s1"))))))
                          rpc-calls)))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
-        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+        (delete-process (psi-emacs-state-process psi-emacs--state)))))))
 
 (ert-deftest psi-resume-session-candidates-sort-newest-first-by-modified ()
   (let* ((sessions (list '((:psi.session-info/path . "/tmp/sessions/older.ndedn")
@@ -1998,6 +2002,7 @@ B output into A. Switching to B later then produced corrupted transcript state."
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 
 (ert-deftest psi-assistant-streaming-single-block-aggregates-and-finalizes ()
   (with-temp-buffer
@@ -3473,7 +3478,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
 
 This preserves canonical switch rehydration semantics, including tool-row
 metadata and toggle behavior, instead of routing through backend `/tree`
-command rehydration." 
+command rehydration."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -4507,6 +4512,19 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
     (should (equal "fork-point" (alist-get :type fork-value nil nil #'equal)))
     (should (equal "e1" (alist-get :entry-id fork-value nil nil #'equal)))))
 
+(ert-deftest psi-tree-session-candidates-preserve-backend-order ()
+  "Fork-point candidates preserve backend order instead of re-sorting locally."
+  (let* ((slots '(((:id . "s1") (:item-kind . "session") (:name . "main") (:is-active . t))
+                  ((:id . "s2") (:item-kind . "session") (:name . "child") (:parent-session-id . "s1"))
+                  ((:id . "s1") (:item-kind . "fork-point") (:entry-id . "e1")
+                   (:display-name . "Branch from here") (:parent-session-id . "s1"))))
+         (candidates (psi-emacs--tree-session-candidates slots "s1"))
+         (labels (mapcar #'car candidates)))
+    (should (equal '("main [s1] ← active"
+                     "  child [s2]"
+                     "  ⎇ Branch from here")
+                   labels))))
+
 (ert-deftest psi-tree-picker-dispatches-fork-for-fork-point-selection ()
   "Selecting a fork-point candidate dispatches the fork op with entry-id."
   (with-temp-buffer
@@ -4616,7 +4634,7 @@ persisted transcript that existed before switching away."
 Regression: routing tree widget actions through backend `/tree` command used the
 canonical event rehydrate path, which restores less tool-row metadata than the
 explicit `switch_session` + targeted rehydration flow. That dropped argument
-summaries and made toggling body visibility ineffective after returning." 
+summaries and made toggling body visibility ineffective after returning."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -4688,11 +4706,15 @@ summaries and made toggling body visibility ineffective after returning."
       ;; Confirm exactly one call to switch_session was made (session-id branch)
       (should (= 1 (length calls))))))
 
-(ert-deftest psi-tree-command-falls-back-to-backend-when-no-context-snapshot ()
-  "Bare `/tree` should use backend command flow until a context snapshot exists."
+(ert-deftest psi-tree-command-uses-backend-selector-flow-even-with-context-snapshot ()
+  "Bare `/tree` should use backend command flow so fork points/messages can appear."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-context-snapshot psi-emacs--state)
+          '((:active-session-id . "s1")
+            (:sessions . (((:id . "s1") (:name . "main") (:is-active . t) (:parent-session-id . nil))
+                          ((:id . "s2") (:name . "child") (:is-active . nil) (:parent-session-id . "s1"))))))
     (let ((calls nil)
           (watchdog-reset nil))
       (cl-letf (((symbol-value 'psi-emacs--send-request-function)
