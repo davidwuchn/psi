@@ -421,12 +421,12 @@ Goal of the first implementation slice:
   - [x] order policy
   - [x] items
   - [x] submit contract
-- [ ] define result payload shapes for submitted/cancelled/failed actions
+- [x] define result payload shapes for submitted/cancelled/failed actions
 - [x] add focused tests for action model construction
 
 ##### 3B. Migrate RPC frontend-action flows
 - [x] make RPC `frontend-action-requested` a projection of app-runtime action maps
-- [ ] make RPC frontend action result handling route through shared submit/apply semantics where possible
+- [x] make RPC frontend action result handling route through shared submit/apply semantics where possible
 - [x] shrink transport-specific naming leaks like `context-session-selector` toward canonical action names
 
 ##### 3C. Reuse action model in TUI and Emacs
@@ -475,11 +475,11 @@ Goal of the first implementation slice:
 - [ ] remove remaining transport/adapter-local semantic duplication
 
 #### Immediate follow-on checklist
-- [ ] remove duplicate RPC navigation emission helper and route all RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
-- [ ] extract canonical context snapshot projection into `app-runtime` and make `rpc.events/context-updated-payload` delegate to it
-- [ ] extract canonical transcript rehydration message source into `app-runtime` and remove `app-runtime.navigation` dependency on `psi.rpc.session.message-source`
-- [ ] update focused app-runtime/RPC tests to prove shared navigation/context/rehydration projections
-- [ ] refresh `mementum/state.md` after the convergence cleanup lands
+- [x] remove duplicate RPC navigation emission helper and route all RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
+- [x] extract canonical context snapshot projection into `app-runtime` and make `rpc.events/context-updated-payload` delegate to it
+- [x] extract canonical transcript rehydration message source into `app-runtime` and remove `app-runtime.navigation` dependency on `psi.rpc.session.message-source`
+- [x] update focused app-runtime/RPC tests to prove shared navigation/context/rehydration projections
+- [x] refresh `mementum/state.md` after the convergence cleanup lands
 
 #### Cross-cutting cleanup tasks
 - [ ] remove obsolete duplicated helpers after each phase instead of leaving parallel paths
