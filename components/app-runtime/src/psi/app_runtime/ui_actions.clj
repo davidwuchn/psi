@@ -138,8 +138,7 @@
                     :ui.item/meta  item})
                  (:selector/items selector))
     :on-submit {:submit/kind :selector-action}
-    :legacy {:action-name "context-session-selector"
-             :payload selector}}))
+    :legacy {:payload selector}}))
 
 (defn resume-session-action
   [query-result]
@@ -157,8 +156,7 @@
                       :ui.item/meta  session})
                    sessions)
       :on-submit {:submit/kind :resume-session-path}
-      :legacy {:action-name "resume-selector"
-               :payload {:query query-result}}})))
+      :legacy {:payload {:query query-result}}})))
 
 (defn model-picker-action
   [models]
@@ -176,8 +174,7 @@
                     :ui.item/meta  model})
                  models)
     :on-submit {:submit/kind :set-model}
-    :legacy {:action-name "model-picker"
-             :payload {:models (vec models)}}}))
+    :legacy {:payload {:models (vec models)}}}))
 
 (defn thinking-picker-action
   ([]
@@ -194,5 +191,4 @@
                      :ui.item/value level})
                   levels)
      :on-submit {:submit/kind :set-thinking-level}
-     :legacy {:action-name "thinking-picker"
-              :payload {:levels (vec levels)}}})))
+     :legacy {:payload {:levels (vec levels)}}})))
