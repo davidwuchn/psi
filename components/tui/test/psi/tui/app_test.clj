@@ -957,7 +957,7 @@ clojure-lsp"}]})
       (is (str/includes? out "R1.4M"))
       (is (str/includes? out "$0.434"))
       (is (str/includes? out "17.6%/400k (auto)"))
-      (is (str/includes? out "(openai) gpt-5.3-codex • xhigh"))
+      (is (str/includes? out "(openai) gpt-5.3-codex • thinking xhigh"))
       ;; status sort + sanitization (a before b, newline collapsed to space)
       (is (str/includes? out "Clojure-LSP clojure-lsp TS+ESL,Prett")))))
 

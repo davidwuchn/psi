@@ -408,7 +408,7 @@ Goal of the first implementation slice:
 ##### 2C. Migrate TUI footer rendering
 - [x] make TUI read the shared footer model
 - [x] keep width-aware line wrapping/alignment in TUI only
-- [ ] update TUI tests to assert rendering from canonical footer semantics
+- [x] update TUI tests to assert rendering from canonical footer semantics
 
 #### Phase 3 — shared picker/action vocabulary
 
