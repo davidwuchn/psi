@@ -475,15 +475,19 @@
       (is (= :response (:kind f1)))
       (is (= "list_background_jobs" (:op f1)))
       (is (= "job-rpc-1" (get-in f1 [:data :jobs 0 :job-id])))
+      (is (= "job-rpc-1  [running]  agent-chain"
+             (get-in f1 [:data :jobs 0 :summary :list-line])))
 
       (is (= :response (:kind f2)))
       (is (= "inspect_background_job" (:op f2)))
       (is (= "job-rpc-1" (get-in f2 [:data :job :job-id])))
+      (is (= "running" (get-in f2 [:data :job :summary :status-label])))
 
       (is (= :response (:kind f3)))
       (is (= "cancel_background_job" (:op f3)))
       (is (true? (get-in f3 [:data :accepted])))
-      (is (= :pending-cancel (get-in f3 [:data :job :status]))))))
+      (is (= :pending-cancel (get-in f3 [:data :job :status])))
+      (is (= "pending-cancel" (get-in f3 [:data :job :summary :status-label]))))))
 
 (deftest progress-event-thinking-delta-maps-to-rpc-thinking-topic-test
   (let [{:keys [event data]}

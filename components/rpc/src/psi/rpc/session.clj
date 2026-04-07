@@ -5,6 +5,7 @@
    [clojure.string :as str]
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.app-runtime.background-jobs :as app-bg-jobs]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
@@ -133,28 +134,38 @@
 
 (defn- background-job->rpc-view
   [job]
-  (-> job
-      (select-keys [:job-id
-                    :thread-id
-                    :tool-call-id
-                    :tool-name
-                    :job-kind
-                    :workflow-ext-path
-                    :workflow-id
-                    :job-seq
-                    :started-at
-                    :completed-at
-                    :completed-seq
-                    :status
-                    :terminal-payload
-                    :terminal-payload-file
-                    :cancel-requested-at
-                    :terminal-message-emitted
-                    :terminal-message-emitted-at])
-      (update :started-at str)
-      (update :completed-at #(when % (str %)))
-      (update :cancel-requested-at #(when % (str %)))
-      (update :terminal-message-emitted-at #(when % (str %)))))
+  (let [summary (app-bg-jobs/job-summary job)]
+    (merge
+     (-> job
+         (select-keys [:job-id
+                       :thread-id
+                       :tool-call-id
+                       :tool-name
+                       :job-kind
+                       :workflow-ext-path
+                       :workflow-id
+                       :job-seq
+                       :started-at
+                       :completed-at
+                       :completed-seq
+                       :status
+                       :terminal-payload
+                       :terminal-payload-file
+                       :cancel-requested-at
+                       :terminal-message-emitted
+                       :terminal-message-emitted-at])
+         (update :started-at str)
+         (update :completed-at #(when % (str %)))
+         (update :cancel-requested-at #(when % (str %)))
+         (update :terminal-message-emitted-at #(when % (str %))))
+     {:summary {:job-id (:job/id summary)
+                :tool-name (:job/tool-name summary)
+                :status (:job/status summary)
+                :status-label (:job/status-label summary)
+                :is-terminal (:job/is-terminal summary)
+                :is-running (:job/is-running summary)
+                :is-cancelling (:job/is-cancelling summary)
+                :list-line (:job/list-line summary)}})))
 
 (defn- handle-list-background-jobs!
   [ctx request params session-id]
