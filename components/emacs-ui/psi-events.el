@@ -319,9 +319,23 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
     (completing-read prompt candidates nil t nil nil default)))
 
 (defun psi-emacs--frontend-action-key (ui-action action-name)
-  "Return canonical frontend action key from UI-ACTION or legacy ACTION-NAME."
-  (or (psi-emacs--event-data-get ui-action '(:ui/action-name ui/action-name))
-      action-name))
+  "Return canonical frontend action key from UI-ACTION or ACTION-NAME."
+  (let ((key (or (psi-emacs--event-data-get ui-action '(:ui/action-name ui/action-name))
+                 action-name)))
+    (cond
+     ((eq key :resume-selector) :select-resume-session)
+     ((equal key "resume-selector") :select-resume-session)
+     ((eq key :context-session-selector) :select-session)
+     ((equal key "context-session-selector") :select-session)
+     ((eq key :model-picker) :select-model)
+     ((equal key "model-picker") :select-model)
+     ((eq key :thinking-picker) :select-thinking-level)
+     ((equal key "thinking-picker") :select-thinking-level)
+     ((equal key "select-resume-session") :select-resume-session)
+     ((equal key "select-session") :select-session)
+     ((equal key "select-model") :select-model)
+     ((equal key "select-thinking-level") :select-thinking-level)
+     (t key))))
 
 (defun psi-emacs--frontend-action-ui-candidates (ui-action)
   "Return completion candidates from canonical UI-ACTION items, or nil."
@@ -337,7 +351,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
   "Return completing-read alist candidates for ACTION-KEY from PAYLOAD/UI-ACTION."
   (or (psi-emacs--frontend-action-ui-candidates ui-action)
       (pcase action-key
-        ((or :select-resume-session "resume-selector")
+        (:select-resume-session
          (let* ((query (or (alist-get :query payload nil nil #'equal) '()))
                 (result (and (listp query) (alist-get :psi.session/list query nil nil #'equal)))
                 (sessions (cond ((vectorp result) (append result nil))
@@ -345,7 +359,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
                                 (t nil))))
            (when (fboundp 'psi-emacs--resume-session-candidates)
              (psi-emacs--resume-session-candidates sessions))))
-        ((or :select-session "context-session-selector")
+        (:select-session
          (let* ((active-item-id (psi-emacs--event-data-get payload '(:selector/active-item-id selector/active-item-id)))
                 (active-id (cond
                             ((and (vectorp active-item-id) (= 2 (length active-item-id)))
@@ -358,7 +372,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
                                   nil)))
            (when (fboundp 'psi-emacs--tree-session-candidates)
              (psi-emacs--tree-session-candidates sessions active-id))))
-        ((or :select-model "model-picker")
+        (:select-model
          (let ((models (append (psi-emacs--event-data-get payload '(:models models)) nil)))
            (mapcar (lambda (m)
                      (let ((provider (psi-emacs--event-data-get m '(:provider provider)))
@@ -369,7 +383,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
                                      (if reasoning " [reasoning]" ""))
                              `((:provider . ,provider) (:id . ,model-id)))))
                    models)))
-        ((or :select-thinking-level "thinking-picker")
+        (:select-thinking-level
          (let ((levels (append (psi-emacs--event-data-get payload '(:levels levels)) nil)))
            (mapcar (lambda (level)
                      (cons (format "%s" level) level))
