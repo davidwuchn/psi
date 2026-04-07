@@ -5,15 +5,9 @@
 
 (defn frontend-action-key
   [ui-action action-name]
-  (let [k (keyword (or (some-> ui-action :ui/action-name name)
-                       action-name
-                       ""))]
-    (case k
-      :resume-selector :select-resume-session
-      :context-session-selector :select-session
-      :model-picker :select-model
-      :thinking-picker :select-thinking-level
-      k)))
+  (keyword (or (some-> ui-action :ui/action-name name)
+               action-name
+               "")))
 
 (defn normalize-result-status
   [status]
