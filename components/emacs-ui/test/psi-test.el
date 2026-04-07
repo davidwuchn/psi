@@ -1173,7 +1173,7 @@
             (psi-emacs--handle-rpc-event
              `((:event . "ui/frontend-action-requested")
                (:data . ((:request-id . "req-1")
-                         (:action-name . "resume-selector")
+                         (:action-name . "select-resume-session")
                          (:prompt . "Select a session to resume")
                          (:ui/action . ,ui-action)
                          (:payload . ((:query . ((:psi.session/list .
@@ -1190,7 +1190,7 @@
                  (params (cadr call)))
             (should (equal "frontend_action_result" (car call)))
             (should (equal "req-1" (alist-get :request-id params nil nil #'equal)))
-            (should (equal "resume-selector" (alist-get :action-name params nil nil #'equal)))
+            (should (equal "select-resume-session" (alist-get :action-name params nil nil #'equal)))
             (should (equal ui-action (alist-get :ui/action params nil nil #'equal)))
             (should (equal "submitted" (alist-get :status params nil nil #'equal)))
             (should (equal "/tmp/sessions/a.ndedn" (alist-get :value params nil nil #'equal))))
@@ -1221,7 +1221,7 @@
             (psi-emacs--handle-rpc-event
              `((:event . "ui/frontend-action-requested")
                (:data . ((:request-id . "req-2")
-                         (:action-name . "resume-selector")
+                         (:action-name . "select-resume-session")
                          (:prompt . "Select a session to resume")
                          (:ui/action . ,ui-action)
                          (:payload . ((:query . ((:psi.session/list .
@@ -1234,7 +1234,7 @@
                  (params (cadr call)))
             (should (equal "frontend_action_result" (car call)))
             (should (equal "req-2" (alist-get :request-id params nil nil #'equal)))
-            (should (equal "resume-selector" (alist-get :action-name params nil nil #'equal)))
+            (should (equal "select-resume-session" (alist-get :action-name params nil nil #'equal)))
             (should (equal ui-action (alist-get :ui/action params nil nil #'equal)))
             (should (equal "cancelled" (alist-get :status params nil nil #'equal)))
             (should (equal nil (alist-get :value params 'missing nil #'equal))))
@@ -1281,7 +1281,7 @@
                                                               (:action/entry-id . "e1"))))])))
                (frame `((:event . "ui/frontend-action-requested")
                         (:data . ((:request-id . "req-3")
-                                  (:action-name . "context-session-selector")
+                                  (:action-name . "select-session")
                                   (:prompt . "Select a live session")
                                   (:ui/action . ,ui-action)
                                   (:payload . ,payload))))))
@@ -1302,7 +1302,7 @@
                  (value (alist-get :value params nil nil #'equal)))
             (should (equal "frontend_action_result" (car call)))
             (should (equal "req-3" (alist-get :request-id params nil nil #'equal)))
-            (should (equal "context-session-selector" (alist-get :action-name params nil nil #'equal)))
+            (should (equal "select-session" (alist-get :action-name params nil nil #'equal)))
             (should (equal ui-action (alist-get :ui/action params nil nil #'equal)))
             (should (equal "submitted" (alist-get :status params nil nil #'equal)))
             (should (equal :fork-session (alist-get :action/kind value nil nil #'equal)))

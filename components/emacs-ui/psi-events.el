@@ -383,6 +383,11 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
     (let* ((action-name (psi-emacs--event-data-get data '(:action-name action-name :actionName actionName)))
            (ui-action (or (psi-emacs--event-data-get data '(:ui/action ui/action)) '()))
            (action-key (psi-emacs--frontend-action-key ui-action action-name))
+           (submitted-action-name (cond
+                                   ((keywordp action-key) (substring (symbol-name action-key) 1))
+                                   ((symbolp action-key) (symbol-name action-key))
+                                   ((stringp action-key) action-key)
+                                   (t action-name)))
            (request-id (psi-emacs--event-data-get data '(:request-id request-id :requestId requestId)))
            (prompt (or (psi-emacs--event-data-get ui-action '(:ui/prompt ui/prompt))
                        (psi-emacs--event-data-get data '(:prompt prompt))
@@ -401,7 +406,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
         (psi-emacs--dispatch-request
          "frontend_action_result"
          `((:request-id . ,request-id)
-           (:action-name . ,action-name)
+           (:action-name . ,submitted-action-name)
            (:ui/action . ,ui-action)
            (:status . "cancelled")
            (:value . nil))))
@@ -409,7 +414,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
         (psi-emacs--dispatch-request
          "frontend_action_result"
          `((:request-id . ,request-id)
-           (:action-name . ,action-name)
+           (:action-name . ,submitted-action-name)
            (:ui/action . ,ui-action)
            (:status . "submitted")
            (:value . ,selected))))))
