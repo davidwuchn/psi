@@ -99,7 +99,7 @@
       (is (= [worker] (get-in @state [:workers :inflight-futures]))))))
 
 (deftest rpc-handshake-uses-explicit-transport-deps-invariant-test
-  (testing "handshake server-info/context come from explicit transport deps, not mutable state magic"
+  (testing "handshake server-info comes from explicit transport deps, not mutable state magic"
     (let [[ctx sid] (create-session-context)
           wrong-called?   (atom false)
           right-called?   (atom false)
@@ -123,12 +123,11 @@
                             :handshake-context-updated-payload-fn (fn [_state]
                                                                     {:active-session-id sid
                                                                      :sessions []})})
-      (let [[context-event frame] (parse-frames (->> (str/split-lines (str out))
-                                                     (remove str/blank?)
-                                                     vec))]
+      (let [[frame] (parse-frames (->> (str/split-lines (str out))
+                                       (remove str/blank?)
+                                       vec))]
         (is (true? @right-called?))
         (is (false? @wrong-called?))
-        (is (= sid (get-in context-event [:data :active-session-id])))
         (is (= sid (get-in frame [:data :server-info :session-id])))
         (is (= :emacs (get-in frame [:data :server-info :ui-type])))))))
 

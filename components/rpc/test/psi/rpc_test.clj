@@ -284,10 +284,9 @@
         (is (not (str/includes? (str out) "BOOTSTRAP TRANSCRIPT")))
         (is (str/includes? (str err) "BOOTSTRAP BANNER"))
         (is (str/includes? (str err) "BOOTSTRAP TRANSCRIPT"))
-        (is (= :event (:kind (first frames))))
-        (is (= "context/updated" (:event (first frames))))
-        (is (= :response (:kind (second frames))))
-        (is (= "handshake" (:op (second frames))))))))
+        (is (= 1 (count frames)))
+        (is (= :response (:kind (first frames))))
+        (is (= "handshake" (:op (first frames))))))))
 
 (deftest run-stdio-loop-trace-fn-captures-inbound-and-outbound-test
   (let [traces  (atom [])
@@ -871,17 +870,12 @@
                                         :err err
                                         :state state
                                         :request-handler handler
-                                        :handshake-server-info-fn (fn [_state] (rpc.events/session->handshake-server-info ctx sid))
-                                        :handshake-context-updated-payload-fn (fn [_state] {:active-session-id sid
-                                                                                             :sessions []})})
-          [context-event frame] (parse-frames (->> (str/split-lines (str out))
-                                                   (remove str/blank?)
-                                                   vec))
+                                        :handshake-server-info-fn (fn [_state] (rpc.events/session->handshake-server-info ctx sid))})
+          frame   (->> (str/split-lines (str out))
+                       (remove str/blank?)
+                       parse-frames
+                       first)
           info    (get-in frame [:data :server-info])]
-      (is (= :event (:kind context-event)))
-      (is (= "context/updated" (:event context-event)))
-      (is (= sid (get-in context-event [:data :active-session-id])))
-      (is (vector? (get-in context-event [:data :sessions])))
       (is (= :response (:kind frame)))
       (is (= "handshake" (:op frame)))
       (is (= "1.0" (:protocol-version info)))
@@ -901,13 +895,11 @@
                                         :state state
                                         :request-handler handler
                                         :handshake-server-info-fn (fn [_state] (assoc (rpc.events/session->handshake-server-info ctx sid)
-                                                                                      :ui-type :emacs))
-                                        :handshake-context-updated-payload-fn (fn [_state] {:active-session-id sid
-                                                                                             :sessions []})})
+                                                                                      :ui-type :emacs))})
           frame   (->> (str/split-lines (str out))
                        (remove str/blank?)
                        parse-frames
-                       second)
+                       first)
           info    (get-in frame [:data :server-info])]
       (is (= :response (:kind frame)))
       (is (= "handshake" (:op frame)))

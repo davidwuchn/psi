@@ -284,8 +284,8 @@
              Integer/parseInt)))
 
 (defn- handle-handshake!
-  [request emit-frame! state {:keys [handshake-server-info-fn
-                                     handshake-context-updated-payload-fn]}]
+  [request _emit-frame! state {:keys [handshake-server-info-fn
+                                      handshake-context-updated-payload-fn]}]
   (let [version (or (get-in request [:params :client-info :protocol-version])
                     (get-in request [:params :protocol-version]))
         major   (protocol-major version)]
@@ -303,19 +303,11 @@
       :else
       (let [server-info-fn (or handshake-server-info-fn
                                (fn [_state] {:protocol-version protocol-version}))
-            context-payload-fn handshake-context-updated-payload-fn
+            _context-payload-fn handshake-context-updated-payload-fn
             server-info (merge {:protocol-version protocol-version}
                                (or (server-info-fn state)
                                    {}))]
         (rpc.state/mark-ready! state protocol-version)
-        ;; Optional bootstrap context snapshot event for frontends that need
-        ;; immediate session-tree state before subscribe lifecycle completes.
-        (when context-payload-fn
-          (emit-frame! (event-frame {:event "context/updated"
-                                     :id (:id request)
-                                     :data (or (context-payload-fn state)
-                                               {:active-session-id nil
-                                                :sessions []})})))
         (response-frame (:id request)
                         "handshake"
                         true

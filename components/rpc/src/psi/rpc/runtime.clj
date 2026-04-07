@@ -48,11 +48,7 @@
     (fn [state]
       (let [session-id (rpc.state/focus-session-id state)]
         (assoc (rpc.events/session->handshake-server-info ctx session-id)
-               :ui-type ui-type)))
-    :handshake-context-updated-payload-fn
-    (fn [state]
-      (let [session-id (rpc.state/focus-session-id state)]
-        (rpc.events/context-updated-payload ctx state session-id)))}
+               :ui-type ui-type)))}
    :session
    {:rpc-ai-model ai-model
     :on-new-session! on-new-session!
@@ -119,7 +115,6 @@
                                           :state state
                                           :out protocol-out
                                           :trace-fn trace-fn
-                                          :handshake-server-info-fn (get-in deps [:transport :handshake-server-info-fn])
-                                          :handshake-context-updated-payload-fn (get-in deps [:transport :handshake-context-updated-payload-fn])})))
+                                          :handshake-server-info-fn (get-in deps [:transport :handshake-server-info-fn])})))
       (finally
         (System/setOut original-systemout)))))
