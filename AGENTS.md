@@ -301,6 +301,12 @@ search text (file contents): `git grep "λ"`
 Extensions are mini viable systems:
 S1(code) → S2(manifest/permissions) → S3(dispatch/subscribe) → S4(introspection) → S5(declared purpose)
 
+### Architecture
+
+- tui and emacs-ui are minimal display projection and command entry components, sharing the app-runtime for agent-session interactions.
+- rpc is a minimal, transport only, layer between app-runtime and emacs-ui.
+- dispatch owns system state reads and writes.  Resolvers are used for reads, mutations for functional updates of tte that can return effects, that are run by dispatch for non-functional side-effects.
+
 ### Frontier
 
 - **Handler purity**: pure-result shape (`{:root-state-update f :effects [...]}`) defined and validated; legacy handlers still perform side effects inline — migration ongoing
