@@ -173,7 +173,7 @@ Proposed result shape v1:
                    :tool-calls ...
                    :tool-order ...}
  :nav/context-snapshot ...
- :nav/follow-up-ui-actions [...]} 
+ :nav/follow-up-ui-actions [...]}
 ```
 
 Planned increments:
@@ -221,7 +221,7 @@ Testing strategy:
 - keep adapter tests, but make them assert adaptation/rendering rather than domain ordering semantics
 - prove the same app-runtime projection feeds both RPC and TUI behaviors
 
-### Implementation task list
+### adapter convergence Implementation task list
 
 Progress so far:
 - ✓ selector projection scaffold landed in `app-runtime`
@@ -274,7 +274,7 @@ Status: ✓ shared selector slice implemented for `/tree`.
 ##### 1D. Tighten Emacs to pure rendering/adaptation
 - [x] keep Emacs `/tree` completion order-preserving
 - [x] reduce any remaining Emacs selector semantics to label rendering only
-- [ ] if useful, switch Emacs to backend/app-runtime-supplied canonical labels for `/tree`
+- [x] switch Emacs to backend/app-runtime-supplied canonical labels for `/tree` when present
 
 ##### Phase 1 concrete coding slice
 

@@ -25,6 +25,12 @@
    :action/session-id session-id
    :action/entry-id entry-id})
 
+(declare selector-item->default-label)
+
+(defn- with-default-label
+  [item]
+  (assoc item :item/default-label (selector-item->default-label item)))
+
 (defn- session->selector-item
   [active-session-id session-map]
   (let [sid (:session-id session-map)]
@@ -181,7 +187,8 @@
                         (mapv #(session->selector-item active-session-id %))
                         tree-sort-session-items)
         fork-items (current-session-fork-point-items ctx active-session-id)]
-    (vec (interleave-current-session-fork-points sessions active-session-id fork-items))))
+    (->> (interleave-current-session-fork-points sessions active-session-id fork-items)
+         (mapv with-default-label))))
 
 (defn context-session-selector
   [ctx active-session-id]

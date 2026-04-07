@@ -933,8 +933,11 @@ Failure path appends deterministic assistant-visible feedback, sets
 
 (defun psi-emacs--tree-slot-label (slot item-kind id entry-id)
   "Return label base for tree SLOT." 
-  (let ((display-name (psi-emacs--tree-slot-display-name slot)))
+  (let ((default-label (psi-emacs--event-data-get slot '(:item/default-label item/default-label)))
+        (display-name (psi-emacs--tree-slot-display-name slot)))
     (cond
+     ((stringp default-label)
+      default-label)
      ((equal item-kind "fork-point")
       (concat "⎇ " (or display-name entry-id "(unknown fork point)")))
      ((stringp display-name)

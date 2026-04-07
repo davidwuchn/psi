@@ -4514,6 +4514,7 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                    (:item-kind . "fork-point")
                    (:entry-id . "e1")
                    (:display-name . "Branch from here")
+                   (:item/default-label . "⎇ Branch from here")
                    (:parent-session-id . "s1"))))
          (candidates (psi-emacs--tree-session-candidates slots "s1"))
          (fork-value (cdr (cadr candidates))))
@@ -4526,7 +4527,9 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
   (let* ((slots '(((:id . "s1") (:item-kind . "session") (:name . "main") (:is-active . t))
                   ((:id . "s2") (:item-kind . "session") (:name . "child") (:parent-session-id . "s1"))
                   ((:id . "s1") (:item-kind . "fork-point") (:entry-id . "e1")
-                   (:display-name . "Branch from here") (:parent-session-id . "s1"))))
+                   (:display-name . "Branch from here")
+                   (:item/default-label . "⎇ Branch from here")
+                   (:parent-session-id . "s1"))))
          (candidates (psi-emacs--tree-session-candidates slots "s1"))
          (labels (mapcar #'car candidates)))
     (should (equal '("main [s1] ← active"

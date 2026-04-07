@@ -73,3 +73,15 @@
         fork-item    {:item/kind :fork-point :item/display-name "From prompt"}]
     (is (= "Main" (selectors/selector-item->default-label session-item)))
     (is (= "⎇ From prompt" (selectors/selector-item->default-label fork-item)))))
+
+(deftest context-session-selector-adds-default-labels-test
+  (let [[ctx root-id] (create-session-context {:persist? false})
+        entry         (persist/message-entry {:role "user"
+                                             :content [{:type :text :text "Branch from here"}]})
+        _             (ss/journal-append-in! ctx root-id entry)
+        items         (selectors/context-session-selector-items ctx root-id)
+        session-item  (first items)
+        fork-item     (some #(when (= :fork-point (:item/kind %)) %) items)]
+    (is (= "⎇ Branch from here" (:item/default-label fork-item)))
+    (is (= (selectors/selector-item->default-label session-item)
+           (:item/default-label session-item)))))
