@@ -223,48 +223,57 @@ Testing strategy:
 
 ### Implementation task list
 
+Progress so far:
+- ✓ selector projection scaffold landed in `app-runtime`
+- ✓ RPC `/tree` now transports the canonical selector model
+- ✓ TUI `/tree` now consumes the shared selector model and no longer computes its own query-derived tree model
+- ✓ Emacs now consumes the canonical selector payload from RPC while preserving backend order
+- ✓ selector slice verification is green across app-runtime, RPC, TUI, and Emacs
+
 #### Phase 0 — scaffold adapter-neutral projection layer
-- [ ] add app-runtime projection namespaces:
-  - [ ] `components/app-runtime/src/psi/app_runtime/selectors.clj`
+- [x] add app-runtime projection namespaces:
+  - [x] `components/app-runtime/src/psi/app_runtime/selectors.clj`
   - [ ] `components/app-runtime/src/psi/app_runtime/footer.clj`
   - [ ] `components/app-runtime/src/psi/app_runtime/ui_actions.clj`
   - [ ] `components/app-runtime/src/psi/app_runtime/navigation.clj`
   - [ ] `components/app-runtime/src/psi/app_runtime/projections.clj`
-- [ ] define naming/data-shape conventions for adapter-neutral projection maps
-- [ ] add app-runtime-focused test namespace(s) for projections and navigation models
-- [ ] document the rule: app-runtime exports semantic models, adapters format/render them
+- [x] define naming/data-shape conventions for adapter-neutral projection maps
+- [x] add app-runtime-focused test namespace(s) for projections and navigation models
+- [x] document the rule: app-runtime exports semantic models, adapters format/render them
 
 #### Phase 1 — selector/session-tree extraction
 
+Status: ✓ shared selector slice implemented for `/tree`.
+
 ##### 1A. Extract selector input/query logic
-- [ ] identify current selector sources in:
-  - [ ] RPC `/tree` payload construction
-  - [ ] TUI session selector init/tree-sort/interleave logic
-  - [ ] any app-runtime helpers already computing focus-scoped session views
-- [ ] extract shared session/fork-point input gathering into `app_runtime.selectors`
-- [ ] define one canonical selector item shape with stable ids and action metadata
-- [ ] add focused tests for:
-  - [ ] root sessions + child sessions ordering
-  - [ ] current-session fork-point interleaving
-  - [ ] active-session marking
-  - [ ] streaming-session marking
-  - [ ] missing-parent fallback behavior
+- [x] identify current selector sources in:
+  - [x] RPC `/tree` payload construction
+  - [x] TUI session selector init/tree-sort/interleave logic
+  - [x] any app-runtime helpers already computing focus-scoped session views
+- [x] extract shared session/fork-point input gathering into `app_runtime.selectors`
+- [x] define one canonical selector item shape with stable ids and action metadata
+- [x] add focused tests for:
+  - [x] root sessions + child sessions ordering
+  - [x] current-session fork-point interleaving
+  - [x] active-session marking
+  - [x] streaming-session marking
+  - [x] missing-parent fallback behavior
 
 ##### 1B. Migrate RPC to selector model adaptation only
-- [ ] replace RPC-local `/tree` payload shaping with app-runtime selector projection
-- [ ] reduce `components/rpc/src/psi/rpc/session/commands.clj` to field-name adaptation only
-- [ ] ensure RPC tests assert projection adaptation, not local ordering logic
-- [ ] remove RPC-local selector ordering helpers once the shared projection is in use
+- [x] replace RPC-local `/tree` payload shaping with app-runtime selector projection
+- [x] reduce `components/rpc/src/psi/rpc/session/commands.clj` to transport projection / command handling only
+- [x] ensure RPC tests assert projection adaptation, not local ordering logic
+- [x] remove RPC-local selector ordering helpers once the shared projection is in use
 
 ##### 1C. Migrate TUI to shared selector model
-- [ ] replace TUI-local tree-sort/interleave logic with app-runtime selector projection consumption
-- [ ] adapt TUI rendering to shared selector item fields rather than TUI-local derived tree metadata where possible
-- [ ] keep terminal-specific connector/prefix rendering in TUI only
-- [ ] update TUI tests to prove it consumes shared selector order unchanged
+- [x] replace TUI-local tree-sort/interleave logic with app-runtime selector projection consumption
+- [x] adapt TUI rendering to shared selector item fields rather than TUI-local derived tree metadata where possible
+- [x] keep terminal-specific connector/prefix rendering in TUI only
+- [x] update TUI tests to prove it consumes shared selector order unchanged
 
 ##### 1D. Tighten Emacs to pure rendering/adaptation
-- [ ] keep Emacs `/tree` completion order-preserving
-- [ ] reduce any remaining Emacs selector semantics to label rendering only
+- [x] keep Emacs `/tree` completion order-preserving
+- [x] reduce any remaining Emacs selector semantics to label rendering only
 - [ ] if useful, switch Emacs to backend/app-runtime-supplied canonical labels for `/tree`
 
 ##### Phase 1 concrete coding slice
@@ -276,107 +285,107 @@ Goal of the first implementation slice:
 - delete duplicated ordering/interleave helpers immediately after migration
 
 ###### Proposed namespace + public functions
-- [ ] create `components/app-runtime/src/psi/app_runtime/selectors.clj`
-- [ ] expose a small public surface:
-  - [ ] `context-session-selector`
+- [x] create `components/app-runtime/src/psi/app_runtime/selectors.clj`
+- [x] expose a small public surface:
+  - [x] `context-session-selector`
     - inputs: `ctx`, active/focus session id
     - returns the canonical selector map for `/tree`
-  - [ ] `context-session-selector-items`
+  - [x] `context-session-selector-items`
     - returns just ordered selector items for adapters that only need the list
-  - [ ] `selector-item->default-label`
+  - [x] `selector-item->default-label`
     - optional shared label seed if adapters should stop inventing labels independently
-- [ ] keep helper fns private behind that public surface
+- [x] keep helper fns private behind that public surface
 
 ###### Proposed private helpers in `app_runtime.selectors`
-- [ ] `session->selector-item`
+- [x] `session->selector-item`
   - normalize a context session map into canonical selector item shape
-- [ ] `fork-point-entry->selector-item`
+- [x] `fork-point-entry->selector-item`
   - normalize a journal entry into canonical fork-point item shape
-- [ ] `current-session-fork-point-items`
+- [x] `current-session-fork-point-items`
   - gather fork-point items from current session journal
-- [ ] `tree-sort-session-items`
+- [x] `tree-sort-session-items`
   - order sessions by parent/child tree structure while preserving sibling input order
-- [ ] `interleave-current-session-fork-points`
+- [x] `interleave-current-session-fork-points`
   - insert current-session fork points after the current session's descendant subtree
-- [ ] `ensure-current-session-present`
+- [x] `ensure-current-session-present`
   - inject current session into selector source set when context index does not yet include it
-- [ ] `mark-selector-item-state`
+- [x] `mark-selector-item-state`
   - mark active/streaming/item action metadata without adapter-specific fields
 
 ###### Canonical item/result shape for phase 1
-- [ ] use stable item ids that do not overload `session-id`
-  - [ ] session item id: `[:session <session-id>]`
-  - [ ] fork item id: `[:fork-point <entry-id>]`
-- [ ] keep explicit fields:
-  - [ ] `:item/id`
-  - [ ] `:item/kind`
-  - [ ] `:item/parent-id`
-  - [ ] `:item/session-id`
-  - [ ] `:item/entry-id`
-  - [ ] `:item/display-name`
-  - [ ] `:item/is-active`
-  - [ ] `:item/is-streaming`
-  - [ ] `:item/worktree-path`
-  - [ ] `:item/created-at`
-  - [ ] `:item/updated-at`
-  - [ ] `:item/action`
-- [ ] keep action metadata explicit:
-  - [ ] session item action: `{:action/kind :switch-session :session-id ...}`
-  - [ ] fork item action: `{:action/kind :fork-session :session-id ... :entry-id ...}`
+- [x] use stable item ids that do not overload `session-id`
+  - [x] session item id: `[:session <session-id>]`
+  - [x] fork item id: `[:fork-point <entry-id>]`
+- [x] keep explicit fields:
+  - [x] `:item/id`
+  - [x] `:item/kind`
+  - [x] `:item/parent-id`
+  - [x] `:item/session-id`
+  - [x] `:item/entry-id`
+  - [x] `:item/display-name`
+  - [x] `:item/is-active`
+  - [x] `:item/is-streaming`
+  - [x] `:item/worktree-path`
+  - [x] `:item/created-at`
+  - [x] `:item/updated-at`
+  - [x] `:item/action`
+- [x] keep action metadata explicit:
+  - [x] session item action: `{:action/kind :switch-session :session-id ...}`
+  - [x] fork item action: `{:action/kind :fork-session :session-id ... :entry-id ...}`
 
 ###### Exact source migrations
-- [ ] move logic out of RPC:
-  - [ ] `tree-sort-sessions`
-  - [ ] `current-session-fork-points`
-  - [ ] `interleave-current-session-fork-points`
-  - [ ] `session-selector-payload`
+- [x] move logic out of RPC:
+  - [x] `tree-sort-sessions`
+  - [x] `current-session-fork-points`
+  - [x] `interleave-current-session-fork-points`
+  - [x] `session-selector-payload`
   - from: `components/rpc/src/psi/rpc/session/commands.clj`
-- [ ] move logic out of TUI:
-  - [ ] `context-session->selector-session`
-  - [ ] `tree-sort-context-sessions`
-  - [ ] `current-session-user-prompt-items`
-  - [ ] `interleave-current-session-prompts`
-  - the selector-specific part of `session-selector-init-from-context`
+- [x] move logic out of TUI:
+  - [x] `context-session->selector-session`
+  - [x] `tree-sort-context-sessions`
+  - [x] `current-session-user-prompt-items`
+  - [x] `interleave-current-session-prompts`
+  - [x] the selector-specific part of `session-selector-init-from-context`
   - from: `components/tui/src/psi/tui/app.clj`
-- [ ] keep only adapter-specific logic in TUI:
-  - [ ] tree connector rendering
-  - [ ] selected-index / cursor movement
-  - [ ] terminal label layout
-- [ ] keep only protocol adaptation in RPC:
-  - [ ] convert canonical selector map to RPC payload field names if needed
-- [ ] keep only label rendering/completion behavior in Emacs
+- [x] keep only adapter-specific logic in TUI:
+  - [x] tree connector rendering
+  - [x] selected-index / cursor movement
+  - [x] terminal label layout
+- [x] keep only protocol adaptation in RPC:
+  - [x] transport the canonical selector model directly to Emacs for frontend-action payloads
+- [x] keep only label rendering/completion behavior in Emacs
 
 ###### Concrete migration order
-- [ ] step 1: add `app_runtime.selectors` with pure helper tests only
-- [ ] step 2: switch RPC `/tree` payload construction to use `app_runtime.selectors/context-session-selector`
-- [ ] step 3: switch TUI context-session selector init to use `app_runtime.selectors/context-session-selector-items`
-- [ ] step 4: update Emacs/RPC/TUI tests to assert shared-order consumption
-- [ ] step 5: delete duplicated RPC/TUI ordering/interleave helpers
+- [x] step 1: add `app_runtime.selectors` with pure helper tests only
+- [x] step 2: switch RPC `/tree` payload construction to use `app_runtime.selectors/context-session-selector`
+- [x] step 3: switch TUI context-session selector init to use the shared app-runtime selector model
+- [x] step 4: update Emacs/RPC/TUI tests to assert shared-order consumption
+- [x] step 5: delete duplicated RPC/TUI ordering/interleave helpers
 
 ###### Focused test plan for the slice
-- [ ] add `components/app-runtime/test/psi/app_runtime/selectors_test.clj`
-- [ ] first tests to write:
-  - [ ] `context-session-selector-orders-root-and-child-sessions-test`
-  - [ ] `context-session-selector-interleaves-current-session-fork-points-after-descendants-test`
-  - [ ] `context-session-selector-ensures-current-session-present-when-missing-from-index-test`
-  - [ ] `context-session-selector-marks-active-and-streaming-items-test`
-  - [ ] `context-session-selector-uses-stable-item-ids-test`
-- [ ] adapter proof tests to keep/update:
-  - [ ] RPC test proving `/tree` payload order follows shared selector projection
-  - [ ] TUI test proving selector init preserves shared order
-  - [ ] Emacs test proving candidates preserve incoming order
+- [x] add `components/app-runtime/test/psi/app_runtime/selectors_test.clj`
+- [x] first tests to write:
+  - [x] `context-session-selector-orders-root-and-child-sessions-test`
+  - [x] `context-session-selector-interleaves-current-session-fork-points-after-descendants-test`
+  - [x] `context-session-selector-ensures-current-session-present-when-missing-from-index-test`
+  - [x] `context-session-selector-marks-active-and-streaming-items-test`
+  - [x] `context-session-selector-uses-stable-item-ids-test`
+- [x] adapter proof tests to keep/update:
+  - [x] RPC test proving `/tree` payload order follows shared selector projection
+  - [x] TUI test proving selector init preserves shared order
+  - [x] Emacs test proving candidates preserve incoming order
 
 ###### Acceptance proof for phase 1 slice
-- [ ] one failing app-runtime selector test first
-- [ ] then one failing RPC adapter test switched to shared projection
-- [ ] then one failing TUI adapter test switched to shared projection
-- [ ] finally remove duplicated helpers and prove all focused tests green
+- [x] one failing app-runtime selector test first
+- [x] then one failing RPC adapter test switched to shared projection
+- [x] then one failing TUI adapter test switched to shared projection
+- [x] finally remove duplicated helpers and prove all focused tests green
 
 ###### Phase 1 done means
-- [ ] no selector ordering/interleave logic remains in RPC
-- [ ] no selector ordering/interleave logic remains in TUI
-- [ ] `/tree` item order comes from one app-runtime projection only
-- [ ] Emacs preserves, rather than derives, selector order
+- [x] no selector ordering/interleave logic remains in RPC
+- [x] no selector ordering/interleave logic remains in TUI
+- [x] `/tree` item order comes from one app-runtime projection only
+- [x] Emacs preserves, rather than derives, selector order
 
 #### Phase 2 — footer semantic model extraction
 
