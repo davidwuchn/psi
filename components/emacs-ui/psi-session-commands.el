@@ -937,7 +937,9 @@ Failure path appends deterministic assistant-visible feedback, sets
     (cond
      ((stringp default-label)
       default-label)
-     ((and (listp slot) (fboundp 'psi-emacs--session-tree-line-label))
+     ((and (listp slot)
+           (or (psi-emacs--event-data-get slot '(:label label))
+               (fboundp 'psi-emacs--session-tree-line-label)))
       (psi-emacs--session-tree-line-label slot))
      ((equal item-kind "fork-point")
       (concat "⎇ " (or (psi-emacs--tree-slot-display-name slot) entry-id "(unknown fork point)")))
@@ -975,7 +977,8 @@ a canonical action map, or an alist payload for backward compatibility."
                                 (and id active-id (equal id active-id)))))
             (is-streaming (or (psi-emacs--event-data-get slot '(:item/is-streaming item/is-streaming))
                               (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming))))
-            (name (psi-emacs--tree-slot-label slot item-kind id entry-id))
+            (name (or (psi-emacs--event-data-get slot '(:label label))
+                      (psi-emacs--tree-slot-label slot item-kind id entry-id)))
             (indent (if (or parent-id (equal item-kind "fork-point")) "  " ""))
             (suffix (concat
                      (when (and (equal item-kind "session") is-streaming) " [streaming]")

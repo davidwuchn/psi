@@ -6,6 +6,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.session-state :as ss]
    [psi.app-runtime.context :as app-context]
+   [psi.app-runtime.context-summary :as context-summary]
    [psi.app-runtime.footer :as footer]
    [psi.app-runtime.projections :as projections]
    [psi.app-runtime.session-summary :as session-summary]
@@ -140,9 +141,19 @@
   [state session-id]
   (rpc.state/set-focus-session-id! state session-id))
 
+(defn- widget->rpc-widget
+  [widget]
+  {:placement    (some-> (:widget/placement widget) name)
+   :extension-id (:widget/extension-id widget)
+   :widget-id    (:widget/widget-id widget)
+   :content-lines (:widget/content-lines widget)})
+
 (defn context-updated-payload
   [ctx state session-id]
-  (app-context/context-snapshot ctx (focus-session-id state) session-id))
+  (let [snapshot (app-context/context-snapshot ctx (focus-session-id state) session-id)
+        widget   (context-summary/context-widget snapshot)]
+    (cond-> snapshot
+      true (assoc :session-tree-widget (widget->rpc-widget widget)))))
 
 (def footer-query footer/footer-query)
 

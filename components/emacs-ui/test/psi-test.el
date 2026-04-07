@@ -4457,9 +4457,29 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
     (psi-emacs--handle-rpc-event
      '((:event . "context/updated")
        (:data . ((:active-session-id . "s1")
-                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil) (:worktree-path . "/repo/main") (:created-at . "2026-03-16T09:00:00Z") (:updated-at . "2026-03-16T09:15:00Z"))
-                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1") (:worktree-path . "/repo/child") (:created-at . "2026-03-16T08:00:00Z") (:updated-at . "2026-03-16T08:10:00Z"))
-                               ])))))
+                 (:sessions . [((:id . "s1")
+                                (:name . "main")
+                                (:is-active . t)
+                                (:is-streaming . nil)
+                                (:parent-session-id . nil)
+                                (:worktree-path . "/repo/main")
+                                (:created-at . "2026-03-16T09:00:00Z")
+                                (:updated-at . "2026-03-16T09:15:00Z"))
+                               ((:id . "s2")
+                                (:name . "fork-1")
+                                (:is-active . nil)
+                                (:is-streaming . nil)
+                                (:parent-session-id . "s1")
+                                (:worktree-path . "/repo/child")
+                                (:created-at . "2026-03-16T08:00:00Z")
+                                (:updated-at . "2026-03-16T08:10:00Z"))])
+                 (:session-tree-widget . ((:placement . "left")
+                                          (:extension-id . "psi-session")
+                                          (:widget-id . "session-tree")
+                                          (:content-lines . [((:text . "main [s1] — 09:00 / 09:15 — /repo/main ← active"))
+                                                             ((:text . "  fork-1 [s2] — 08:00 / 08:10 — /repo/child")
+                                                              (:action . ((:type . "command")
+                                                                          (:command . "/tree s2"))))])))))))
     (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
            (tree-w (seq-find (lambda (w)
                                (and (equal "psi-session"
@@ -4484,8 +4504,11 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
     (psi-emacs--handle-rpc-event
      '((:event . "context/updated")
        (:data . ((:active-session-id . "s1")
-                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
-                               ])))))
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))])
+                 (:session-tree-widget . ((:placement . "left")
+                                          (:extension-id . "psi-session")
+                                          (:widget-id . "session-tree")
+                                          (:content-lines . [((:text . "main [s1] ← active"))])))))))
     (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
            (tree-w (seq-find (lambda (w)
                                (equal "psi-session"
@@ -4493,43 +4516,13 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                              widgets)))
       (should-not tree-w))))
 
-(ert-deftest psi-session-tree-active-line-has-no-action ()
-  "Active session slot line carries no action."
-  (let* ((slots '(((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil) (:worktree-path . "/repo/main") (:created-at . "2026-03-16T09:00:00Z") (:updated-at . "2026-03-16T09:15:00Z"))))
-         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
-         (line  (car lines))
-         (text  (alist-get :text line nil nil #'equal)))
-    (should (string-prefix-p "main [s1] — " text))
-    (should (string-suffix-p " — /repo/main ← active" text))
-    (should (string-match-p "[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]" text))
-    (should-not (alist-get :action line nil nil #'equal))))
-
-(ert-deftest psi-session-tree-inactive-line-has-switch-action ()
-  "Inactive session slot line carries /tree <id> action."
-  (let* ((slots '(((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
-                  ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . nil))))
-         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
-         (inactive (cadr lines))
-         (action   (alist-get :action inactive nil nil #'equal)))
-    (should action)
-    (should (equal "/tree s2"
-                   (psi-emacs--event-data-get action '(:command command))))))
-
-(ert-deftest psi-session-tree-streaming-slot-shows-badge ()
-  "Streaming session slot appends [streaming] to its text."
-  (let* ((slots '(((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
-                  ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . t)   (:parent-session-id . nil))))
-         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
-         (fork-line (cadr lines)))
-    (should (string-match-p "\\[streaming\\]" (alist-get :text fork-line nil nil #'equal)))))
-
-(ert-deftest psi-session-tree-child-slot-is-indented ()
-  "Child session (parent-session-id matches a sibling id) is indented."
-  (let* ((slots '(((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
-                  ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))))
-         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
-         (child-text (alist-get :text (cadr lines) nil nil #'equal)))
-    (should (string-prefix-p "  " child-text))))
+(ert-deftest psi-session-tree-line-label-prefers-backend-label ()
+  "Session tree label rendering prefers backend-provided canonical labels."
+  (should (equal "main [s1] — 09:00 / 09:15 — /repo/main"
+                 (psi-emacs--session-tree-line-label
+                  '((:label . "main [s1] — 09:00 / 09:15 — /repo/main")
+                    (:id . "s1")
+                    (:name . "ignored"))))))
 
 (ert-deftest psi-tree-slash-command-dispatches-switch-by-id ()
   "'/tree <id>' slash command calls switch_session with session-id."
@@ -4571,11 +4564,11 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
 
 (ert-deftest psi-tree-session-candidates-preserve-backend-order ()
   "Fork-point candidates preserve backend order instead of re-sorting locally."
-  (let* ((slots '(((:id . "s1") (:item-kind . "session") (:name . "main") (:is-active . t))
-                  ((:id . "s2") (:item-kind . "session") (:name . "child") (:parent-session-id . "s1"))
+  (let* ((slots '(((:id . "s1") (:item-kind . "session") (:name . "main") (:label . "main [s1]") (:is-active . t))
+                  ((:id . "s2") (:item-kind . "session") (:name . "child") (:label . "child [s2]") (:parent-session-id . "s1"))
                   ((:id . "s1") (:item-kind . "fork-point") (:entry-id . "e1")
                    (:display-name . "Branch from here")
-                   (:item/default-label . "⎇ Branch from here")
+                   (:label . "⎇ Branch from here")
                    (:parent-session-id . "s1"))))
          (candidates (psi-emacs--tree-session-candidates slots "s1"))
          (labels (mapcar #'car candidates)))
@@ -4854,11 +4847,12 @@ summaries and made toggling body visibility ineffective after returning."
     (should (string-match-p "[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]" label))))
 
 (ert-deftest psi-tree-session-candidates-include-id-and-support-command-keys ()
-  "tree candidates expose short ids and support command payload keys."
+  "tree candidates expose backend labels and support command payload keys."
   (let ((candidates
          (psi-emacs--tree-session-candidates
           '(((:session-id . "abc123456789")
              (:session-name . "Alpha")
+             (:label . "Alpha [abc12345] — 05:12 / 06:47 — /repo/alpha")
              (:worktree-path . "/repo/alpha")
              (:created-at . "2026-03-16T09:12:00Z")
              (:updated-at . "2026-03-16T10:47:00Z")
@@ -4866,6 +4860,7 @@ summaries and made toggling body visibility ineffective after returning."
              (:parent-session-id . nil))
             ((:session-id . "def987654321")
              (:session-name . nil)
+             (:label . "(session def98765) [def98765] — 04:00 / 04:05 — /repo/beta")
              (:worktree-path . "/repo/beta")
              (:created-at . "2026-03-16T08:00:00Z")
              (:updated-at . "2026-03-16T08:05:00Z")

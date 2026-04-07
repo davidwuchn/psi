@@ -1835,6 +1835,9 @@
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions])))
+      (is (= "psi-session" (get-in context-evt [:data :session-tree-widget :extension-id])))
+      (is (= "session-tree" (get-in context-evt [:data :session-tree-widget :widget-id])))
+      (is (vector? (get-in context-evt [:data :session-tree-widget :content-lines])))
       (is (= "hi" (:display-name session-slot)) "display-name should reflect inferred latest user message")
       (is (= (str user-ts) (:updated-at session-slot)) "updated-at should reflect latest message timestamp"))))
 
