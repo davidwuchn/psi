@@ -483,7 +483,10 @@ Goal of the first implementation slice:
   - [x] context snapshot summaries
   - [x] extension UI/status summaries where shared
 - [x] adapt RPC and TUI to consume shared summaries
-- [ ] remove remaining transport/adapter-local semantic duplication
+- [~] remove remaining transport/adapter-local semantic duplication
+  - [x] Emacs tree candidate labels now reuse context summary line labels
+  - [ ] inspect remaining footer/status diagnostics shaping for shared-vs-local ownership
+  - [ ] inspect RPC handshake/bootstrap shaping for any remaining duplicate summary semantics
 
 #### Immediate follow-on checklist
 - [x] remove duplicate RPC navigation emission helper and route all RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
@@ -491,6 +494,7 @@ Goal of the first implementation slice:
 - [x] extract canonical transcript rehydration message source into `app-runtime` and remove `app-runtime.navigation` dependency on `psi.rpc.session.message-source`
 - [x] update focused app-runtime/RPC tests to prove shared navigation/context/rehydration projections
 - [x] refresh `mementum/state.md` after the convergence cleanup lands
+- [ ] refresh user/docs references if `/jobs` and context/session-tree ownership should now be described in terms of shared app-runtime projections
 
 #### Cross-cutting cleanup tasks
 - [ ] remove obsolete duplicated helpers after each phase instead of leaving parallel paths
