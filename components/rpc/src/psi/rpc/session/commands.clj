@@ -5,11 +5,10 @@
    [clojure.string :as str]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
-   [psi.agent-session.message-text :as message-text]
-   [psi.agent-session.persistence :as persist]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.ai.models :as ai-models]
+   [psi.app-runtime.selectors :as selectors]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
    [psi.rpc.session.message-source :as message-source]
@@ -138,97 +137,23 @@
       (emit-text-command-result! emit! (str "[command result: " result-type "]"))
       nil)))
 
-(defn- tree-sort-sessions
-  "Return sessions in parent/child tree order while preserving sibling input order."
-  [sessions]
-  (let [sessions           (vec sessions)
-        by-id              (into {} (map (juxt :session-id identity) sessions))
-        input-order        (into {} (map-indexed (fn [i s] [(:session-id s) i]) sessions))
-        children-by-parent (reduce (fn [acc s]
-                                     (let [parent-id      (:parent-session-id s)
-                                           parent-exists? (and parent-id (contains? by-id parent-id))
-                                           parent-key     (if parent-exists? parent-id ::root)]
-                                       (update acc parent-key (fnil conj []) s)))
-                                   {}
-                                   sessions)
-        children-by-parent (update-vals children-by-parent
-                                        (fn [xs]
-                                          (vec (sort-by #(get input-order (:session-id %) Integer/MAX_VALUE)
-                                                        xs))))
-        roots              (let [rs (get children-by-parent ::root [])]
-                             (if (seq rs) rs sessions))
-        emitted            (volatile! #{})]
-    (letfn [(walk [node visited]
-              (let [sid      (:session-id node)
-                    cycle?   (contains? visited sid)
-                    emitted? (contains? @emitted sid)]
-                (if (or cycle? emitted?)
-                  []
-                  (let [visited' (conj visited sid)
-                        _        (vswap! emitted conj sid)
-                        children (get children-by-parent sid [])]
-                    (reduce (fn [acc child]
-                              (into acc (walk child visited')))
-                            [node]
-                            children)))))]
-      (vec (mapcat #(walk % #{}) roots)))))
-
-(defn- current-session-fork-points
-  [ctx session-id]
-  (->> (persist/all-entries-in ctx session-id)
-       (keep (fn [entry]
-               (let [msg  (get-in entry [:data :message])
-                     text (message-text/user-message-display-text msg)]
-                 (when (and (= :message (:kind entry))
-                            (= "user" (:role msg))
-                            (string? text)
-                            (not (str/blank? text)))
-                   {:session-id        session-id
-                    :item-kind         "fork-point"
-                    :entry-id          (:id entry)
-                    :display-name      text
-                    :created-at        (:timestamp entry)
-                    :parent-session-id session-id}))))))
-
-(defn- interleave-current-session-fork-points
-  [session-items session-id fork-items]
-  (if (or (str/blank? session-id) (empty? fork-items))
-    session-items
-    (loop [remaining session-items
-           acc       []]
-      (if-let [item (first remaining)]
-        (let [acc'           (conj acc item)
-              current-item?  (= session-id (:session-id item))
-              children       (when current-item?
-                               (take-while #(not= "session" (:item-kind % "session"))
-                                           (rest remaining)))
-              after-children (when current-item?
-                               (drop (count children) (rest remaining)))]
-          (if current-item?
-            (recur after-children (into acc' (concat children fork-items)))
-            (recur (rest remaining) acc')))
-        acc))))
+(defn- selector-item->rpc-session-slot
+  [item]
+  {:session-id        (:item/session-id item)
+   :item-kind         (name (:item/kind item))
+   :entry-id          (:item/entry-id item)
+   :display-name      (:item/display-name item)
+   :is-active         (boolean (:item/is-active item))
+   :is-streaming      (boolean (:item/is-streaming item))
+   :worktree-path     (:item/worktree-path item)
+   :parent-session-id (some-> (:item/parent-id item) second)
+   :created-at        (:item/created-at item)
+   :updated-at        (:item/updated-at item)})
 
 (defn- session-selector-payload
   [ctx session-id]
-  (let [sessions0        (vec (or (ss/list-context-sessions-in ctx) []))
-        current-session  (select-keys (ss/get-session-data-in ctx session-id)
-                                      [:session-id :session-name :worktree-path
-                                       :parent-session-id :created-at :updated-at])
-        current-present? (some #(= session-id (:session-id %)) sessions0)
-        sessions         (cond
-                           (seq sessions0)
-                           (if current-present?
-                             sessions0
-                             (into [current-session] sessions0))
-
-                           :else
-                           [current-session])
-        session-items    (->> sessions
-                              tree-sort-sessions
-                              (mapv #(assoc % :item-kind "session")))
-        fork-items       (vec (current-session-fork-points ctx session-id))]
-    (interleave-current-session-fork-points session-items session-id fork-items)))
+  (->> (selectors/context-session-selector-items ctx session-id)
+       (mapv selector-item->rpc-session-slot)))
 
 (defn- emit-session-rehydration-from-sid!
   [ctx state emit! sid]
