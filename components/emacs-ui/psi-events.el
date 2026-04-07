@@ -330,8 +330,16 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
        (when (fboundp 'psi-emacs--resume-session-candidates)
          (psi-emacs--resume-session-candidates sessions))))
     ("context-session-selector"
-     (let ((active-id (psi-emacs--event-data-get payload '(:active-session-id active-session-id :activeSessionId activeSessionId)))
-           (sessions (append (psi-emacs--event-data-get payload '(:sessions sessions)) nil)))
+     (let* ((active-item-id (psi-emacs--event-data-get payload '(:selector/active-item-id selector/active-item-id)))
+            (active-id (cond
+                        ((and (vectorp active-item-id) (= 2 (length active-item-id)))
+                         (aref active-item-id 1))
+                        ((and (listp active-item-id) (= 2 (length active-item-id)))
+                         (nth 1 active-item-id))
+                        (t (psi-emacs--event-data-get payload '(:active-session-id active-session-id :activeSessionId activeSessionId)))))
+            (sessions (append (or (psi-emacs--event-data-get payload '(:selector/items selector/items))
+                                  (psi-emacs--event-data-get payload '(:sessions sessions)))
+                              nil)))
        (when (fboundp 'psi-emacs--tree-session-candidates)
          (psi-emacs--tree-session-candidates sessions active-id))))
     ("model-picker"

@@ -137,23 +137,6 @@
       (emit-text-command-result! emit! (str "[command result: " result-type "]"))
       nil)))
 
-(defn- selector-item->rpc-session-slot
-  [item]
-  {:session-id        (:item/session-id item)
-   :item-kind         (name (:item/kind item))
-   :entry-id          (:item/entry-id item)
-   :display-name      (:item/display-name item)
-   :is-active         (boolean (:item/is-active item))
-   :is-streaming      (boolean (:item/is-streaming item))
-   :worktree-path     (:item/worktree-path item)
-   :parent-session-id (some-> (:item/parent-id item) second)
-   :created-at        (:item/created-at item)
-   :updated-at        (:item/updated-at item)})
-
-(defn- session-selector-payload
-  [ctx session-id]
-  (->> (selectors/context-session-selector-items ctx session-id)
-       (mapv selector-item->rpc-session-slot)))
 
 (defn- emit-session-rehydration-from-sid!
   [ctx state emit! sid]
@@ -169,12 +152,13 @@
       :tool-calls {}
       :tool-order []})))
 
-(defn- maybe-match-session
-  [sessions arg]
-  (or (some #(when (= arg (:session-id %)) %) sessions)
-      (let [matches (filterv #(str/starts-with? (or (:session-id %) "") arg) sessions)]
-        (when (= 1 (count matches))
-          (first matches)))))
+(defn- maybe-match-selector-session
+  [selector-items arg]
+  (let [session-items (filterv #(= :session (:item/kind %)) selector-items)]
+    (or (some #(when (= arg (:item/session-id %)) %) session-items)
+        (let [matches (filterv #(str/starts-with? (or (:item/session-id %) "") arg) session-items)]
+          (when (= 1 (count matches))
+            (first matches))))))
 
 (defn- handle-resume-command!
   [ctx state request-id emit! trimmed session-id]
@@ -200,14 +184,14 @@
 (defn- handle-tree-command!
   [ctx state request-id emit! trimmed session-id]
   (let [active-id (events/focus-session-id state)
-        sessions  (session-selector-payload ctx session-id)]
+        selector  (selectors/context-session-selector ctx session-id)
+        items     (:selector/items selector)]
     (if (= trimmed "/tree")
       (emit! "ui/frontend-action-requested"
              {:request-id request-id
               :action-name "context-session-selector"
               :prompt "Select a live session"
-              :payload {:active-session-id active-id
-                        :sessions sessions}})
+              :payload selector})
       (let [arg (-> (str/replace trimmed #"^/tree\s+" "") str/trim)]
         (if (str/starts-with? arg "name ")
           (let [tail        (-> (subs arg 5) str/trim)
@@ -221,15 +205,15 @@
               (emit-text-command-result! emit! "Usage: /tree name <session-id|prefix> <name>")
 
               :else
-              (let [chosen (maybe-match-session sessions sid-part)
-                    sid    (:session-id chosen)]
+              (let [chosen (maybe-match-selector-session items sid-part)
+                    sid    (:item/session-id chosen)]
                 (if-not chosen
                   (emit-text-command-result! emit! (str "Session not found in context: " sid-part))
                   (do
                     (session/set-session-name-in! ctx sid name-part)
                     (emit-text-command-result! emit! (str "Renamed session " sid " to " (pr-str name-part))))))))
-          (let [chosen (maybe-match-session sessions arg)
-                sid    (:session-id chosen)]
+          (let [chosen (maybe-match-selector-session items arg)
+                sid    (:item/session-id chosen)]
             (cond
               (nil? chosen)
               (emit-text-command-result! emit! (str "Session not found in context: " arg))

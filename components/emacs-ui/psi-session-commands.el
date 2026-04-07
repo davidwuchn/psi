@@ -892,43 +892,101 @@ Failure path appends deterministic assistant-visible feedback, sets
 
 ;;; ── /tree session picker ─────────────────────────────────────────────────
 
+(defun psi-emacs--tree-slot-item-kind (slot)
+  "Return normalized item kind string for tree SLOT."
+  (let ((raw (or (psi-emacs--event-data-get slot '(:item/kind item/kind))
+                 (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
+                 "session")))
+    (if (keywordp raw)
+        (string-remove-prefix ":" (format "%s" raw))
+      (format "%s" raw))))
+
+(defun psi-emacs--tree-slot-parent-session-id (slot)
+  "Return parent session id for tree SLOT, or nil."
+  (let ((raw (or (psi-emacs--event-data-get slot '(:item/parent-id item/parent-id))
+                 (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))))
+    (cond
+     ((and (vectorp raw) (= 2 (length raw))) (aref raw 1))
+     ((and (listp raw) (= 2 (length raw))) (nth 1 raw))
+     (t raw))))
+
+(defun psi-emacs--tree-slot-session-id (slot)
+  "Return session id for tree SLOT, or empty string."
+  (or (psi-emacs--event-data-get slot '(:item/session-id item/session-id))
+      (psi-emacs--event-data-get slot '(:id id :session-id session-id :sessionId sessionId))
+      ""))
+
+(defun psi-emacs--tree-slot-entry-id (slot)
+  "Return fork entry id for tree SLOT, or nil."
+  (or (psi-emacs--event-data-get slot '(:item/entry-id item/entry-id))
+      (psi-emacs--event-data-get slot '(:entry-id entry-id :entryId entryId))))
+
+(defun psi-emacs--tree-slot-display-name (slot)
+  "Return display name for tree SLOT, or nil."
+  (or (psi-emacs--event-data-get slot '(:item/display-name item/display-name))
+      (psi-emacs--event-data-get slot '(:display-name display-name
+                                        :session-display-name session-display-name
+                                        :sessionDisplayName sessionDisplayName
+                                        :name name
+                                        :session-name session-name
+                                        :sessionName sessionName))))
+
+(defun psi-emacs--tree-slot-label (slot item-kind id entry-id)
+  "Return label base for tree SLOT." 
+  (let ((display-name (psi-emacs--tree-slot-display-name slot)))
+    (cond
+     ((equal item-kind "fork-point")
+      (concat "⎇ " (or display-name entry-id "(unknown fork point)")))
+     ((stringp display-name)
+      (let ((short-id (if (stringp id)
+                          (substring id 0 (min 8 (length id)))
+                        "")))
+        (if (string-empty-p short-id)
+            display-name
+          (format "%s [%s]" display-name short-id))))
+     ((and (listp slot) (fboundp 'psi-emacs--session-tree-line-label))
+      (psi-emacs--session-tree-line-label slot))
+     (t (or id "(unknown)")))))
+
+(defun psi-emacs--tree-slot-value (slot item-kind id entry-id)
+  "Return completion payload value for tree SLOT."
+  (let ((canonical-action (psi-emacs--event-data-get slot '(:item/action item/action))))
+    (cond
+     ((and canonical-action (listp canonical-action)) canonical-action)
+     ((equal item-kind "fork-point")
+      `((:type . "fork-point")
+        (:entry-id . ,entry-id)
+        (:session-id . ,id)))
+     (t id))))
+
 (defun psi-emacs--tree-session-candidates (slots active-id)
   "Build completing-read candidates from backend-ordered SLOTS with ACTIVE-ID.
 
 The backend owns `/tree` hierarchy and item ordering. This frontend function
 only renders labels and preserves incoming order exactly.
 
-Returns an alist of (label . value), where value is either a session-id string
-or an alist payload for fork-point selection."
+Returns an alist of (label . value), where value is either a session-id string,
+a canonical action map, or an alist payload for backward compatibility."
   (mapcar
    (lambda (slot)
-     (let* ((item-kind    (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
-                              "session"))
-            (id           (or (psi-emacs--event-data-get slot '(:id id
-                                                                :session-id session-id
-                                                                :sessionId sessionId))
-                              ""))
-            (entry-id     (psi-emacs--event-data-get slot '(:entry-id entry-id :entryId entryId)))
-            (is-active*   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
-            (is-active    (and (equal item-kind "session")
-                               (or is-active*
-                                   (and id active-id (equal id active-id)))))
-            (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
-            (parent-id    (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
-            (name         (if (and (listp slot)
-                                   (fboundp 'psi-emacs--session-tree-line-label))
-                              (psi-emacs--session-tree-line-label slot)
-                            (or id "(unknown)")))
-            (indent       (if (or parent-id (equal item-kind "fork-point")) "  " ""))
-            (suffix       (concat
-                           (when (and (equal item-kind "session") is-streaming) " [streaming]")
-                           (when is-active " ← active")))
-            (label        (concat indent name suffix))
-            (value        (if (equal item-kind "fork-point")
-                              `((:type . "fork-point")
-                                (:entry-id . ,entry-id)
-                                (:session-id . ,id))
-                            id)))
+     (let* ((item-kind (psi-emacs--tree-slot-item-kind slot))
+            (id (psi-emacs--tree-slot-session-id slot))
+            (entry-id (psi-emacs--tree-slot-entry-id slot))
+            (parent-id (psi-emacs--tree-slot-parent-session-id slot))
+            (is-active-raw (or (psi-emacs--event-data-get slot '(:item/is-active item/is-active))
+                               (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive))))
+            (is-active (and (equal item-kind "session")
+                            (or is-active-raw
+                                (and id active-id (equal id active-id)))))
+            (is-streaming (or (psi-emacs--event-data-get slot '(:item/is-streaming item/is-streaming))
+                              (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming))))
+            (name (psi-emacs--tree-slot-label slot item-kind id entry-id))
+            (indent (if (or parent-id (equal item-kind "fork-point")) "  " ""))
+            (suffix (concat
+                     (when (and (equal item-kind "session") is-streaming) " [streaming]")
+                     (when is-active " ← active")))
+            (label (concat indent name suffix))
+            (value (psi-emacs--tree-slot-value slot item-kind id entry-id)))
        (cons label value)))
    (append slots nil)))
 
@@ -967,10 +1025,21 @@ or an alist payload for fork-point selection."
           (psi-emacs--append-assistant-message
            (format "Already on session: %s" selected-label)))
          ((and (listp selected-value)
-               (equal (alist-get :type selected-value nil nil #'equal) "fork-point"))
-          (let ((entry-id (alist-get :entry-id selected-value nil nil #'equal)))
+               (or (equal (alist-get :type selected-value nil nil #'equal) "fork-point")
+                   (equal (alist-get :action/kind selected-value nil nil #'equal) :fork-session)
+                   (equal (alist-get 'action/kind selected-value nil nil #'equal) :fork-session)))
+          (let ((entry-id (or (alist-get :action/entry-id selected-value nil nil #'equal)
+                              (alist-get 'action/entry-id selected-value nil nil #'equal)
+                              (alist-get :entry-id selected-value nil nil #'equal))))
             (when (and (stringp entry-id) (not (string-empty-p entry-id)))
               (psi-emacs--dispatch-request "fork" `((:entry-id . ,entry-id))))))
+         ((and (listp selected-value)
+               (or (equal (alist-get :action/kind selected-value nil nil #'equal) :switch-session)
+                   (equal (alist-get 'action/kind selected-value nil nil #'equal) :switch-session)))
+          (let ((sid (or (alist-get :action/session-id selected-value nil nil #'equal)
+                         (alist-get 'action/session-id selected-value nil nil #'equal))))
+            (when (and (stringp sid) (not (string-empty-p sid)))
+              (psi-emacs--request-switch-session-by-id state sid))))
          (t
           (psi-emacs--request-switch-session-by-id state selected-value)))))))
 

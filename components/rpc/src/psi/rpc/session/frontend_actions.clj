@@ -70,11 +70,47 @@
                 (emit/emit-context-updated! emit! ctx state value)))
 
             (map? value)
-            (let [type*    (or (:type value) (get value "type"))
-                  entry-id (or (:entry-id value) (get value "entry-id") (get value "entryId"))]
-              (when (and (= "fork-point" type*)
-                         (string? entry-id)
-                         (not (str/blank? entry-id)))
+            (let [action-kind (or (:action/kind value)
+                                  (get value "action/kind")
+                                  (:type value)
+                                  (get value "type"))
+                  session-id* (or (:action/session-id value)
+                                  (get value "action/session-id")
+                                  (:session-id value)
+                                  (get value "session-id")
+                                  (get value "sessionId"))
+                  entry-id    (or (:action/entry-id value)
+                                  (get value "action/entry-id")
+                                  (:entry-id value)
+                                  (get value "entry-id")
+                                  (get value "entryId"))]
+              (cond
+                (and (or (= action-kind :switch-session)
+                         (= action-kind "switch-session")
+                         (= action-kind "switch_session"))
+                     (string? session-id*)
+                     (not (str/blank? session-id*)))
+                (do
+                  (session/ensure-session-loaded-in! ctx session-id session-id*)
+                  (let [_    (events/set-focus-session-id! state session-id*)
+                        sd   (ss/get-session-data-in ctx session-id*)
+                        msgs (message-source/session-messages ctx session-id*)]
+                    (emit/emit-session-rehydration!
+                     emit!
+                     {:session-id (:session-id sd)
+                      :session-file (:session-file sd)
+                      :message-count (count msgs)
+                      :messages msgs
+                      :tool-calls {}
+                      :tool-order []})
+                    (emit/emit-context-updated! emit! ctx state session-id*)))
+
+                (and (or (= action-kind :fork-session)
+                         (= action-kind "fork-session")
+                         (= action-kind "fork_session")
+                         (= action-kind "fork-point"))
+                     (string? entry-id)
+                     (not (str/blank? entry-id)))
                 (let [sd   (session/fork-session-in! ctx session-id entry-id)
                       sid  (:session-id sd)
                       _    (events/set-focus-session-id! state sid)

@@ -1366,6 +1366,10 @@
           [ctx session-id]    (create-session-context {:cwd cwd})
           child-sd            (session/new-session-in! ctx session-id {})
           child-id            (:session-id child-sd)
+          _                   (ss/update-state-value-in! ctx
+                                                        (ss/state-path :session-data child-id)
+                                                        assoc
+                                                        :parent-session-id session-id)
           _                   (session/set-session-name-in! ctx session-id "main")
           _                   (session/set-session-name-in! ctx child-id "child")
           entry               (persist/message-entry {:role    "user"
@@ -1373,6 +1377,7 @@
           _                   (ss/journal-append-in! ctx session-id entry)
           state               (atom {:ready?            true
                                      :pending           {}
+                                     :focus-session-id  session-id
                                      :subscribed-topics #{"ui/frontend-action-requested"}})
           handler             (make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
@@ -1380,22 +1385,24 @@
           {:keys [out-lines]} (run-loop input handler state)
           frames              (parse-frames out-lines)
           action-evt          (some #(when (= "ui/frontend-action-requested" (:event %)) %) frames)
-          sessions            (get-in action-evt [:data :payload :sessions])
-          fork-slot           (some #(when (= "fork-point" (:item-kind %)) %) sessions)
-          main-idx            (first (keep-indexed (fn [i slot]
-                                                    (when (and (= "session" (:item-kind slot))
-                                                               (= session-id (:session-id slot)))
+          selector           (get-in action-evt [:data :payload])
+          items              (:selector/items selector)
+          fork-slot          (some #(when (= :fork-point (:item/kind %)) %) items)
+          main-idx           (first (keep-indexed (fn [i item]
+                                                    (when (and (= :session (:item/kind item))
+                                                               (= session-id (:item/session-id item)))
                                                       i))
-                                                  sessions))
-          fork-idx            (first (keep-indexed (fn [i slot]
-                                                    (when (= (:id entry) (:entry-id slot)) i))
-                                                  sessions))]
+                                                  items))
+          fork-idx           (first (keep-indexed (fn [i item]
+                                                    (when (= (:id entry) (:item/entry-id item)) i))
+                                                  items))]
       (is (some? action-evt))
       (is (= "context-session-selector" (get-in action-evt [:data :action-name])))
-      (is (vector? sessions))
+      (is (= :context-session (:selector/kind selector)))
+      (is (vector? items))
       (is (some? fork-slot))
-      (is (= (:id entry) (:entry-id fork-slot)))
-      (is (= "Branch from this prompt" (:display-name fork-slot)))
+      (is (= (:id entry) (:item/entry-id fork-slot)))
+      (is (= "Branch from this prompt" (:item/display-name fork-slot)))
       (is (some? main-idx))
       (is (some? fork-idx))
       (is (< main-idx fork-idx)
@@ -1823,7 +1830,7 @@
                            :subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}})
           handler   (make-handler ctx state)
           input     (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                         "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-1\" :action-name \"context-session-selector\" :status \"submitted\" :value {:type \"fork-point\" :entry-id \"" (:id entry) "\" :session-id \"" sid "\"}}}\n")
+                         "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-1\" :action-name \"context-session-selector\" :status \"submitted\" :value {:action/kind :fork-session :action/entry-id \"" (:id entry) "\" :action/session-id \"" sid "\"}}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames      (parse-frames out-lines)
           resumed-evt (some #(when (= "session/resumed" (:event %)) %) frames)
