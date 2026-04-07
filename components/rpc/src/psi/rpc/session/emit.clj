@@ -94,6 +94,13 @@
   [emit! payload]
   (emit! "command-result" payload))
 
+(defn emit-navigation-result!
+  [emit! ctx state {:keys [nav/session-id nav/rehydration nav/context-snapshot]}]
+  (emit-session-rehydration! emit! rehydration)
+  (emit-session-updated! emit! ctx session-id)
+  (emit-footer-updated! emit! ctx session-id)
+  (emit! "context/updated" context-snapshot))
+
 (defn emit-frontend-action-request!
   [emit! request-id action]
   (let [legacy (:ui/legacy action)]

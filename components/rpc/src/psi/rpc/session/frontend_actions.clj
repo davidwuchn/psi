@@ -4,10 +4,9 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [psi.agent-session.core :as session]
-   [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.navigation :as navigation]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
-   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn- normalize-action-key
@@ -30,7 +29,8 @@
         action-key  (normalize-action-key ui-action action-name)
         status      (:status params)
         value       (:value params)
-        emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))]
+        emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))
+        nav-result* (volatile! nil)]
     (cond
       (= status "cancelled")
       (do
@@ -51,37 +51,18 @@
           :select-resume-session
           (when (string? value)
             (when (.exists (io/file value))
-              (let [sd          (session/resume-session-in! ctx session-id value)
-                    sid         (:session-id sd)
-                    _           (events/set-focus-session-id! state sid)
-                    msgs        (message-source/session-messages ctx sid)]
-                (emit/emit-session-rehydration!
-                 emit!
-                 {:session-id sid
-                  :session-file (:session-file sd)
-                  :message-count (count msgs)
-                  :messages msgs
-                  :tool-calls {}
-                  :tool-order []})
-                (emit/emit-context-updated! emit! ctx state sid))))
+              (let [nav (navigation/resume-session-result ctx state session-id value)]
+                (vreset! nav-result* nav)
+                (events/set-focus-session-id! state (:nav/session-id nav))
+                (emit/emit-navigation-result! emit! ctx state nav))))
 
           :select-session
           (cond
             (string? value)
-            (do
-              (session/ensure-session-loaded-in! ctx session-id value)
-              (let [_    (events/set-focus-session-id! state value)
-                    sd   (ss/get-session-data-in ctx value)
-                    msgs (message-source/session-messages ctx value)]
-                (emit/emit-session-rehydration!
-                 emit!
-                 {:session-id (:session-id sd)
-                  :session-file (:session-file sd)
-                  :message-count (count msgs)
-                  :messages msgs
-                  :tool-calls {}
-                  :tool-order []})
-                (emit/emit-context-updated! emit! ctx state value)))
+            (let [nav (navigation/switch-session-result ctx state session-id value)]
+              (vreset! nav-result* nav)
+              (events/set-focus-session-id! state (:nav/session-id nav))
+              (emit/emit-navigation-result! emit! ctx state nav))
 
             (map? value)
             (let [action-kind (or (:action/kind value)
@@ -104,20 +85,10 @@
                          (= action-kind "switch_session"))
                      (string? session-id*)
                      (not (str/blank? session-id*)))
-                (do
-                  (session/ensure-session-loaded-in! ctx session-id session-id*)
-                  (let [_    (events/set-focus-session-id! state session-id*)
-                        sd   (ss/get-session-data-in ctx session-id*)
-                        msgs (message-source/session-messages ctx session-id*)]
-                    (emit/emit-session-rehydration!
-                     emit!
-                     {:session-id (:session-id sd)
-                      :session-file (:session-file sd)
-                      :message-count (count msgs)
-                      :messages msgs
-                      :tool-calls {}
-                      :tool-order []})
-                    (emit/emit-context-updated! emit! ctx state session-id*)))
+                (let [nav (navigation/switch-session-result ctx state session-id session-id*)]
+                  (vreset! nav-result* nav)
+                  (events/set-focus-session-id! state (:nav/session-id nav))
+                  (emit/emit-navigation-result! emit! ctx state nav))
 
                 (and (or (= action-kind :fork-session)
                          (= action-kind "fork-session")
@@ -125,19 +96,10 @@
                          (= action-kind "fork-point"))
                      (string? entry-id)
                      (not (str/blank? entry-id)))
-                (let [sd   (session/fork-session-in! ctx session-id entry-id)
-                      sid  (:session-id sd)
-                      _    (events/set-focus-session-id! state sid)
-                      msgs (message-source/session-messages ctx sid)]
-                  (emit/emit-session-rehydration!
-                   emit!
-                   {:session-id sid
-                    :session-file (:session-file sd)
-                    :message-count (count msgs)
-                    :messages msgs
-                    :tool-calls {}
-                    :tool-order []})
-                  (emit/emit-context-updated! emit! ctx state sid)))))
+                (let [nav (navigation/fork-session-result ctx state session-id entry-id)]
+                  (vreset! nav-result* nav)
+                  (events/set-focus-session-id! state (:nav/session-id nav))
+                  (emit/emit-navigation-result! emit! ctx state nav)))))
 
           :select-model
           (when (map? value)
@@ -159,7 +121,8 @@
                                                 :message (str "✓ Thinking level set to " (name (:thinking-level result)))})))
 
           nil)
-        (emit/emit-session-snapshots! emit! ctx state session-id)
+        (when-not @nav-result*
+          (emit/emit-session-snapshots! emit! ctx state session-id))
         (response-frame (:id request)
                         "frontend_action_result"
                         true
