@@ -6,12 +6,12 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.app-runtime.context :as app-context]
-   [psi.rpc.session.message-source :as message-source]))
+   [psi.app-runtime.messages :as app-messages]))
 
 (defn rehydration-package
   [ctx sid & [{:keys [tool-calls tool-order]}]]
   (let [sd   (ss/get-session-data-in ctx sid)
-        msgs (message-source/session-messages ctx sid)]
+        msgs (app-messages/session-messages ctx sid)]
     {:session-id    (:session-id sd)
      :session-file  (:session-file sd)
      :message-count (count msgs)
@@ -70,7 +70,7 @@
           session-data  (ss/get-session-data-in ctx sid)
           session-file  (:session-file session-data)
           messages      (or (:agent-messages rehydrate)
-                            (message-source/session-messages ctx sid))]
+                            (app-messages/session-messages ctx sid))]
       {:nav/op                   :new-session
        :nav/session-id           sid
        :nav/session-file         session-file

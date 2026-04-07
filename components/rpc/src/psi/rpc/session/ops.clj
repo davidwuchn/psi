@@ -5,8 +5,8 @@
    [clojure.string :as str]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.messages :as app-messages]
    [psi.rpc.events :as events]
-   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [error-frame protocol-version response-frame supported-rpc-ops]]))
 
@@ -193,7 +193,7 @@
 
 (defn handle-get-messages
   [{:keys [ctx request session-id]}]
-  (response-frame (:id request) (:op request) true {:messages (message-source/session-messages ctx session-id)}))
+  (response-frame (:id request) (:op request) true {:messages (app-messages/session-messages ctx session-id)}))
 
 (defn handle-get-session-stats
   [{:keys [ctx request session-id]}]

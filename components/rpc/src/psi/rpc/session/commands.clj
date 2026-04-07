@@ -8,11 +8,11 @@
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.ai.models :as ai-models]
+   [psi.app-runtime.messages :as app-messages]
    [psi.app-runtime.selectors :as selectors]
    [psi.app-runtime.ui-actions :as ui-actions]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
-   [psi.rpc.session.message-source :as message-source]
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn handle-prompt-command-result!
@@ -142,7 +142,7 @@
 (defn- emit-session-rehydration-from-sid!
   [ctx state emit! sid]
   (let [sd   (ss/get-session-data-in ctx sid)
-        msgs (message-source/session-messages ctx sid)]
+        msgs (app-messages/session-messages ctx sid)]
     (events/set-focus-session-id! state sid)
     (emit/emit-session-rehydration!
      emit!
@@ -261,7 +261,7 @@
               sd        (when new-sid (ss/get-session-data-in ctx new-sid))
               msgs      (or (:agent-messages rehydrate)
                             (when new-sid
-                              (message-source/session-messages ctx new-sid)))]
+                              (app-messages/session-messages ctx new-sid)))]
           (emit/emit-session-rehydration!
            emit!
            {:session-id (:session-id sd)
