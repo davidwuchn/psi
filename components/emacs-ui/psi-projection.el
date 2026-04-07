@@ -189,30 +189,6 @@ from transcript projection rendering."
       (or (psi-emacs--projection-widget-content-lines widget)
           (list "")))))
 
-(defun psi-emacs--projection-sort-widgets (widgets)
-  "Return WIDGETS sorted by [placement, extension-id, widget-id]."
-  (sort (copy-sequence widgets)
-        (lambda (a b)
-          (let ((ap (psi-emacs--projection-item-key a '(:placement placement)))
-                (bp (psi-emacs--projection-item-key b '(:placement placement)))
-                (ae (psi-emacs--projection-item-key a '(:extension-id extension-id :extensionId extensionId)))
-                (be (psi-emacs--projection-item-key b '(:extension-id extension-id :extensionId extensionId)))
-                (aw (psi-emacs--projection-item-key a '(:widget-id widget-id :widgetId widgetId)))
-                (bw (psi-emacs--projection-item-key b '(:widget-id widget-id :widgetId widgetId))))
-            (cond
-             ((string< ap bp) t)
-             ((string< bp ap) nil)
-             ((string< ae be) t)
-             ((string< be ae) nil)
-             (t (string< aw bw)))))))
-
-(defun psi-emacs--projection-sort-statuses (statuses)
-  "Return STATUSES sorted by extension-id."
-  (sort (copy-sequence statuses)
-        (lambda (a b)
-          (string< (psi-emacs--projection-item-key a '(:extension-id extension-id :extensionId extensionId))
-                   (psi-emacs--projection-item-key b '(:extension-id extension-id :extensionId extensionId))))))
-
 (defun psi-emacs--projection-window-width ()
   "Return render width for footer projection in current buffer.
 

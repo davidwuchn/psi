@@ -3423,7 +3423,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
         (psi-emacs--start-rpc-client (current-buffer)))
       (should (equal psi-rpc-default-topics captured-topics)))))
 
-(ert-deftest psi-extension-ui-widgets-updated-replaces-and-sorts-projection ()
+(ert-deftest psi-extension-ui-widgets-updated-replaces-and-preserves-projection-order ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -3434,10 +3434,10 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
                               ((:placement . "left") (:extension-id . "ext-a") (:widget-id . "w-3") (:text . "Left-A"))])))))
     (let ((buf (buffer-string)))
       (should-not (string-match-p "Extension Widgets:" buf))
-      (should (< (string-match-p "Left-A" buf)
+      (should (< (string-match-p "Right-B" buf)
                  (string-match-p "Left-B" buf)))
       (should (< (string-match-p "Left-B" buf)
-                 (string-match-p "Right-B" buf))))
+                 (string-match-p "Left-A" buf))))
     (psi-emacs--handle-rpc-event
      '((:event . "ui/widgets-updated")
        (:data . ((:widgets . [((:placement . "left") (:extension-id . "ext-c") (:widget-id . "w-1") (:text . "Only"))])))))
@@ -3572,7 +3572,7 @@ command rehydration."
       (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
       (should (psi-emacs--input-separator-marker-valid-p)))))
 
-(ert-deftest psi-extension-ui-status-updated-replaces-and-sorts-by-extension-id ()
+(ert-deftest psi-extension-ui-status-updated-replaces-and-preserves-backend-order ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -3582,8 +3582,8 @@ command rehydration."
                                ((:extension-id . "ext-a") (:text . "Alpha"))])))))
     (let ((buf (buffer-string)))
       (should (string-match-p "Extension Statuses:" buf))
-      (should (< (string-match-p "\\[ext-a\\] Alpha" buf)
-                 (string-match-p "\\[ext-z\\] Zeta" buf))))
+      (should (< (string-match-p "\\[ext-z\\] Zeta" buf)
+                 (string-match-p "\\[ext-a\\] Alpha" buf))))
     (psi-emacs--handle-rpc-event
      '((:event . "ui/status-updated")
        (:data . ((:statuses . [((:extension-id . "ext-b") (:text . "Only status"))])))))

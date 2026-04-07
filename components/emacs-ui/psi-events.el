@@ -286,8 +286,7 @@ Child sessions and fork-points are indented beneath their parent session."
                           (cons widget others)
                         others)))
       (setf (psi-emacs-state-context-snapshot psi-emacs--state) snapshot)
-      (setf (psi-emacs-state-projection-widgets psi-emacs--state)
-            (psi-emacs--projection-sort-widgets updated))
+      (setf (psi-emacs-state-projection-widgets psi-emacs--state) updated)
       (psi-emacs--upsert-projection-block))))
 
 (defun psi-emacs--handle-command-result-event (data)
@@ -495,10 +494,9 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
       ("ui/widgets-updated"
        (when psi-emacs--state
          (setf (psi-emacs-state-projection-widgets psi-emacs--state)
-               (psi-emacs--projection-sort-widgets
-                (psi-emacs--projection-seq
-                 (or (psi-emacs--event-data-get data '(:widgets widgets))
-                     (psi-emacs--event-data-get data '(:items items))))))
+               (psi-emacs--projection-seq
+                (or (psi-emacs--event-data-get data '(:widgets widgets))
+                    (psi-emacs--event-data-get data '(:items items)))))
          (psi-emacs--upsert-projection-block)))
       ("ui/widget-specs-updated"
        (when psi-emacs--state
@@ -506,10 +504,9 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
       ("ui/status-updated"
        (when psi-emacs--state
          (setf (psi-emacs-state-projection-statuses psi-emacs--state)
-               (psi-emacs--projection-sort-statuses
-                (psi-emacs--projection-seq
-                 (or (psi-emacs--event-data-get data '(:statuses statuses))
-                     (psi-emacs--event-data-get data '(:items items))))))
+               (psi-emacs--projection-seq
+                (or (psi-emacs--event-data-get data '(:statuses statuses))
+                    (psi-emacs--event-data-get data '(:items items)))))
          (psi-emacs--upsert-projection-block)))
       ("ui/notification"
        (psi-emacs--handle-notification-event data))
