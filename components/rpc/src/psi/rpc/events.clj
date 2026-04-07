@@ -4,11 +4,11 @@
    [clojure.string :as str]
    [psi.agent-session.core :as session]
    [psi.agent-session.message-text :as message-text]
-   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.app-runtime.context :as app-context]
    [psi.app-runtime.footer :as footer]
    [psi.app-runtime.projections :as projections]
+   [psi.app-runtime.session-summary :as session-summary]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [default-session-id-in event-frame protocol-version]]))
 
@@ -109,45 +109,28 @@
     (string? lvl)  lvl
     :else          "info"))
 
-(def ^:private thinking-level->reasoning-effort
-  {:off nil
-   :minimal "minimal"
-   :low "low"
-   :medium "medium"
-   :high "high"
-   :xhigh "high"})
-
-(defn- effective-reasoning-effort
-  [model thinking-level]
-  (when (:reasoning model)
-    (get thinking-level->reasoning-effort thinking-level "medium")))
-
 (defn session-updated-payload
   ([ctx]
    (session-updated-payload ctx (default-session-id-in ctx)))
   ([ctx session-id]
-   (let [sd                   (ss/get-session-data-in ctx session-id)
-         model                (:model sd)
-         thinking-level       (:thinking-level sd)
-         effective-effort     (effective-reasoning-effort model thinking-level)
-         journal-messages     (persist/messages-from-entries-in ctx session-id)
-         session-display-name (message-text/session-display-name (:session-name sd) journal-messages)]
-     {:session-id                  (:session-id sd)
-      :session-file                (:session-file sd)
-      :session-name                (:session-name sd)
-      :session-display-name        session-display-name
-      :phase                       (some-> (ss/sc-phase-in ctx (:session-id sd)) name)
-      :is-streaming                (boolean (:is-streaming sd))
-      :is-compacting               (boolean (:is-compacting sd))
-      :pending-message-count       (+ (count (:steering-messages sd))
-                                      (count (:follow-up-messages sd)))
-      :retry-attempt               (or (:retry-attempt sd) 0)
-      :interrupt-pending           (boolean (:interrupt-pending sd))
-      :model-provider              (:provider model)
-      :model-id                    (:id model)
-      :model-reasoning             (boolean (:reasoning model))
-      :thinking-level              (some-> thinking-level name)
-      :effective-reasoning-effort  effective-effort})))
+   (let [summary (session-summary/session-summary ctx session-id)]
+     (select-keys summary [:session-id
+                           :session-file
+                           :session-name
+                           :session-display-name
+                           :phase
+                           :is-streaming
+                           :is-compacting
+                           :pending-message-count
+                           :retry-attempt
+                           :interrupt-pending
+                           :model-provider
+                           :model-id
+                           :model-reasoning
+                           :thinking-level
+                           :effective-reasoning-effort
+                           :header-model-label
+                           :status-session-line]))))
 
 (defn focus-session-id
   [state]

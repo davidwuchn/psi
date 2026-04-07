@@ -99,6 +99,7 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   session-thinking-level
   session-effective-reasoning-effort
   header-model-label
+  status-session-line
   extension-command-names
   transcript-hydrated?
   context-snapshot

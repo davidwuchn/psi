@@ -187,6 +187,9 @@
       (is (= true (:model-reasoning payload)))
       (is (= "xhigh" (:thinking-level payload)))
       (is (= "high" (:effective-reasoning-effort payload)))
+      (is (= "(openai) gpt-5.3-codex • thinking high" (:header-model-label payload)))
+      (is (= (str "session: " sid " phase:idle streaming:no compacting:no pending:2 retry:2")
+             (:status-session-line payload)))
       (is (= 2 (:pending-message-count payload)))
       (is (= 2 (:retry-attempt payload))))))
 

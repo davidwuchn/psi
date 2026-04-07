@@ -19,16 +19,18 @@
 
 (defun psi-emacs--status-session-line (state)
   "Return optional session summary line for STATE diagnostics output."
-  (let ((session-id (and state (psi-emacs-state-session-id state))))
-    (when (and (stringp session-id)
-               (not (string-empty-p session-id)))
+  (let ((summary (and state (psi-emacs-state-status-session-line state)))
+        (session-id (and state (psi-emacs-state-session-id state))))
+    (cond
+     ((and (stringp summary) (not (string-empty-p summary))) summary)
+     ((and (stringp session-id) (not (string-empty-p session-id)))
       (format "session: %s phase:%s streaming:%s compacting:%s pending:%s retry:%s"
               session-id
               (or (psi-emacs-state-session-phase state) "unknown")
               (if (psi-emacs-state-session-is-streaming state) "yes" "no")
               (if (psi-emacs-state-session-is-compacting state) "yes" "no")
               (or (psi-emacs-state-session-pending-message-count state) 0)
-              (or (psi-emacs-state-session-retry-attempt state) 0)))))
+              (or (psi-emacs-state-session-retry-attempt state) 0))))))
 
 (defun psi-emacs--status-string (state)
   "Return minimal status string for STATE."
