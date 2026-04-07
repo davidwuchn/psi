@@ -239,6 +239,7 @@ Progress so far:
 - ✓ adapters now prefer background-job widget/status projection over transcript-only rendering for the convergence path
 - ✓ canonical context snapshot public summary projections now live in `app-runtime.context_summary`
 - ✓ Emacs context/session-tree labeling now reuses centralized summary logic rather than parallel local shaping
+- ✓ Emacs tree candidate labeling now reuses the same context summary line-label logic instead of a parallel formatter
 
 #### Phase 0 — scaffold adapter-neutral projection layer
 - [x] add app-runtime projection namespaces:
