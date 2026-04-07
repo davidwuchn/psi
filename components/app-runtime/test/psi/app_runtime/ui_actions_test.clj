@@ -97,4 +97,15 @@
                                        :status "submitted"
                                        :value {:action/kind :fork-session
                                                :action/session-id "s1"
-                                               :action/entry-id "e1"}}))))))
+                                               :action/entry-id "e1"}})))))
+  (testing "model and thinking picker values normalize to canonical submitted values"
+    (is (= {:provider "openai" :id "gpt-5.3-codex"}
+           (:ui.result/value
+            (ui-actions/action-result {:action-name "model-picker"
+                                       :status "submitted"
+                                       :value {:provider "openai" :id "gpt-5.3-codex"}}))))
+    (is (= "high"
+           (:ui.result/value
+            (ui-actions/action-result {:action-name "thinking-picker"
+                                       :status "submitted"
+                                       :value :high}))))))

@@ -67,10 +67,8 @@
               nil))
 
           :select-model
-          (when (map? value)
-            (let [provider (or (:provider value) (get value "provider"))
-                  model-id (or (:id value) (get value "id"))
-                  resolved (resolve-model provider model-id)]
+          (when-let [{:keys [provider id]} value]
+            (let [resolved (resolve-model provider id)]
               (when resolved
                 (let [provider-str (name (:provider resolved))
                       model {:provider provider-str :id (:id resolved) :reasoning (:supports-reasoning resolved)}]
@@ -79,8 +77,8 @@
                                                     :message (str "✓ Model set to " provider-str " " (:id resolved))})))))
 
           :select-thinking-level
-          (when (string? value)
-            (let [level  (keyword value)
+          (when-let [level-str value]
+            (let [level  (keyword level-str)
                   result (session/set-thinking-level-in! ctx session-id level)]
               (emit/emit-command-result! emit! {:type "text"
                                                 :message (str "✓ Thinking level set to " (name (:thinking-level result)))})))

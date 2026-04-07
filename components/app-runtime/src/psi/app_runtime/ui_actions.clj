@@ -70,12 +70,30 @@
     :else
     nil))
 
+(defn- model-picker-value
+  [value]
+  (when (map? value)
+    (let [provider (or (:provider value) (get value "provider"))
+          model-id (or (:id value) (get value "id"))]
+      (when (and provider model-id)
+        {:provider provider
+         :id model-id}))))
+
+(defn- thinking-level-value
+  [value]
+  (cond
+    (keyword? value) (name value)
+    (string? value) value
+    :else nil))
+
 (defn action-result
   [{:keys [request-id action-name ui-action status value error-message]}]
   (let [action-key (frontend-action-key ui-action action-name)
         status*    (normalize-result-status status)
         value*     (case action-key
                      :select-session (session-selector-value->action value)
+                     :select-model (model-picker-value value)
+                     :select-thinking-level (thinking-level-value value)
                      value)
         message*   (case status*
                      :cancelled (str "Cancelled " action-name ".")
