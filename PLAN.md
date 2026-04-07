@@ -494,7 +494,7 @@ Goal of the first implementation slice:
 - [x] extract canonical transcript rehydration message source into `app-runtime` and remove `app-runtime.navigation` dependency on `psi.rpc.session.message-source`
 - [x] update focused app-runtime/RPC tests to prove shared navigation/context/rehydration projections
 - [x] refresh `mementum/state.md` after the convergence cleanup lands
-- [ ] refresh user/docs references if `/jobs` and context/session-tree ownership should now be described in terms of shared app-runtime projections
+- [x] refresh user/docs references if `/jobs` and context/session-tree ownership should now be described in terms of shared app-runtime projections
 
 #### Remaining convergence cleanup plan
 - [x] footer semantics: stop making Emacs re-parse canonical `:stats-line` for provider/model alignment
@@ -512,10 +512,10 @@ Goal of the first implementation slice:
 
 #### Cross-cutting cleanup tasks
 - [~] remove obsolete duplicated helpers after each phase instead of leaving parallel paths
-- [ ] keep adapter tests focused on adaptation/rendering, not shared-domain ordering rules
-- [ ] update docs after each phase to reflect migrated ownership
-- [ ] ensure app-runtime remains adapter-neutral and does not absorb transport-specific concerns
-- [ ] avoid moving Emacs/TUI rendering mechanics into app-runtime; move semantics only
+- [~] keep adapter tests focused on adaptation/rendering, not shared-domain ordering rules
+- [x] update docs after each phase to reflect migrated ownership
+- [~] ensure app-runtime remains adapter-neutral and does not absorb transport-specific concerns
+- [~] avoid moving Emacs/TUI rendering mechanics into app-runtime; move semantics only
 
 #### Suggested execution order
 - [ ] phase 0 scaffold

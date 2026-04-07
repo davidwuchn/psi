@@ -14,7 +14,7 @@ Bootstrapped on 2026-04-02.
 - `AGENTS.md` — bootstrap/system instructions
 
 ## Current work state
-- Active work is on adapter convergence: moving shared interactive semantics out of RPC/TUI/Emacs duplication and into `app-runtime`.
+- The adapter-convergence cleanup thread has now landed the remaining targeted ownership shifts for shared interactive semantics.
 - Recent completed convergence work now includes:
   - unified RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
   - expanded explicit RPC session routing so more ops carry `session-id` through request handling instead of relying on adapter focus inference
@@ -25,7 +25,10 @@ Bootstrapped on 2026-04-02.
   - extracted canonical background-job summaries to `components/app-runtime/src/psi/app_runtime/background_jobs.clj`
   - extracted canonical background-job widget/status projections to `components/app-runtime/src/psi/app_runtime/background_job_widgets.clj`
   - installed runtime-owned background-job UI refresh via `components/app-runtime/src/psi/app_runtime/background_job_ui.clj`
-  - made `psi.rpc.events/context-updated-payload` delegate to the app-runtime context projection
+  - extracted shared session-summary/header-diagnostics projection to `components/app-runtime/src/psi/app_runtime/session_summary.clj`
+  - made `psi.rpc.events/context-updated-payload` delegate to app-runtime context + context-summary projections
+  - made `psi.rpc.events/session-updated-payload` delegate to shared session-summary projection
+  - made `psi.rpc.events/footer-updated-payload` expose structured footer stats parts (`:usage-parts`, `:model-text`) in addition to canonical lines
   - removed `app-runtime.navigation` dependence on `psi.rpc.session.message-source`
   - removed the redundant RPC message-source alias entirely
   - centralized frontend action result normalization in `app-runtime.ui_actions`
@@ -39,7 +42,11 @@ Bootstrapped on 2026-04-02.
   - made RPC delegate extension UI snapshots to app-runtime projections
   - made TUI consume canonical extension UI snapshots instead of raw ui-state
   - made Emacs preserve backend-owned widget/status ordering instead of re-sorting it locally
-  - made Emacs tree candidate labels reuse the same context summary line-label logic as the session-tree widget
+  - made Emacs footer alignment prefer structured backend footer semantics instead of reparsing `:stats-line` in the common path
+  - made Emacs header model label and `/status` session-summary line consume backend-shared session summary fragments
+  - made `context/updated` carry both the canonical context snapshot and the canonical backend-projected session-tree widget payload
+  - removed the handshake bootstrap `context/updated` event path so handshake is transport-only again
+  - removed obsolete handshake/tree-label compatibility branches that were superseded by the converged projections
 
 ## Explicit routing direction
 - Strong current direction: explicit session routing over inferred focus.
@@ -57,9 +64,11 @@ Bootstrapped on 2026-04-02.
 ## Canonical app-runtime ownership now includes
 - selector model
 - footer model
+- session-summary model for header/diagnostic reuse
 - navigation result maps
 - context snapshot maps
 - context/session-tree public summary maps
+- context/session-tree widget projection payloads when adapters need the same rendered structure
 - transcript rehydration message reconstruction
 - shared UI action model
 - shared frontend action result normalization
@@ -72,7 +81,8 @@ Bootstrapped on 2026-04-02.
   - context snapshot projection preserves canonical display-name and updated-at semantics
   - context snapshot marks active/streaming sessions correctly
   - context snapshot falls back to the current session when the context index is empty
-  - context/session-tree summary projection builds canonical labels, actions, and visibility rules
+  - context/session-tree summary projection builds canonical labels, actions, widget lines, and visibility rules
+  - session-summary projection builds canonical header/status fragments
   - transcript messages are rebuilt canonically from the session journal
   - navigation results use the shared app-runtime context + message projections
   - frontend action result normalization works for canonical action names and canonical submitted values
@@ -81,8 +91,10 @@ Bootstrapped on 2026-04-02.
   - background-job live UI projection updates and clears shared extension UI state correctly
 - RPC tests now prove:
   - new-session / resume / tree / fork flows still emit canonical `session/resumed` + `session/rehydrated`
-  - context updates still reflect the correct active session after new/fork flows
-  - callback-driven `new_session` rehydrate payloads still work under the unified emission path
+  - `footer/updated` exposes structured footer fields alongside canonical lines
+  - `session/updated` exposes shared session-summary fragments for header/status reuse
+  - `context/updated` exposes active-session-id, sessions, and backend-projected session-tree widget payload
+  - handshake emits transport/server info only (no bootstrap `context/updated` event)
   - explicit `session-id` routing works in the newer navigation paths
   - frontend action flows use canonical action names
   - background-job RPC ops expose canonical summary fields
@@ -90,39 +102,44 @@ Bootstrapped on 2026-04-02.
   - `ui/frontend-action-requested` is consumed from canonical `:ui/action`
   - Emacs submits canonical frontend action names back on `frontend_action_result`
   - no legacy payload duplication is required for selector/picker completion flows
-  - context/session-tree widget labels and tree candidate labels reuse the same centralized summary logic
+  - footer alignment prefers structured backend footer fields, with `:stats-line` parsing retained only as compatibility fallback
+  - header model label and `/status` session-summary text consume backend-owned shared session summary fragments
+  - `context/updated` renders the backend-projected session-tree widget instead of rebuilding widget structure locally
+  - tree candidate labels prefer backend-provided canonical labels when present
   - projected background-job widgets/statuses render correctly
 - TUI tests now prove:
   - projected extension UI ordering is preserved unchanged
   - projected background-job widgets render from shared UI projection state
 
 ## Recent relevant commits
-- `8a90c18` — ◈ plan: record tree candidate summary reuse
-- `57aad1a` — ⚒ emacs: reuse context summary labels in tree candidates
-- `819c99b` — ◈ plan: record context summary convergence
-- `c50d1b8` — ⚒ emacs: centralize context summary labeling
-- `ca4b6f7` — ⚒ context: add canonical public summary projections
-- `5e20297` — ◈ plan: record background job ui projection convergence
-- `97c934e` — ⚒ adapters: prefer background job ui projection over transcript text
-- `8a2390c` — ⚒ background-jobs: refresh live job ui from runtime
-- `80e799b` — ⚒ background-jobs: project live job ui widgets
-- `c68bb1e` — ⚒ background-jobs: add canonical widget and status projections
+- `a9b637d1` — ⚒ cleanup: remove obsolete handshake and tree label compatibility
+- `6e48a54a` — ⚒ docs: describe context widget projection ownership
+- `a09cee36` — ⚒ context: project canonical session-tree widget from backend
+- `2fd49ae3` — ⚒ docs: reflect shared session summary and subscribe bootstrap
+- `6825ebd7` — ⚒ rpc: remove handshake context bootstrap event path
+- `bcb90af0` — ⚒ session-summary: share header and diagnostics fragments
+- `70bf3e24` — ⚒ footer: expose structured stats parts for emacs alignment
 
 ## Suggested next step
-- Finish the remaining adapter-convergence cleanup around transport/adapter-local semantic duplication:
-  - inspect remaining footer/status diagnostics shaping for shared-vs-local ownership
-  - inspect RPC handshake/bootstrap shaping for any duplicate summary semantics versus subscribed event projections
-- Then refresh docs so ownership changes are reflected in `README.md` / `doc/` / Emacs frontend docs.
+- The originally targeted adapter-convergence cleanup slice is done.
+- Best next move is to switch out of convergence cleanup and onto whichever active thread now has highest leverage, likely one of:
+  - prompt lifecycle architectural convergence (`prepare -> execute -> record`)
+  - dispatch trace follow-on decisions
+  - LSP integration follow-on simplification/telemetry decisions
+- Before doing more convergence work, prefer checking `PLAN.md` for whichever non-convergence thread is now most active.
 
 ## Notes for future ψ
-- `PLAN.md` is the main active-work tracker for adapter convergence.
-- For this current architectural thread, recent commits are more trustworthy than `STATE.md`.
-- `ui/frontend-action-requested` should now be treated as a canonical `:ui/action` contract; do not reintroduce payload duplication or legacy action-name compatibility without a deliberate compatibility decision.
+- `PLAN.md` is still the main active-work tracker.
+- For this just-finished architectural thread, trust the recent commits and the current docs over older state notes.
+- `ui/frontend-action-requested` should be treated as a canonical `:ui/action` contract; do not reintroduce payload duplication or legacy action-name compatibility without a deliberate compatibility decision.
 - Background jobs should now be understood in three layers:
   - canonical summary text/maps in `app_runtime.background_jobs`
   - canonical widget/status projections in `app_runtime.background_job_widgets`
   - runtime projection into shared extension UI state in `app_runtime.background_job_ui`
-- Context/session tree should now be understood in two layers:
+- Context/session tree should now be understood in three layers:
   - canonical snapshot data in `app_runtime.context`
-  - canonical public/session-tree summary labels + widget lines in `app_runtime.context_summary`
-- Emacs still has some frontend-specific status/footer composition; inspect that before claiming all public summary duplication is gone.
+  - canonical public/session-tree summaries in `app_runtime.context_summary`
+  - backend-projected session-tree widget payload carried on `context/updated`
+- Header/status/footer ownership is now split as:
+  - backend/app-runtime owns shared semantic fragments
+  - adapters own only rendering/layout and transport/process/local-run-state concerns
