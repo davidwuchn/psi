@@ -73,16 +73,23 @@
 (defn action-result
   [{:keys [request-id action-name ui-action status value error-message]}]
   (let [action-key (frontend-action-key ui-action action-name)
+        status*    (normalize-result-status status)
         value*     (case action-key
                      :select-session (session-selector-value->action value)
-                     value)]
+                     value)
+        message*   (case status*
+                     :cancelled (str "Cancelled " action-name ".")
+                     :failed (or error-message
+                                 (str "Frontend action failed: " action-name))
+                     nil)]
     {:ui.result/request-id    request-id
      :ui.result/action-name   action-name
      :ui.result/action-key    action-key
      :ui.result/ui-action     ui-action
-     :ui.result/status        (normalize-result-status status)
+     :ui.result/status        status*
      :ui.result/value         value*
-     :ui.result/error-message error-message}))
+     :ui.result/error-message error-message
+     :ui.result/message       message*}))
 
 (def thinking-levels
   ["off" "minimal" "low" "medium" "high" "xhigh"])

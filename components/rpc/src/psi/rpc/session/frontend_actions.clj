@@ -12,7 +12,7 @@
 
 (defn handle-frontend-action-result!
   [{:keys [ctx request params state session-id resolve-model]}]
-  (let [{:ui.result/keys [request-id action-name action-key status value error-message]}
+  (let [{:ui.result/keys [request-id action-name action-key status value error-message message]}
         (ui-actions/action-result {:request-id (:request-id params)
                                    :action-name (:action-name params)
                                    :ui-action (:ui/action params)
@@ -25,14 +25,13 @@
       (= status :cancelled)
       (do
         (emit/emit-command-result! emit! {:type "text"
-                                          :message (str "Cancelled " action-name ".")})
+                                          :message message})
         (response-frame (:id request) "frontend_action_result" true {:accepted true}))
 
       (= status :failed)
       (do
         (emit/emit-command-result! emit! {:type "error"
-                                          :message (or error-message
-                                                       (str "Frontend action failed: " action-name))})
+                                          :message message})
         (response-frame (:id request) "frontend_action_result" true {:accepted true}))
 
       :else

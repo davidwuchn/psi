@@ -71,6 +71,17 @@
     (is (= :submitted (:ui.result/status (ui-actions/action-result {:status "submitted"}))))
     (is (= :cancelled (:ui.result/status (ui-actions/action-result {:status "cancelled"}))))
     (is (= :failed (:ui.result/status (ui-actions/action-result {:status "failed"})))))
+  (testing "cancelled and failed results derive canonical messages"
+    (is (= "Cancelled model-picker."
+           (:ui.result/message (ui-actions/action-result {:action-name "model-picker"
+                                                          :status "cancelled"}))))
+    (is (= "Frontend action failed: model-picker"
+           (:ui.result/message (ui-actions/action-result {:action-name "model-picker"
+                                                          :status "failed"}))))
+    (is (= "boom"
+           (:ui.result/message (ui-actions/action-result {:action-name "model-picker"
+                                                          :status "failed"
+                                                          :error-message "boom"})))))
   (testing "session selector values normalize to canonical action maps"
     (is (= {:action/kind :switch-session
             :action/session-id "s2"}
