@@ -1,0 +1,24 @@
+(ns psi.app-runtime.messages-test
+  (:require
+   [clojure.test :refer [deftest is]]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.persistence :as persist]
+   [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.messages :as app-messages]))
+
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
+(deftest session-messages-rebuilds-canonical-messages-from-journal-test
+  (let [[ctx sid] (create-session-context {:persist? false})
+        _         (ss/journal-append-in! ctx sid (persist/message-entry {:role "user" :content "hi"}))
+        _         (ss/journal-append-in! ctx sid (persist/message-entry {:role "assistant"
+                                                                         :content [{:type :text :text "there"}]}))]
+    (is (= [{:role "user" :content "hi"}
+            {:role "assistant" :content [{:type :text :text "there"}]}]
+           (app-messages/session-messages ctx sid)))))

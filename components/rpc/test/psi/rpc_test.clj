@@ -1260,13 +1260,13 @@
 
 (deftest rpc-session-resume-and-rehydrate-events-test
   (testing "new_session emits session/resumed and session/rehydrated canonical events"
-    (let [[ctx _]             (create-session-context)
+    (let [[ctx session-id]    (create-session-context)
           state               (atom {:ready?            true
                                      :pending           {}
                                      :subscribed-topics #{"session/resumed" "session/rehydrated"}})
           handler             (make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                     "{:id \"n1\" :kind :request :op \"new_session\"}\n")
+                     "{:id \"n1\" :kind :request :op \"new_session\" :params {:session-id \"" session-id "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames              (parse-frames out-lines)
           events              (filter #(= :event (:kind %)) frames)
@@ -1683,7 +1683,7 @@
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
   (testing "new_session uses on-new-session! callback when provided"
-    (let [[ctx _] (create-session-context)
+    (let [[ctx session-id] (create-session-context)
           called? (atom 0)
           state (atom {:ready? true
                        :pending {}
@@ -1696,7 +1696,7 @@
                                                                             :tool-calls {"call-1" {:name "read"}}
                                                                             :tool-order ["call-1"]})})
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                     "{:id \"n1\" :kind :request :op \"new_session\"}\n")
+                     "{:id \"n1\" :kind :request :op \"new_session\" :params {:session-id \"" session-id "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames (parse-frames out-lines)
           rehydrate-event (some #(when (= "session/rehydrated" (:event %)) %) frames)]
@@ -1850,13 +1850,13 @@
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"
-    (let [[ctx _] (create-session-context)
+    (let [[ctx session-id] (create-session-context)
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
           handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                       "{:id \"n1\" :kind :request :op \"new_session\"}\n")
+                       "{:id \"n1\" :kind :request :op \"new_session\" :params {:session-id \"" session-id "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames    (parse-frames out-lines)
           new-resp  (some #(when (and (= :response (:kind %)) (= "new_session" (:op %))) %) frames)

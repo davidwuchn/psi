@@ -4,6 +4,8 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.context :as app-context]
+   [psi.app-runtime.messages :as app-messages]
    [psi.app-runtime.navigation :as navigation]))
 
 (defn- create-session-context
@@ -25,7 +27,10 @@
     (is (= :switch-session (:nav/op nav)))
     (is (= sid2 (:nav/session-id nav)))
     (is (= sid2 (get-in nav [:nav/rehydration :session-id])))
-    (is (vector? (get-in nav [:nav/context-snapshot :sessions])))))
+    (is (= (app-messages/session-messages ctx sid2)
+           (get-in nav [:nav/rehydration :messages])))
+    (is (= (app-context/context-snapshot ctx sid2 sid2)
+           (:nav/context-snapshot nav)))))
 
 (deftest fork-session-result-builds_rehydration_and_context_test
   (let [[ctx sid] (create-session-context {:persist? false})
