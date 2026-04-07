@@ -110,8 +110,7 @@
   (let [legacy (:ui/legacy action)]
     (emit! "ui/frontend-action-requested"
            {:request-id request-id
-            :action-name (or (:action-name legacy)
-                             (some-> (:ui/action-name action) name))
+            :action-name (some-> (:ui/action-name action) name)
             :prompt (or (:ui/prompt action)
                         (:prompt legacy))
             :payload (or (:payload legacy)
