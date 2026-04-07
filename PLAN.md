@@ -237,6 +237,8 @@ Progress so far:
 - ✓ canonical background-job widget/status projections now live in `app-runtime.background_job_widgets`
 - ✓ runtime installs background-job UI refresh so live jobs project into shared extension UI state
 - ✓ adapters now prefer background-job widget/status projection over transcript-only rendering for the convergence path
+- ✓ canonical context snapshot public summary projections now live in `app-runtime.context_summary`
+- ✓ Emacs context/session-tree labeling now reuses centralized summary logic rather than parallel local shaping
 
 #### Phase 0 — scaffold adapter-neutral projection layer
 - [x] add app-runtime projection namespaces:
@@ -477,7 +479,7 @@ Goal of the first implementation slice:
 - [x] identify remaining duplicated presentation-facing summaries across RPC and TUI
 - [x] extract canonical public summary projections into app-runtime for:
   - [x] background jobs
-  - [ ] context snapshot summaries
+  - [x] context snapshot summaries
   - [x] extension UI/status summaries where shared
 - [x] adapt RPC and TUI to consume shared summaries
 - [ ] remove remaining transport/adapter-local semantic duplication
