@@ -36,6 +36,11 @@ Run repeatable frontend checks from repo root:
 - `bb emacs:byte-compile` — byte-compile frontend modules (auto-cleans `.elc`)
 - `bb emacs:check` — run byte-compile + tests
 
+Runtime guard: `psi.el` deletes local `components/emacs-ui/psi*.elc` artifacts
+before requiring split modules. This prevents stale bytecode from shadowing
+fresh source during iterative development and triggering setter-missing errors
+(e.g. `void-function (setf psi-emacs-state-...)`).
+
 ## Topic subscription
 
 Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
