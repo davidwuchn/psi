@@ -11,6 +11,7 @@
    [charm.input.keymap :as keymap]
    [charm.message :as msg]
    [psi.agent-session.persistence :as persist]
+   [psi.app-runtime.ui-actions :as ui-actions]
    [psi.tui.app :as app]
    [psi.tui.ansi :as ansi]
    [psi.ui.state :as ui-state])
@@ -94,10 +95,11 @@
 
 (defn- make-session-selector-fn
   [active-id items]
-  (fn []
-    {:selector/kind :context-session
-     :selector/active-item-id (some-> active-id (vector :session))
-     :selector/items items}))
+  (let [selector {:selector/kind :context-session
+                  :selector/active-item-id (some-> active-id (vector :session))
+                  :selector/items items}]
+    (fn []
+      (ui-actions/context-session-action selector))))
 
 (defn- submit-text
   "Type s then press enter; if submission starts streaming, advance once to idle."
@@ -359,6 +361,7 @@
           [s1 _]     (update-fn typed (msg/key-press :enter))]
       (is (= :selecting-session (:phase s1)))
       (is (= :tree (:session-selector-mode s1)))
+      (is (= :select-session (get-in s1 [:session-selector :ui/action :ui/action-name])))
       (is (= "s1" (get-in s1 [:session-selector :active-session-id]))))))
 
 (deftest tree-direct-switch-restores-state-test
@@ -519,26 +522,27 @@
   (testing "tree selector can consume shared app-runtime selector order directly"
     (let [update-fn (app/make-update (stub-agent-fn ""))
           selector-fn (fn []
-                        {:selector/kind :context-session
-                         :selector/active-item-id [:session "s1"]
-                         :selector/items [{:item/id [:session "s1"]
-                                           :item/kind :session
-                                           :item/session-id "s1"
-                                           :item/display-name "Root"
-                                           :item/is-active true
-                                           :item/worktree-path "/tmp/psi-test/root"}
-                                          {:item/id [:session "s2"]
-                                           :item/kind :session
-                                           :item/session-id "s2"
-                                           :item/parent-id [:session "s1"]
-                                           :item/display-name "Child"
-                                           :item/worktree-path "/tmp/psi-test/child"}
-                                          {:item/id [:fork-point "e1"]
-                                           :item/kind :fork-point
-                                           :item/session-id "s1"
-                                           :item/entry-id "e1"
-                                           :item/parent-id [:session "s1"]
-                                           :item/display-name "Branch from here"}]})
+                        (ui-actions/context-session-action
+                         {:selector/kind :context-session
+                          :selector/active-item-id [:session "s1"]
+                          :selector/items [{:item/id [:session "s1"]
+                                            :item/kind :session
+                                            :item/session-id "s1"
+                                            :item/display-name "Root"
+                                            :item/is-active true
+                                            :item/worktree-path "/tmp/psi-test/root"}
+                                           {:item/id [:session "s2"]
+                                            :item/kind :session
+                                            :item/session-id "s2"
+                                            :item/parent-id [:session "s1"]
+                                            :item/display-name "Child"
+                                            :item/worktree-path "/tmp/psi-test/child"}
+                                           {:item/id [:fork-point "e1"]
+                                            :item/kind :fork-point
+                                            :item/session-id "s1"
+                                            :item/entry-id "e1"
+                                            :item/parent-id [:session "s1"]
+                                            :item/display-name "Branch from here"}]}))
           [state _] ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
                                                                :cwd "/tmp/psi-test"
                                                                :focus-session-id "s1"

@@ -34,6 +34,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
    [psi.app-runtime.footer :as footer]
+   [psi.app-runtime.ui-actions :as ui-actions]
    [psi.tui.ansi :as ansi]
    [psi.tui.markdown :as md])
   (:import
@@ -815,21 +816,23 @@
 
 (defn- selector-item->tui-session
   [cwd item]
-  (let [worktree-path (or (:item/worktree-path item) cwd)
-        parent-id     (some-> (:item/parent-id item) second)]
-    {:item-kind         (:item/kind item)
-     :session-id        (:item/session-id item)
-     :entry-id          (:item/entry-id item)
+  (let [meta          (or (:ui.item/meta item) item)
+        worktree-path (or (:item/worktree-path meta) cwd)
+        parent-id     (some-> (:item/parent-id meta) second)]
+    {:item-kind         (:item/kind meta)
+     :session-id        (:item/session-id meta)
+     :entry-id          (:item/entry-id meta)
+     :action-value      (:ui.item/value item)
      :path              nil
-     :name              (:item/display-name item)
-     :display-name      (:item/display-name item)
+     :name              (or (:ui.item/label item) (:item/display-name meta))
+     :display-name      (or (:ui.item/label item) (:item/display-name meta))
      :parent-session-id parent-id
-     :is-streaming      (boolean (:item/is-streaming item))
+     :is-streaming      (boolean (:item/is-streaming meta))
      :first-message     ""
      :message-count     0
-     :modified          (:item/updated-at item)
-     :created-at        (:item/created-at item)
-     :updated-at        (:item/updated-at item)
+     :modified          (:item/updated-at meta)
+     :created-at        (:item/created-at meta)
+     :updated-at        (:item/updated-at meta)
      :cwd               worktree-path
      :worktree-path     worktree-path
      :tree-depth        0
@@ -896,8 +899,8 @@
     (if-not selector-fn
       (session-selector-init cwd current-session-file)
       (try
-        (let [selector (selector-fn)
-              items    (selector-items->tui-sessions cwd (:selector/items selector))
+        (let [action   (selector-fn)
+              items    (selector-items->tui-sessions cwd (:ui/items action))
               selected (selected-index-for-session-id items active-id)]
           {:sessions              items
            :all-sessions          nil
@@ -906,7 +909,8 @@
            :selected              selected
            :loading?              false
            :current-session-file  current-session-file
-           :active-session-id     active-id})
+           :active-session-id     active-id
+           :ui/action             action})
         (catch Exception _
           (session-selector-init cwd current-session-file))))))
 

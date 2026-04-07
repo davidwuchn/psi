@@ -430,7 +430,7 @@ Goal of the first implementation slice:
 - [x] shrink transport-specific naming leaks like `context-session-selector` toward canonical action names
 
 ##### 3C. Reuse action model in TUI and Emacs
-- [ ] map TUI picker flows onto canonical action model where practical
+- [x] map TUI picker flows onto canonical action model where practical
 - [x] make Emacs generic selection handling consume canonical action model
 - [x] reduce per-command selection branching in adapters
 
