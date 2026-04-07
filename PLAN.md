@@ -457,8 +457,8 @@ Goal of the first implementation slice:
 - [x] remove duplicate rehydration package construction from RPC-local code where possible
 
 ##### 4C. Migrate TUI session transitions
-- [ ] have TUI session-switch/new/fork flows consume canonical navigation result maps
-- [ ] keep only TUI-local state updates/render effects outside the shared result semantics
+- [x] have TUI session-switch/new/fork flows consume canonical navigation result maps
+- [x] keep only TUI-local state updates/render effects outside the shared result semantics
 
 #### Phase 5 — shared public summaries for jobs/context/status
 - [ ] identify remaining duplicated presentation-facing summaries across RPC and TUI

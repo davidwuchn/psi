@@ -375,9 +375,10 @@
                                   {:dispatch-fn dispatch-fn
                                    :switch-session-fn! (fn [sid]
                                                          (reset! switched-id sid)
-                                                         {:messages [{:role :assistant :text "switched"}]
-                                                          :tool-calls {"t1" {:name "read" :status :success :result "ok"}}
-                                                          :tool-order ["t1"]})})
+                                                         {:nav/session-id sid
+                                                          :nav/rehydration {:messages [{:role :assistant :text "switched"}]
+                                                                            :tool-calls {"t1" {:name "read" :status :success :result "ok"}}
+                                                                            :tool-order ["t1"]}})})
           typed       (type-text update-fn state "/tree s2")
           [s1 _]      (update-fn typed (msg/key-press :enter))]
       (is (= "s2" @switched-id))
@@ -400,10 +401,11 @@
                                                                   :session-selector-fn selector-fn
                                                                   :switch-session-fn! (fn [sid]
                                                                                         (reset! switched-id sid)
-                                                                                        {:messages [{:role :assistant
-                                                                                                     :text (str "switched " sid)}]
-                                                                                         :tool-calls {}
-                                                                                         :tool-order []})}))
+                                                                                        {:nav/session-id sid
+                                                                                         :nav/rehydration {:messages [{:role :assistant
+                                                                                                                       :text (str "switched " sid)}]
+                                                                                                           :tool-calls {}
+                                                                                                           :tool-order []}})}))
           typed       (type-text update-fn state "/tree")
           [s1 _]      (update-fn typed (msg/key-press :enter))
           [s2 _]      (update-fn s1 (msg/key-press :down))
@@ -575,13 +577,13 @@
                                                                       :session-selector-fn selector-fn
                                                                       :fork-session-fn! (fn [entry-id]
                                                                                           (reset! forked-entry-id entry-id)
-                                                                                          {:session-id "s3"
-                                                                                           :messages [{:role :user
-                                                                                                        :text "Branch from here"}
-                                                                                                      {:role :assistant
-                                                                                                        :text "reply included"}]
-                                                                                           :tool-calls {}
-                                                                                           :tool-order []})}))
+                                                                                          {:nav/session-id "s3"
+                                                                                           :nav/rehydration {:messages [{:role :user
+                                                                                                                        :text "Branch from here"}
+                                                                                                                       {:role :assistant
+                                                                                                                        :text "reply included"}]
+                                                                                                             :tool-calls {}
+                                                                                                             :tool-order []}})}))
           typed           (type-text update-fn state "/tree")
           [s1 _]          (update-fn typed (msg/key-press :enter))
           [s2 _]          (update-fn s1 (msg/key-press :down))

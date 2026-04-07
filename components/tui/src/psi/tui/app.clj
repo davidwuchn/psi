@@ -1134,9 +1134,16 @@
 
 (defn- restored-session-payload
   [restored]
-  {:messages   (vec (or (if (map? restored) (:messages restored) restored) []))
-   :tool-calls (or (when (map? restored) (:tool-calls restored)) {})
-   :tool-order (vec (or (when (map? restored) (:tool-order restored)) []))})
+  (let [rehydration (or (:nav/rehydration restored)
+                        restored)]
+    {:messages   (vec (or (if (map? rehydration) (:messages rehydration) rehydration) []))
+     :tool-calls (or (when (map? rehydration) (:tool-calls rehydration)) {})
+     :tool-order (vec (or (when (map? rehydration) (:tool-order rehydration)) []))}))
+
+(defn- restored-session-id
+  [restored]
+  (or (:nav/session-id restored)
+      (:session-id restored)))
 
 (defn- reset-input-model
   [state]
@@ -1191,8 +1198,10 @@
 
 (defn- handle-new-session-result
   [state result]
-  (let [payload (restored-session-payload (:rehydrate result))
-        new-sid (query-current-session-id state)]
+  (let [restored (or (:rehydrate result) result)
+        payload  (restored-session-payload restored)
+        new-sid  (or (restored-session-id restored)
+                     (query-current-session-id state))]
     [(-> (restore-session-view state payload {:error nil})
          (cond-> new-sid (assoc :focus-session-id new-sid))
          (append-assistant-message (:message result)))
@@ -1267,7 +1276,7 @@
     :fork-point
     (if-let [fork-fn (:fork-session-fn! state)]
       (let [restored (fork-fn (:entry-id chosen))
-            sid      (:session-id restored)]
+            sid      (restored-session-id restored)]
         [(restore-session-view state
                                (restored-session-payload restored)
                                {:phase :idle
@@ -1277,23 +1286,26 @@
          nil])
       (session-switch-unavailable state))
 
-    (let [sid (:session-id chosen)]
+    (let [sid      (:session-id chosen)
+          restored ((:switch-session-fn! state) sid)]
       [(restore-session-view state
-                             (restored-session-payload ((:switch-session-fn! state) sid))
+                             (restored-session-payload restored)
                              {:phase :idle
-                              :focus-session-id sid
+                              :focus-session-id (or (restored-session-id restored) sid)
                               :session-selector nil
                               :session-selector-mode nil})
        nil])))
 
 (defn- choose-resume-session
   [state chosen]
-  (let [path (:path chosen)
+  (let [path     (:path chosen)
         restored (when-let [resume-fn (:resume-fn! state)]
                    (resume-fn path))]
     [(restore-session-view state
                            (restored-session-payload restored)
                            {:phase :idle
+                            :focus-session-id (or (restored-session-id restored)
+                                                  (:focus-session-id state))
                             :session-selector nil
                             :session-selector-mode nil
                             :current-session-file path})
