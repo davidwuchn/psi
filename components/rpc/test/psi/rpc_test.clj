@@ -514,6 +514,53 @@
       (when-let [f (:ui-watch-loop state)]
         (future-cancel f)))))
 
+(deftest rpc-ui-snapshot-delegates-to-canonical-extension-ui-projection-test
+  (let [snapshot (rpc.events/ui-snapshot
+                  (first (create-session-context)))]
+    (is (map? snapshot))))
+
+(deftest rpc-subscribe-ui-topics-emits-canonical-widget-and-status-order-test
+  (testing "subscribe emits backend-owned widget/status order from canonical projection"
+    (let [[ctx _] (create-session-context)
+          _       (dispatch/dispatch! ctx :session/ui-set-widget
+                                      {:extension-id "ext.b" :widget-id "w-2"
+                                       :placement :below-editor :content ["B2"]}
+                                      {:origin :test})
+          _       (dispatch/dispatch! ctx :session/ui-set-widget
+                                      {:extension-id "ext.a" :widget-id "w-3"
+                                       :placement :above-editor :content ["A3"]}
+                                      {:origin :test})
+          _       (dispatch/dispatch! ctx :session/ui-set-widget
+                                      {:extension-id "ext.b" :widget-id "w-1"
+                                       :placement :above-editor :content ["B1"]}
+                                      {:origin :test})
+          _       (dispatch/dispatch! ctx :session/ui-set-status
+                                      {:extension-id "ext-z" :text "Zeta"}
+                                      {:origin :test})
+          _       (dispatch/dispatch! ctx :session/ui-set-status
+                                      {:extension-id "ext-a" :text "Alpha"}
+                                      {:origin :test})
+          state   (atom {:ready? true :pending {} :subscribed-topics #{}})
+          handler (make-handler ctx state)
+          {:keys [out-lines state]}
+          (run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                         "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/widgets-updated\" \"ui/status-updated\"]}}\n")
+                    handler
+                    state
+                    100)
+          frames      (parse-frames out-lines)
+          widget-evt  (some #(when (= "ui/widgets-updated" (:event %)) %) frames)
+          status-evt  (some #(when (= "ui/status-updated" (:event %)) %) frames)]
+      (is (= [["ext.a" "w-3"]
+              ["ext.b" "w-1"]
+              ["ext.b" "w-2"]]
+             (mapv (juxt :extension-id :widget-id)
+                   (get-in widget-evt [:data :widgets]))))
+      (is (= ["ext-a" "ext-z"]
+             (mapv :extension-id (get-in status-evt [:data :statuses]))))
+      (when-let [f (:ui-watch-loop state)]
+        (future-cancel f)))))
+
 (deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
   (testing "after subscribe, ui widget updates stream without a prompt request"
     (let [[ctx _]     (create-session-context)

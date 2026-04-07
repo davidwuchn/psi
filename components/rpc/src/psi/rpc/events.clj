@@ -8,40 +8,13 @@
    [psi.agent-session.session-state :as ss]
    [psi.app-runtime.context :as app-context]
    [psi.app-runtime.footer :as footer]
+   [psi.app-runtime.projections :as projections]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [default-session-id-in event-frame protocol-version]]))
 
-(def ^:private ui-state-path (ss/state-path :ui-state))
-
-(defn- ui-state-map
-  [ctx]
-  (ss/get-state-value-in ctx ui-state-path))
-
-(defn- visible-notifications
-  ([ui-state] (visible-notifications ui-state 3))
-  ([ui-state max-visible]
-   (->> (:notifications ui-state)
-        (remove :dismissed?)
-        (take-last max-visible)
-        vec)))
-
 (defn ui-snapshot
   [ctx]
-  (when-let [s (ui-state-map ctx)]
-    {:dialog-queue-empty?    (and (nil? (get-in s [:dialog-queue :active]))
-                                  (empty? (get-in s [:dialog-queue :pending])))
-     :active-dialog          (when-let [d (get-in s [:dialog-queue :active])]
-                               (dissoc d :promise))
-     :pending-dialog-count   (count (get-in s [:dialog-queue :pending]))
-     :widgets                (vec (vals (:widgets s)))
-     :widget-specs           (vec (vals (:widget-specs s)))
-     :statuses               (vec (vals (:statuses s)))
-     :visible-notifications  (visible-notifications s)
-     :tool-renderers         (mapv #(dissoc % :render-call-fn :render-result-fn)
-                                   (vals (:tool-renderers s)))
-     :message-renderers      (mapv #(dissoc % :render-fn)
-                                   (vals (:message-renderers s)))}))
-
+  (projections/extension-ui-snapshot ctx))
 
 (defn session->handshake-server-info
   ([ctx]
