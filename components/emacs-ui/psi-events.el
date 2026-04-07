@@ -9,6 +9,7 @@
 (require 'psi-globals)
 (require 'psi-widget-projection)
 
+
 (defun psi-emacs--event-data-get (data keys)
   "Return first non-nil value from DATA for KEYS.
 
@@ -161,6 +162,32 @@ falls back to `(session <8-char id prefix>)`."
   (or (psi-emacs--session-explicit-display-name slot)
       (format "(session %s)" (psi-emacs--session-short-id slot))))
 
+(defun psi-emacs--context-summary-line-label (slot)
+  "Return canonical rendered base label for a context/session SLOT."
+  (let* ((item-kind  (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
+                         "session"))
+         (base-name  (psi-emacs--session-display-name slot))
+         (short-id   (and (equal item-kind "session")
+                          (psi-emacs--session-short-id slot)))
+         (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
+         (updated-at (psi-emacs--event-data-get slot '(:updated-at updated-at :updatedAt updatedAt)))
+         (time-range (and (equal item-kind "session")
+                          (psi-emacs--session-time-range-label created-at updated-at)))
+         (worktree   (and (equal item-kind "session")
+                          (string-trim
+                           (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
+                                                                 :worktreePath worktreePath
+                                                                 :cwd cwd))
+                               "")))))
+    (concat (if (equal item-kind "fork-point") "⎇ " "")
+            base-name
+            (when (and (stringp short-id) (not (string-empty-p short-id)))
+              (format " [%s]" short-id))
+            (when time-range
+              (format " — %s" time-range))
+            (when (and (stringp worktree) (not (string-empty-p worktree)))
+              (format " — %s" worktree)))))
+
 (defun psi-emacs--now-seconds ()
   "Return current wall-clock time as float seconds."
   (float-time))
@@ -188,30 +215,8 @@ falls back to `(session <8-char id prefix>)`."
      (t nil))))
 
 (defun psi-emacs--session-tree-line-label (slot)
-  "Return the rendered base label for a session tree SLOT."
-  (let* ((item-kind  (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
-                         "session"))
-         (base-name  (psi-emacs--session-display-name slot))
-         (short-id   (and (equal item-kind "session")
-                          (psi-emacs--session-short-id slot)))
-         (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
-         (updated-at (psi-emacs--event-data-get slot '(:updated-at updated-at :updatedAt updatedAt)))
-         (time-range (and (equal item-kind "session")
-                          (psi-emacs--session-time-range-label created-at updated-at)))
-         (worktree   (and (equal item-kind "session")
-                          (string-trim
-                           (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
-                                                                 :worktreePath worktreePath
-                                                                 :cwd cwd))
-                               "")))))
-    (concat (if (equal item-kind "fork-point") "⎇ " "")
-            base-name
-            (when (and (stringp short-id) (not (string-empty-p short-id)))
-              (format " [%s]" short-id))
-            (when time-range
-              (format " — %s" time-range))
-            (when (and (stringp worktree) (not (string-empty-p worktree)))
-              (format " — %s" worktree)))))
+  "Return the rendered base label for a session tree SLOT." 
+  (psi-emacs--context-summary-line-label slot))
 
 (defun psi-emacs--session-tree-widget-lines (slots active-id)
   "Build structured widget content-lines for SLOTS with ACTIVE-ID marked.
@@ -243,7 +248,7 @@ Child sessions and fork-points are indented beneath their parent session."
               (indent       (if (or (equal item-kind "fork-point")
                                     (and parent-id (gethash parent-id slot-id-set)))
                                 "  " ""))
-              (base-label   (psi-emacs--session-tree-line-label slot))
+              (base-label   (psi-emacs--context-summary-line-label slot))
               (suffix       (concat
                              (when (and (equal item-kind "session") is-streaming) " [streaming]")
                              (when is-active " ← active")))
