@@ -50,13 +50,7 @@
          ui-read-fn   (or ui-read-fn*
                           (when ui-atom
                             (fn []
-                              (assoc (projections/extension-ui-snapshot-from-state @ui-atom)
-                                     :tool-renderers (into {}
-                                                            (map (juxt :tool-name identity)
-                                                                 (ui-state/all-tool-renderers ui-atom)))
-                                     :message-renderers (into {}
-                                                               (map (juxt :custom-type identity)
-                                                                    (ui-state/all-message-renderers ui-atom)))))))
+                              (projections/extension-ui-snapshot-from-state @ui-atom))))
          ui-disp-fn   (when ui-atom
                         (fn [event-type payload]
                           (case event-type

@@ -22,8 +22,13 @@
                    :statuses {"ext-z" {:extension-id "ext-z" :text "Zeta"}
                               "ext-a" {:extension-id "ext-a" :text "Alpha"}}
                    :notifications []
-                   :tool-renderers {}
-                   :message-renderers {}
+                   :tool-renderers {"read" {:tool-name "read"
+                                             :extension-path "ext-a"
+                                             :render-call-fn (fn [_] "call")
+                                             :render-result-fn (fn [_ _] "result")}}
+                   :message-renderers {"custom" {:custom-type "custom"
+                                                  :extension-path "ext-a"
+                                                  :render-fn (fn [_ _] "msg")}}
                    :tools-expanded? true})]
     (is (= [["ext-a" "w-3"]
             ["ext-b" "w-1"]
@@ -31,6 +36,10 @@
            (mapv (juxt :extension-id :widget-id) (:widgets snapshot))))
     (is (= ["ext-a" "ext-z"]
            (mapv :extension-id (:statuses snapshot))))
+    (is (= #{:render-call-fn :render-result-fn}
+           (set (keys (get-in snapshot [:tool-renderers "read"])))))
+    (is (= #{:render-fn}
+           (set (keys (get-in snapshot [:message-renderers "custom"])))))
     (is (true? (:tools-expanded? snapshot)))))
 
 (deftest extension-ui-snapshot-from-state-preserves-canonical-visible-notification-order-test

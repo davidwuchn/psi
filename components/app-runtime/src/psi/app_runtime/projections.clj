@@ -4,6 +4,9 @@
    [psi.agent-session.session-state :as ss]
    [psi.ui.state :as ui-state]))
 
+(def ^:private preserve-fn-keys
+  #{:render-call-fn :render-result-fn :render-fn})
+
 (def ^:private ui-state-path (ss/state-path :ui-state))
 
 (defn- sortable-key
@@ -28,6 +31,13 @@
        (sort-by #(sortable-key (:extension-id %)))
        vec))
 
+(defn- public-renderers-by
+  [items k]
+  (into {}
+        (map (fn [item]
+               [(k item) (select-keys item preserve-fn-keys)]))
+        (or items [])))
+
 (defn extension-ui-snapshot-from-state
   "Build a canonical public extension-UI snapshot from raw UI state."
   [ui-state]
@@ -35,7 +45,9 @@
     (cond-> snapshot
       true (update :widgets sort-widgets)
       true (update :statuses sort-statuses)
-      true (assoc :tools-expanded? (boolean (:tools-expanded? ui-state))))))
+      true (assoc :tools-expanded? (boolean (:tools-expanded? ui-state)))
+      true (assoc :tool-renderers (public-renderers-by (ui-state/all-tool-renderers (atom ui-state)) :tool-name))
+      true (assoc :message-renderers (public-renderers-by (ui-state/all-message-renderers (atom ui-state)) :custom-type)))))
 
 (defn extension-ui-snapshot
   "Build a canonical public extension-UI snapshot from runtime ctx."
