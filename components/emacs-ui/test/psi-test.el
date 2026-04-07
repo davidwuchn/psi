@@ -1143,7 +1143,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-frontend-action-resume-selector-submits-selection-to-backend ()
+(ert-deftest psi-frontend-action-select-resume-session-submits-selection-to-backend ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1200,7 +1200,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-frontend-action-resume-selector-cancel-sends-cancelled-result ()
+(ert-deftest psi-frontend-action-select-resume-session-cancel-sends-cancelled-result ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1242,7 +1242,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-frontend-action-context-session-selector-submits-fork-point-payload ()
+(ert-deftest psi-frontend-action-select-session-submits-fork-point-payload ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))

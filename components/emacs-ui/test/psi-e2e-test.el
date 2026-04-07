@@ -221,7 +221,7 @@ Scenario:
                                (and (stringp prompt)
                                     (string-match-p "Select a thinking level" prompt)))
                              frontend-prompts)
-              (error "did not observe thinking-picker frontend prompt; prompts=%S"
+              (error "did not observe select-thinking-level frontend prompt; prompts=%S"
                      (nreverse frontend-prompts)))
 
             (unless (psi-e2e--input-focused-p buffer)
