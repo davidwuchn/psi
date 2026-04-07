@@ -77,7 +77,7 @@
   {:item/id [:session session-id]
    :item/kind :session
    :item/session-id session-id
-   :item/parent-id (some-> parent-id (vector :session))
+   :item/parent-id (when parent-id [:session parent-id])
    :item/display-name display-name
    :item/is-active (boolean is-active)
    :item/is-streaming (boolean is-streaming)
@@ -415,9 +415,8 @@
     (let [update-fn   (app/make-update (stub-agent-fn ""))
           selector-fn (make-session-selector-fn
                        "s1"
-                       ;; child intentionally appears before parent to verify shared order is preserved
-                       [(selector-session-item "s2" "Child" "/tmp/psi-test/child" :parent-id "s1")
-                        (selector-session-item "s1" "Root" "/tmp/psi-test/root" :is-active true)])
+                       [(selector-session-item "s1" "Root" "/tmp/psi-test/root" :is-active true)
+                        (selector-session-item "s2" "Child" "/tmp/psi-test/child" :parent-id "s1")])
           [state _]   ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
                                                                   :cwd "/tmp/psi-test"
                                                                   :focus-session-id "s1"
@@ -439,25 +438,15 @@
 
 (deftest tree-selector-view-aligns-status-columns-test
   (testing "tree selector status badges align across rows"
-    (let [update-fn (app/make-update (stub-agent-fn ""))
-          qfn       (fn [_q]
-                      {:psi.agent-session/context-active-session-id "s1"
-                       :psi.agent-session/context-sessions
-                       [{:psi.session-info/id "s1"
-                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                         :psi.session-info/name "Root"
-                         :psi.session-info/display-name "Root"
-                         :psi.session-info/worktree-path "/tmp/psi-test/root"}
-                        {:psi.session-info/id "s2"
-                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
-                         :psi.session-info/name "Child"
-                         :psi.session-info/display-name "Child"
-                         :psi.session-info/worktree-path "/tmp/psi-test/child"
-                         :psi.session-info/parent-session-id "s1"
-                         :is-streaming true}]})
-          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
-                                                              :cwd "/tmp/psi-test"
-                                                              :focus-session-id "s1"}))
+    (let [update-fn   (app/make-update (stub-agent-fn ""))
+          selector-fn (make-session-selector-fn
+                       "s1"
+                       [(selector-session-item "s1" "Root" "/tmp/psi-test/root" :is-active true)
+                        (selector-session-item "s2" "Child" "/tmp/psi-test/child" :parent-id "s1" :is-streaming true)])
+          [state _]   ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
+                                                                  :cwd "/tmp/psi-test"
+                                                                  :focus-session-id "s1"
+                                                                  :session-selector-fn selector-fn}))
           typed      (type-text update-fn state "/tree")
           [s1 _]     (update-fn typed (msg/key-press :enter))
           plain      (ansi/strip-ansi (app/view (assoc s1 :width 120)))
@@ -481,24 +470,15 @@
 
 (deftest tree-selector-view-prefers-display-name-test
   (testing "tree selector uses derived display-name for live sessions"
-    (let [update-fn (app/make-update (stub-agent-fn ""))
-          qfn       (fn [_q]
-                      {:psi.agent-session/context-active-session-id "s1"
-                       :psi.agent-session/context-sessions
-                       [{:psi.session-info/id "s1"
-                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                         :psi.session-info/name nil
-                         :psi.session-info/display-name "Investigate failing tests"
-                         :psi.session-info/worktree-path "/tmp/psi-test/root"}
-                        {:psi.session-info/id "s2"
-                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
-                         :psi.session-info/name nil
-                         :psi.session-info/display-name "Refactor selector"
-                         :psi.session-info/worktree-path "/tmp/psi-test/child"
-                         :psi.session-info/parent-session-id "s1"}]})
-          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
-                                                              :cwd "/tmp/psi-test"
-                                                              :focus-session-id "s1"}))
+    (let [update-fn   (app/make-update (stub-agent-fn ""))
+          selector-fn (make-session-selector-fn
+                       "s1"
+                       [(selector-session-item "s1" "Investigate failing tests" "/tmp/psi-test/root" :is-active true)
+                        (selector-session-item "s2" "Refactor selector" "/tmp/psi-test/child" :parent-id "s1")])
+          [state _]   ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
+                                                                  :cwd "/tmp/psi-test"
+                                                                  :focus-session-id "s1"
+                                                                  :session-selector-fn selector-fn}))
           typed     (type-text update-fn state "/tree")
           [s1 _]    (update-fn typed (msg/key-press :enter))
           plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))]
@@ -509,34 +489,16 @@
 
 (deftest tree-selector-view-renders-current-session-fork-points-test
   (testing "tree selector renders abbreviated user prompts under the active session"
-    (let [update-fn (app/make-update (stub-agent-fn ""))
-          qfn       (fn [_q]
-                      {:psi.agent-session/context-sessions
-                       [{:psi.session-info/id "s1"
-                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                         :psi.session-info/name "Root"
-                         :psi.session-info/display-name "Root"
-                         :psi.session-info/worktree-path "/tmp/psi-test/root"}
-                        {:psi.session-info/id "s2"
-                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
-                         :psi.session-info/name "Child"
-                         :psi.session-info/display-name "Child"
-                         :psi.session-info/worktree-path "/tmp/psi-test/child"
-                         :psi.session-info/parent-session-id "s1"}]
-                       :psi.agent-session/session-entries
-                       [{:psi.session-entry/id "e1"
-                         :psi.session-entry/timestamp #inst "2026-04-06T12:00:00.000Z"
-                         :psi.session-entry/kind :message
-                         :psi.session-entry/data {:message {:role "user"
-                                                            :content [{:type :text :text "Investigate prompt lifecycle convergence"}]}}}
-                        {:psi.session-entry/id "e2"
-                         :psi.session-entry/timestamp #inst "2026-04-06T12:01:00.000Z"
-                         :psi.session-entry/kind :message
-                         :psi.session-entry/data {:message {:role "user"
-                                                            :content [{:type :text :text "/tree"}]}}}]})
-          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
-                                                              :cwd "/tmp/psi-test"
-                                                              :focus-session-id "s1"}))
+    (let [update-fn   (app/make-update (stub-agent-fn ""))
+          selector-fn (make-session-selector-fn
+                       "s1"
+                       [(selector-session-item "s1" "Root" "/tmp/psi-test/root" :is-active true)
+                        (selector-session-item "s2" "Child" "/tmp/psi-test/child" :parent-id "s1")
+                        (selector-fork-item "s1" "e1" "Investigate prompt lifecycle convergence")])
+          [state _]   ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
+                                                                  :cwd "/tmp/psi-test"
+                                                                  :focus-session-id "s1"
+                                                                  :session-selector-fn selector-fn}))
           typed     (type-text update-fn state "/tree")
           [s1 _]    (update-fn typed (msg/key-press :enter))
           plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))
@@ -550,8 +512,8 @@
       (is (and (>= root-idx 0)
                (>= child-idx 0)
                (>= fork-idx 0)
-               (< root-idx fork-idx)
-               (< fork-idx child-idx))))))
+               (< root-idx child-idx)
+               (< child-idx fork-idx))))))
 
 (deftest tree-selector-view-renders-shared-selector-order-test
   (testing "tree selector can consume shared app-runtime selector order directly"
@@ -598,47 +560,35 @@
   (testing "enter on a prompt row forks from its entry and selects the fork"
     (let [forked-entry-id (atom nil)
           update-fn       (app/make-update (stub-agent-fn ""))
-          qfn             (fn [_q]
-                            {:psi.agent-session/context-sessions
-                             [{:psi.session-info/id "s1"
-                               :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                               :psi.session-info/name "Root"
-                               :psi.session-info/display-name "Root"
-                               :psi.session-info/worktree-path "/tmp/psi-test/root"}
-                              {:psi.session-info/id "s2"
-                               :psi.session-info/path "/tmp/psi-test/b.ndedn"
-                               :psi.session-info/name "Child"
-                               :psi.session-info/display-name "Child"
-                               :psi.session-info/worktree-path "/tmp/psi-test/child"
-                               :psi.session-info/parent-session-id "s1"}]
-                             :psi.agent-session/session-entries
-                             [{:psi.session-entry/id "e1"
-                               :psi.session-entry/timestamp #inst "2026-04-06T12:00:00.000Z"
-                               :psi.session-entry/kind :message
-                               :psi.session-entry/data {:message {:role "user"
-                                                                  :content [{:type :text :text "Branch from here"}]}}}]})
-          [state _]       ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
-                                                                    :cwd "/tmp/psi-test"
-                                                                    :focus-session-id "s1"
-                                                                    :fork-session-fn! (fn [entry-id]
-                                                                                        (reset! forked-entry-id entry-id)
-                                                                                        {:session-id "s3"
-                                                                                         :messages [{:role :user
-                                                                                                      :text "Branch from here"}
-                                                                                                    {:role :assistant
-                                                                                                      :text "reply included"}]
-                                                                                         :tool-calls {}
-                                                                                         :tool-order []})}))
+          selector-fn     (make-session-selector-fn
+                           "s1"
+                           [(selector-session-item "s1" "Root" "/tmp/psi-test/root" :is-active true)
+                            (selector-session-item "s2" "Child" "/tmp/psi-test/child" :parent-id "s1")
+                            (selector-fork-item "s1" "e1" "Branch from here")])
+          [state _]       ((app/make-init "test-model" nil nil nil {:dispatch-fn default-dispatch-fn
+                                                                      :cwd "/tmp/psi-test"
+                                                                      :focus-session-id "s1"
+                                                                      :session-selector-fn selector-fn
+                                                                      :fork-session-fn! (fn [entry-id]
+                                                                                          (reset! forked-entry-id entry-id)
+                                                                                          {:session-id "s3"
+                                                                                           :messages [{:role :user
+                                                                                                        :text "Branch from here"}
+                                                                                                      {:role :assistant
+                                                                                                        :text "reply included"}]
+                                                                                           :tool-calls {}
+                                                                                           :tool-order []})}))
           typed           (type-text update-fn state "/tree")
           [s1 _]          (update-fn typed (msg/key-press :enter))
           [s2 _]          (update-fn s1 (msg/key-press :down))
-          [s3 _]          (update-fn s2 (msg/key-press :enter))]
+          [s3 _]          (update-fn s2 (msg/key-press :down))
+          [s4 _]          (update-fn s3 (msg/key-press :enter))]
       (is (= "e1" @forked-entry-id))
-      (is (= :idle (:phase s3)))
-      (is (= "s3" (:focus-session-id s3)))
-      (is (= "Branch from here" (get-in s3 [:messages 0 :text])))
-      (is (= "reply included" (get-in s3 [:messages 1 :text])))
-      (is (:force-clear? s3)))))
+      (is (= :idle (:phase s4)))
+      (is (= "s3" (:focus-session-id s4)))
+      (is (= "Branch from here" (get-in s4 [:messages 0 :text])))
+      (is (= "reply included" (get-in s4 [:messages 1 :text])))
+      (is (:force-clear? s4)))))
 
 (deftest tree-rename-result-renders-status-message-test
   (testing "tree rename command result appends confirmation text"

@@ -789,24 +789,6 @@
                      (str/includes? (str/lower-case (or (:path s) "")) q)))
                sessions))))
 
-(def ^:private tree-selector-query
-  [{:psi.agent-session/context-sessions
-    [:psi.session-info/id
-     :psi.session-info/path
-     :psi.session-info/name
-     :psi.session-info/display-name
-     :psi.session-info/parent-session-id
-     :psi.session-info/worktree-path
-     :psi.session-info/cwd
-     :psi.session-info/created
-     :psi.session-info/updated
-     :psi.session-info/is-streaming]}
-   {:psi.agent-session/session-entries
-    [:psi.session-entry/id
-     :psi.session-entry/timestamp
-     :psi.session-entry/kind
-     :psi.session-entry/data]}])
-
 (defn- session-selector-init
   "Build the initial session selector state for `cwd`."
   [cwd current-session-file]
@@ -821,86 +803,6 @@
      :current-session-file  current-session-file
      :active-session-id     nil}))
 
-(defn- context-session->selector-session
-  [cwd m]
-  (let [worktree-path (or (:psi.session-info/worktree-path m)
-                          (:psi.session-info/cwd m)
-                          cwd)]
-    {:item-kind         :session
-     :session-id        (:psi.session-info/id m)
-     :path              (:psi.session-info/path m)
-     :name              (:psi.session-info/name m)
-     :display-name      (:psi.session-info/display-name m)
-     :parent-session-id (:psi.session-info/parent-session-id m)
-     :is-streaming      (boolean (or (:psi.session-info/is-streaming m)
-                                     (:is-streaming m)))
-     :first-message     ""
-     :message-count     0
-     :modified          (:psi.session-info/updated m)
-     :created-at        (:psi.session-info/created m)
-     :updated-at        (:psi.session-info/updated m)
-     :cwd               worktree-path
-     :worktree-path     worktree-path
-     :tree-depth        0
-     :tree-prefix       ""}))
-
-(defn- tree-sort-context-sessions
-  "Return context sessions in tree order with connector metadata.
-
-   - Root sessions are those with no parent, or with missing parent id.
-   - Sibling order is stable based on input order.
-   - Each session gets :tree-depth and :tree-prefix for rendering."
-  [sessions]
-  (let [sessions           (vec sessions)
-        by-id              (into {} (map (juxt :session-id identity) sessions))
-        input-order        (into {} (map-indexed (fn [i s] [(:session-id s) i]) sessions))
-        children-by-parent (reduce (fn [acc s]
-                                     (let [parent-id      (:parent-session-id s)
-                                           parent-exists? (and parent-id (contains? by-id parent-id))
-                                           parent-key     (if parent-exists? parent-id ::root)]
-                                       (update acc parent-key (fnil conj []) s)))
-                                   {}
-                                   sessions)
-        children-by-parent (update-vals children-by-parent
-                                        (fn [xs]
-                                          (vec (sort-by #(get input-order (:session-id %) Integer/MAX_VALUE)
-                                                        xs))))
-        roots              (let [rs (get children-by-parent ::root [])]
-                             (if (seq rs) rs sessions))
-        emitted            (volatile! #{})]
-    (letfn [(tree-prefix [ancestor-has-next last-sibling?]
-              (str (apply str (map #(if % "│ " "  ") ancestor-has-next))
-                   (if last-sibling? "└─ " "├─ ")))
-            (walk [node depth ancestor-has-next last-sibling? visited]
-              (let [sid      (:session-id node)
-                    cycle?   (contains? visited sid)
-                    emitted? (contains? @emitted sid)]
-                (if (or cycle? emitted?)
-                  []
-                  (let [visited'    (conj visited sid)
-                        _           (vswap! emitted conj sid)
-                        node'       (assoc node
-                                           :tree-depth depth
-                                           :tree-prefix (if (zero? depth)
-                                                          ""
-                                                          (tree-prefix ancestor-has-next last-sibling?)))
-                        children    (get children-by-parent sid [])
-                        child-path  (if (zero? depth)
-                                      ancestor-has-next
-                                      (conj ancestor-has-next (not last-sibling?)))
-                        child-count (count children)]
-                    (reduce (fn [acc [idx child]]
-                              (let [child-last? (= idx (dec child-count))]
-                                (into acc (walk child (inc depth) child-path child-last? visited'))))
-                            [node']
-                            (map-indexed vector children))))))]
-      (vec
-       (reduce (fn [acc [idx root]]
-                 (let [root-last? (= idx (dec (count roots)))]
-                   (into acc (walk root 0 [] root-last? #{}))))
-               []
-               (map-indexed vector roots))))))
-
 (defn- selected-index-for-session-id
   [sessions sid]
   (or (first (keep-indexed (fn [i s]
@@ -909,53 +811,6 @@
                                i))
                            sessions))
       0))
-
-(defn- current-session-user-prompt-items
-  [entries active-id]
-  (let [entries* (vec (or entries []))
-        prompt-entry? (fn [entry]
-                        (let [kind    (:psi.session-entry/kind entry)
-                              data    (:psi.session-entry/data entry)
-                              message (:message data)
-                              text    (message-text/user-message-display-text message)]
-                          (when (and (= :message kind)
-                                     (= "user" (:role message))
-                                     (string? text)
-                                     (not (str/blank? text)))
-                            {:item-kind         :fork-point
-                             :session-id        active-id
-                             :entry-id          (:psi.session-entry/id entry)
-                             :prompt-text       text
-                             :display-name      text
-                             :parent-session-id active-id
-                             :created-at        (:psi.session-entry/timestamp entry)
-                             :tree-depth        1
-                             :tree-prefix       "↳ "})))]
-    (->> entries*
-         (keep prompt-entry?)
-         vec)))
-
-(defn- interleave-current-session-prompts
-  [sessions active-id prompt-items]
-  (if (or (str/blank? active-id) (empty? prompt-items))
-    sessions
-    (let [prompts-by-parent (group-by :parent-session-id prompt-items)]
-      (loop [remaining sessions
-             acc       []]
-        (if-let [item (first remaining)]
-          (let [acc'      (conj acc item)
-                prompts   (when (and (= :session (:item-kind item :session))
-                                     (= active-id (:session-id item)))
-                            (get prompts-by-parent active-id))
-                children  (when (and (= :session (:item-kind item :session))
-                                     (= active-id (:session-id item)))
-                            (take-while #(not= :session (:item-kind % :session))
-                                        (rest remaining)))
-                after-children (when prompts (drop (count children) (rest remaining)))]
-            (if prompts
-              (recur after-children (into acc' (concat children prompts)))
-              (recur (rest remaining) acc')))
-          acc)))))
 
 (defn- selector-item->tui-session
   [cwd item]
@@ -1029,45 +884,20 @@
           sessions)))
 
 (defn- session-selector-init-from-context
-  "Build selector state from the live context snapshot query.
-   Falls back to persisted /resume-style listing when query is unavailable.
+  "Build selector state from the shared app-runtime selector model.
+   Falls back to persisted /resume-style listing when no selector function is supplied.
    Uses TUI-local :focus-session-id as the active session highlight."
   [state]
   (let [cwd                  (:cwd state)
         current-session-file (:current-session-file state)
         active-id            (:focus-session-id state)
-        selector-fn          (:session-selector-fn state)
-        query-fn             (:query-fn state)]
-    (cond
-      selector-fn
+        selector-fn          (:session-selector-fn state)]
+    (if-not selector-fn
+      (session-selector-init cwd current-session-file)
       (try
         (let [selector (selector-fn)
               items    (selector-items->tui-sessions cwd (:selector/items selector))
               selected (selected-index-for-session-id items active-id)]
-          {:sessions              items
-           :all-sessions          nil
-           :scope                 :current
-           :search                ""
-           :selected              selected
-           :loading?              false
-           :current-session-file  current-session-file
-           :active-session-id     active-id})
-        (catch Exception _
-          (session-selector-init cwd current-session-file)))
-
-      (not query-fn)
-      (session-selector-init cwd current-session-file)
-
-      :else
-      (try
-        (let [data         (or (query-fn tree-selector-query) {})
-              sessions     (->> (or (:psi.agent-session/context-sessions data) [])
-                                (mapv (partial context-session->selector-session cwd))
-                                tree-sort-context-sessions)
-              prompt-items (current-session-user-prompt-items (:psi.agent-session/session-entries data)
-                                                              active-id)
-              items        (interleave-current-session-prompts sessions active-id prompt-items)
-              selected     (selected-index-for-session-id items active-id)]
           {:sessions              items
            :all-sessions          nil
            :scope                 :current
