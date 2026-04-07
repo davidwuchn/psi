@@ -14,69 +14,62 @@ Bootstrapped on 2026-04-02.
 - `AGENTS.md` — bootstrap/system instructions
 
 ## Current work state
-- Managed services + post-tool processing foundation is in place.
-- LSP ownership is extension-local, not core/runtime-local.
-- The `lsp` extension now owns:
-  - default `clojure-lsp` runtime config
-  - nearest-`.git` workspace root detection
-  - workspace service keying via `[:lsp workspace-root]`
-  - extension-owned service ensure/stop
-  - extension-owned JSON-RPC request/notify helpers
-  - initialize + initialized handshake
-  - per-workspace initialization tracking
-  - per-document open/version tracking
-  - `didOpen` on first sync and `didChange` on subsequent syncs
-  - diagnostic request shaping for synced files
-  - additive tool result enrichments + appended diagnostic text
-  - non-fatal structured enrichment on LSP failure
-  - extension commands:
-    - `lsp-status`
-    - `lsp-restart`
-- Core/runtime gained generic extension-facing service protocol mutations only:
-  - `psi.extension/service-request`
-  - `psi.extension/service-notify`
-- Service protocol helper now surfaces synchronous shim responses through `:response` when available.
-- Canonical dispatch observability was extended with:
-  - `:dispatch/interceptor-enter`
-  - `:dispatch/interceptor-exit`
-  - `:dispatch/handler-result`
-  - `:dispatch/effects-emitted`
-- Dispatch trace EQL now exposes `:psi.dispatch-trace/interceptor-id`.
-- Focused tests now prove:
-  - core dispatch trace includes interceptor / handler / effect / completion stages under one `dispatch-id`
-  - LSP runtime-path trace remains queryable by `dispatch-id`
-  - extension API service request/notify surface
-  - mutation delegation to service protocol helpers
-  - extension-owned JSON-RPC shaping
-  - post-tool workspace sync and diagnostics projection
-  - command registration
-  - status rendering
-  - restart behavior
+- Active work has shifted from the earlier LSP/service slice to adapter convergence around shared runtime projections.
+- Recent convergence work centered on making `app-runtime` own shared session navigation semantics used by RPC/TUI.
+- Completed in this slice:
+  - unified RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
+  - expanded explicit RPC session routing so more ops carry `session-id` through the request-handler path instead of relying on focus inference
+  - extracted canonical context snapshot projection to `components/app-runtime/src/psi/app_runtime/context.clj`
+  - extracted canonical transcript reconstruction to `components/app-runtime/src/psi/app_runtime/messages.clj`
+  - made `psi.rpc.events/context-updated-payload` delegate to the app-runtime context projection
+  - removed `app-runtime.navigation` dependence on `psi.rpc.session.message-source`
+  - kept `psi.rpc.session.message-source` only as a backward-compatible alias to the app-runtime message projection
+- Explicit-routing change in this slice:
+  - `targetable-rpc-ops` now includes additional ops so request dispatch passes `session-id` wherever possible, including:
+    - `new_session`
+    - `switch_session`
+    - `list_sessions`
+    - `subscribe`
+    - `login_begin`
+    - `resolve_dialog`
+    - `cancel_dialog`
+- Canonical app-runtime projection ownership now includes:
+  - navigation result maps
+  - context snapshot maps
+  - transcript rehydration message reconstruction
+  - selector model
+  - footer model
+  - shared UI action model
 
-## Event log vs dispatch trace
-- Keep both for now; they serve different purposes.
-- `event-log`:
-  - one summarized entry per dispatch
-  - coarse-grained journal of event type, event data, blocking, validation, effect summaries, db summaries, timing
-  - replay-oriented; used as the retained dispatch journal / replay substrate
-- `dispatch-trace`:
-  - many entries per logical dispatch, correlated by `dispatch-id`
-  - fine-grained observability across interceptor stages, handler result, emitted effects, effect execution, and service request/response/notify activity
-  - debugging / architectural introspection surface, exposed via EQL
-- Overlap is intentional; do not collapse them unless replay semantics and trace semantics are preserved as distinct projections.
+## Focused proof now in tests
+- app-runtime tests now prove:
+  - context snapshot projection preserves canonical display-name and updated-at semantics
+  - context snapshot marks active/streaming sessions correctly
+  - context snapshot falls back to the current session when the context index is empty
+  - transcript messages are rebuilt canonically from the session journal
+  - navigation results use the shared app-runtime context + message projections
+- RPC tests now prove:
+  - new-session / resume / tree / fork flows still emit canonical `session/resumed` + `session/rehydrated`
+  - context updates still reflect the correct active session after new/fork flows
+  - callback-driven `new_session` rehydrate payloads still work under the unified emission path
+  - explicit `session-id` routing works in the newer navigation paths
+
+## Architectural note
+- Strong current direction: explicit session routing over inferred focus.
+- When an RPC operation can reasonably carry `session-id`, prefer passing it explicitly.
+- Adapter-local focus still exists, but should be fallback/adapter state rather than the primary semantic input for shared runtime projections.
 
 ## Recent relevant commits
-- `7590d0a` — ⚒ extensions: add work-on project link
-- `f972eab` — ◈ plan: pivot to lsp integration on new runtime
-- `12d19e0` — ⚒ protocol: add managed service stdio/jsonrpc helpers
-- `7afa1a3` — ⚒ mutations: register post-tool and service ops
-- `aa15b96` — ⚒ extensions: add post-tool and service api hooks
+- `9829e79` — ⚒ tests: prove shared navigation context and rehydration projections
+- `24b710d` — ⚒ app-runtime: own canonical transcript message projection
+- `f899fc3` — ⚒ app-runtime: extract canonical context snapshot projection
+- `e5a2c5b` — ⚒ rpc: unify navigation emission with explicit session routing
 
 ## Suggested next step
-- Implement LSP JSON-RPC initialize / notification / request flow on top of the managed service boundary.
-- Then add a `write`/`edit` post-tool processor that syncs changed files and requests diagnostics within timeout.
+- Continue adapter convergence cleanup by removing remaining adapter-local semantic duplication around frontend action result handling and remaining RPC/TUI summary projections.
+- Then update user-facing/docs architecture notes if needed so `README.md` / `doc/architecture.md` reflect app-runtime ownership of shared navigation/context/rehydration semantics.
 
 ## Notes for future ψ
-- Mementum was absent at session start and has now been initialized.
-- Re-run orientation from this file first in future sessions.
-- `bb lint` currently reports unrelated pre-existing repo issues outside this LSP slice; focused LSP/service tests are green.
+- `mementum/state.md` was stale relative to current commits before this update; use this version as the new orientation baseline.
+- `PLAN.md` remains the main active-work tracker for adapter convergence.
+- For this current architectural thread, recent commits are more trustworthy than `STATE.md`.
