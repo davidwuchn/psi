@@ -5,7 +5,7 @@
    [clojure.string :as str]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
-   [psi.rpc.events :as rpc.events]
+   [psi.app-runtime.context :as app-context]
    [psi.rpc.session.message-source :as message-source]))
 
 (defn rehydration-package
@@ -21,25 +21,26 @@
 
 (defn context-snapshot
   [ctx state sid]
-  (let [state* (if (instance? clojure.lang.IAtom state)
-                 (atom (assoc @state :focus-session-id sid))
-                 state)]
-    (rpc.events/context-updated-payload ctx state* sid)))
+  (let [active-session-id (if (instance? clojure.lang.IAtom state)
+                            (or (:focus-session-id @state)
+                                sid)
+                            sid)]
+    (app-context/context-snapshot ctx active-session-id sid)))
 
 (defn navigation-result
-  [ctx state nav-op sid & [{:keys [tool-calls tool-order follow-up-ui-actions]}]]
+  [ctx state nav-op sid & [{:keys [tool-calls tool-order follow-up-ui-actions active-session-id]}]]
   {:nav/op                nav-op
    :nav/session-id        sid
    :nav/session-file      (:session-file (ss/get-session-data-in ctx sid))
    :nav/rehydration       (rehydration-package ctx sid {:tool-calls tool-calls
                                                         :tool-order tool-order})
-   :nav/context-snapshot  (context-snapshot ctx state sid)
+   :nav/context-snapshot  (app-context/context-snapshot ctx (or active-session-id sid) sid)
    :nav/follow-up-ui-actions (vec (or follow-up-ui-actions []))})
 
 (defn switch-session-result
   [ctx state source-session-id sid]
   (session/ensure-session-loaded-in! ctx source-session-id sid)
-  (navigation-result ctx state :switch-session sid))
+  (navigation-result ctx state :switch-session sid {:active-session-id sid}))
 
 (defn resume-session-result
   [ctx state source-session-id session-path]
@@ -50,7 +51,7 @@
     (throw (ex-info "session file not found"
                     {:error-code "request/not-found"})))
   (let [sd (session/resume-session-in! ctx source-session-id session-path)]
-    (navigation-result ctx state :resume-session (:session-id sd))))
+    (navigation-result ctx state :resume-session (:session-id sd) {:active-session-id (:session-id sd)})))
 
 (defn fork-session-result
   [ctx state source-session-id entry-id]
@@ -58,7 +59,7 @@
     (throw (ex-info "invalid request parameter :entry-id: non-empty entry id"
                     {:error-code "request/invalid-params"})))
   (let [sd (session/fork-session-in! ctx source-session-id entry-id)]
-    (navigation-result ctx state :fork-session (:session-id sd))))
+    (navigation-result ctx state :fork-session (:session-id sd) {:active-session-id (:session-id sd)})))
 
 (defn new-session-result
   [ctx state source-session-id {:keys [on-new-session!]}]
@@ -79,7 +80,7 @@
                                   :messages      messages
                                   :tool-calls    (or (:tool-calls rehydrate) {})
                                   :tool-order    (or (:tool-order rehydrate) [])}
-       :nav/context-snapshot     (context-snapshot ctx state sid)
+       :nav/context-snapshot     (app-context/context-snapshot ctx sid sid)
        :nav/follow-up-ui-actions []})
     (let [sd (session/new-session-in! ctx source-session-id {})]
-      (navigation-result ctx state :new-session (:session-id sd)))))
+      (navigation-result ctx state :new-session (:session-id sd) {:active-session-id (:session-id sd)}))))

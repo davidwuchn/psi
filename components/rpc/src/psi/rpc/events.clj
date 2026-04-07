@@ -2,11 +2,11 @@
   "RPC event topics and payload projection helpers."
   (:require
    [clojure.string :as str]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.context :as app-context]
    [psi.app-runtime.footer :as footer]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [default-session-id-in event-frame protocol-version]]))
@@ -185,52 +185,8 @@
   (rpc.state/set-focus-session-id! state session-id))
 
 (defn context-updated-payload
-  "Build the `context/updated` event payload from the current context session snapshot.
-
-   Includes a synthetic single-session snapshot before the runtime context index
-   has any real entries, so handshake/bootstrap surfaces still reflect the
-   current live session.
-
-   Each session slot includes :id :name :worktree-path :is-streaming :is-active
-   :parent-session-id, :created-at, and :updated-at.
-   Sessions are ordered by updated-at ascending (oldest first → stable tree order).
-
-   Deliberately excludes per-prompt fork rows so handshake/startup snapshots stay
-   cheap even for large session journals. Fork-point expansion is provided by
-   explicit `/tree` selector payloads instead."
   [ctx state session-id]
-  (let [active-id             (focus-session-id state)
-        sd                    (ss/get-session-data-in ctx session-id)
-        current-id            (:session-id sd)
-        indexed-sessions      (or (seq (ss/list-context-sessions-in ctx)) [])
-        sessions*             (if (seq indexed-sessions)
-                                (->> indexed-sessions
-                                     (sort-by (juxt :updated-at :session-id))
-                                     vec)
-                                [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at :updated-at])])
-        current-display-name  (message-text/session-display-name
-                               (:session-name sd)
-                               (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id))))
-        active-id*            (or active-id current-id)
-        slots                 (mapv (fn [m]
-                                      {:id                (:session-id m)
-                                       :item-kind         "session"
-                                       :name              (:session-name m)
-                                       :display-name      (or (:display-name m)
-                                                              (if (= (:session-id m) current-id)
-                                                                current-display-name
-                                                                (message-text/short-display-text (:session-name m))))
-                                       :worktree-path     (:worktree-path m)
-                                       :is-streaming      (boolean
-                                                           (and (= (:session-id m) current-id)
-                                                                (:is-streaming sd)))
-                                       :is-active         (= (:session-id m) active-id*)
-                                       :parent-session-id (:parent-session-id m)
-                                       :created-at        (:created-at m)
-                                       :updated-at        (:updated-at m)})
-                                    sessions*)]
-    {:active-session-id active-id*
-     :sessions          slots}))
+  (app-context/context-snapshot ctx (focus-session-id state) session-id))
 
 (def footer-query footer/footer-query)
 
