@@ -70,4 +70,20 @@
   (testing "status values normalize to canonical keywords"
     (is (= :submitted (:ui.result/status (ui-actions/action-result {:status "submitted"}))))
     (is (= :cancelled (:ui.result/status (ui-actions/action-result {:status "cancelled"}))))
-    (is (= :failed (:ui.result/status (ui-actions/action-result {:status "failed"}))))))
+    (is (= :failed (:ui.result/status (ui-actions/action-result {:status "failed"})))))
+  (testing "session selector values normalize to canonical action maps"
+    (is (= {:action/kind :switch-session
+            :action/session-id "s2"}
+           (:ui.result/value
+            (ui-actions/action-result {:action-name "context-session-selector"
+                                       :status "submitted"
+                                       :value "s2"}))))
+    (is (= {:action/kind :fork-session
+            :action/session-id "s1"
+            :action/entry-id "e1"}
+           (:ui.result/value
+            (ui-actions/action-result {:action-name "context-session-selector"
+                                       :status "submitted"
+                                       :value {:action/kind :fork-session
+                                               :action/session-id "s1"
+                                               :action/entry-id "e1"}}))))))

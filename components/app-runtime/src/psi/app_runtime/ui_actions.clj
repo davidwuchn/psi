@@ -26,15 +26,63 @@
     "failed" :failed
     nil))
 
+(defn- session-selector-value->action
+  [value]
+  (cond
+    (string? value)
+    {:action/kind :switch-session
+     :action/session-id value}
+
+    (map? value)
+    (let [action-kind (or (:action/kind value)
+                          (get value "action/kind")
+                          (:type value)
+                          (get value "type"))
+          session-id  (or (:action/session-id value)
+                          (get value "action/session-id")
+                          (:session-id value)
+                          (get value "session-id")
+                          (get value "sessionId"))
+          entry-id    (or (:action/entry-id value)
+                          (get value "action/entry-id")
+                          (:entry-id value)
+                          (get value "entry-id")
+                          (get value "entryId"))]
+      (cond
+        (and (or (= action-kind :switch-session)
+                 (= action-kind "switch-session")
+                 (= action-kind "switch_session"))
+             (string? session-id))
+        {:action/kind :switch-session
+         :action/session-id session-id}
+
+        (and (or (= action-kind :fork-session)
+                 (= action-kind "fork-session")
+                 (= action-kind "fork_session")
+                 (= action-kind "fork-point"))
+             (string? entry-id))
+        {:action/kind :fork-session
+         :action/session-id session-id
+         :action/entry-id entry-id}
+
+        :else nil))
+
+    :else
+    nil))
+
 (defn action-result
   [{:keys [request-id action-name ui-action status value error-message]}]
-  {:ui.result/request-id    request-id
-   :ui.result/action-name   action-name
-   :ui.result/action-key    (frontend-action-key ui-action action-name)
-   :ui.result/ui-action     ui-action
-   :ui.result/status        (normalize-result-status status)
-   :ui.result/value         value
-   :ui.result/error-message error-message})
+  (let [action-key (frontend-action-key ui-action action-name)
+        value*     (case action-key
+                     :select-session (session-selector-value->action value)
+                     value)]
+    {:ui.result/request-id    request-id
+     :ui.result/action-name   action-name
+     :ui.result/action-key    action-key
+     :ui.result/ui-action     ui-action
+     :ui.result/status        (normalize-result-status status)
+     :ui.result/value         value*
+     :ui.result/error-message error-message}))
 
 (def thinking-levels
   ["off" "minimal" "low" "medium" "high" "xhigh"])

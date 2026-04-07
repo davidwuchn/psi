@@ -47,49 +47,25 @@
                 (emit/emit-navigation-result! emit! ctx state nav))))
 
           :select-session
-          (cond
-            (string? value)
-            (let [nav (navigation/switch-session-result ctx state session-id value)]
-              (vreset! nav-result* nav)
-              (events/set-focus-session-id! state (:nav/session-id nav))
-              (emit/emit-navigation-result! emit! ctx state nav))
+          (when (map? value)
+            (case (:action/kind value)
+              :switch-session
+              (when-let [session-id* (:action/session-id value)]
+                (when-not (str/blank? session-id*)
+                  (let [nav (navigation/switch-session-result ctx state session-id session-id*)]
+                    (vreset! nav-result* nav)
+                    (events/set-focus-session-id! state (:nav/session-id nav))
+                    (emit/emit-navigation-result! emit! ctx state nav))))
 
-            (map? value)
-            (let [action-kind (or (:action/kind value)
-                                  (get value "action/kind")
-                                  (:type value)
-                                  (get value "type"))
-                  session-id* (or (:action/session-id value)
-                                  (get value "action/session-id")
-                                  (:session-id value)
-                                  (get value "session-id")
-                                  (get value "sessionId"))
-                  entry-id    (or (:action/entry-id value)
-                                  (get value "action/entry-id")
-                                  (:entry-id value)
-                                  (get value "entry-id")
-                                  (get value "entryId"))]
-              (cond
-                (and (or (= action-kind :switch-session)
-                         (= action-kind "switch-session")
-                         (= action-kind "switch_session"))
-                     (string? session-id*)
-                     (not (str/blank? session-id*)))
-                (let [nav (navigation/switch-session-result ctx state session-id session-id*)]
-                  (vreset! nav-result* nav)
-                  (events/set-focus-session-id! state (:nav/session-id nav))
-                  (emit/emit-navigation-result! emit! ctx state nav))
+              :fork-session
+              (when-let [entry-id (:action/entry-id value)]
+                (when-not (str/blank? entry-id)
+                  (let [nav (navigation/fork-session-result ctx state session-id entry-id)]
+                    (vreset! nav-result* nav)
+                    (events/set-focus-session-id! state (:nav/session-id nav))
+                    (emit/emit-navigation-result! emit! ctx state nav))))
 
-                (and (or (= action-kind :fork-session)
-                         (= action-kind "fork-session")
-                         (= action-kind "fork_session")
-                         (= action-kind "fork-point"))
-                     (string? entry-id)
-                     (not (str/blank? entry-id)))
-                (let [nav (navigation/fork-session-result ctx state session-id entry-id)]
-                  (vreset! nav-result* nav)
-                  (events/set-focus-session-id! state (:nav/session-id nav))
-                  (emit/emit-navigation-result! emit! ctx state nav)))))
+              nil))
 
           :select-model
           (when (map? value)
