@@ -437,24 +437,24 @@ Goal of the first implementation slice:
 #### Phase 4 — shared navigation result + rehydration model
 
 ##### 4A. Extract canonical navigation operations
-- [ ] define app-runtime navigation API wrappers for:
-  - [ ] new session
-  - [ ] resume session
-  - [ ] switch session
-  - [ ] fork session
+- [x] define app-runtime navigation API wrappers for:
+  - [x] new session
+  - [x] resume session
+  - [x] switch session
+  - [x] fork session
   - [ ] rename session
 - [ ] make operations accept adapter-owned focus getter/setter rather than owning focus internally
-- [ ] define canonical navigation result maps with:
-  - [ ] target session identity
-  - [ ] rehydration package
-  - [ ] context snapshot
-  - [ ] follow-up action hints
-- [ ] add focused tests for navigation result semantics
+- [x] define canonical navigation result maps with:
+  - [x] target session identity
+  - [x] rehydration package
+  - [x] context snapshot
+  - [x] follow-up action hints
+- [x] add focused tests for navigation result semantics
 
 ##### 4B. Migrate RPC navigation handlers
-- [ ] replace RPC-local navigation result shaping with app-runtime navigation results
-- [ ] keep only protocol emission in RPC navigation paths
-- [ ] remove duplicate rehydration package construction from RPC-local code where possible
+- [x] replace RPC-local navigation result shaping with app-runtime navigation results
+- [x] keep only protocol emission in RPC navigation paths
+- [x] remove duplicate rehydration package construction from RPC-local code where possible
 
 ##### 4C. Migrate TUI session transitions
 - [ ] have TUI session-switch/new/fork flows consume canonical navigation result maps

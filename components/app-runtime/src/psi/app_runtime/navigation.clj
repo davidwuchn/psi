@@ -1,0 +1,82 @@
+(ns psi.app-runtime.navigation
+  "Canonical adapter-neutral navigation result shaping."
+  (:require
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
+   [psi.rpc.events :as rpc.events]
+   [psi.rpc.session.message-source :as message-source]))
+
+(defn rehydration-package
+  [ctx sid & [{:keys [tool-calls tool-order]}]]
+  (let [sd   (ss/get-session-data-in ctx sid)
+        msgs (message-source/session-messages ctx sid)]
+    {:session-id    (:session-id sd)
+     :session-file  (:session-file sd)
+     :message-count (count msgs)
+     :messages      msgs
+     :tool-calls    (or tool-calls {})
+     :tool-order    (or tool-order [])}))
+
+(defn context-snapshot
+  [ctx state sid]
+  (let [state* (if (instance? clojure.lang.IAtom state)
+                 (atom (assoc @state :focus-session-id sid))
+                 state)]
+    (rpc.events/context-updated-payload ctx state* sid)))
+
+(defn navigation-result
+  [ctx state nav-op sid & [{:keys [tool-calls tool-order follow-up-ui-actions]}]]
+  {:nav/op                nav-op
+   :nav/session-id        sid
+   :nav/session-file      (:session-file (ss/get-session-data-in ctx sid))
+   :nav/rehydration       (rehydration-package ctx sid {:tool-calls tool-calls
+                                                        :tool-order tool-order})
+   :nav/context-snapshot  (context-snapshot ctx state sid)
+   :nav/follow-up-ui-actions (vec (or follow-up-ui-actions []))})
+
+(defn switch-session-result
+  [ctx state source-session-id sid]
+  (session/ensure-session-loaded-in! ctx source-session-id sid)
+  (navigation-result ctx state :switch-session sid))
+
+(defn resume-session-result
+  [ctx state source-session-id session-path]
+  (when-not (and (string? session-path) (not (str/blank? session-path)))
+    (throw (ex-info "invalid request parameter :session-path: non-empty path string"
+                    {:error-code "request/invalid-params"})))
+  (when-not (.exists (io/file session-path))
+    (throw (ex-info "session file not found"
+                    {:error-code "request/not-found"})))
+  (let [sd (session/resume-session-in! ctx source-session-id session-path)]
+    (navigation-result ctx state :resume-session (:session-id sd))))
+
+(defn fork-session-result
+  [ctx state source-session-id entry-id]
+  (when-not (and (string? entry-id) (not (str/blank? entry-id)))
+    (throw (ex-info "invalid request parameter :entry-id: non-empty entry id"
+                    {:error-code "request/invalid-params"})))
+  (let [sd (session/fork-session-in! ctx source-session-id entry-id)]
+    (navigation-result ctx state :fork-session (:session-id sd))))
+
+(defn new-session-result
+  [ctx state source-session-id {:keys [on-new-session!]}]
+  (if on-new-session!
+    (let [rehydrate (on-new-session! source-session-id)
+          sid       (:session-id rehydrate)]
+      {:nav/op                   :new-session
+       :nav/session-id           sid
+       :nav/session-file         (:session-file (ss/get-session-data-in ctx sid))
+       :nav/rehydration          {:session-id    sid
+                                  :session-file  (:session-file (ss/get-session-data-in ctx sid))
+                                  :message-count (count (or (:agent-messages rehydrate)
+                                                            (message-source/session-messages ctx sid)))
+                                  :messages      (or (:agent-messages rehydrate)
+                                                     (message-source/session-messages ctx sid))
+                                  :tool-calls    (or (:tool-calls rehydrate) {})
+                                  :tool-order    (or (:tool-order rehydrate) [])}
+       :nav/context-snapshot     (context-snapshot ctx state sid)
+       :nav/follow-up-ui-actions []})
+    (let [sd (session/new-session-in! ctx source-session-id {})]
+      (navigation-result ctx state :new-session (:session-id sd)))))
