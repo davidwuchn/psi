@@ -390,24 +390,24 @@ Goal of the first implementation slice:
 #### Phase 2 — footer semantic model extraction
 
 ##### 2A. Extract shared footer data/query model
-- [ ] identify all footer query/projection logic currently split between RPC and TUI
-- [ ] extract one canonical footer semantic projection into `app_runtime.footer`
-- [ ] define stable footer sections:
-  - [ ] path/worktree/git
-  - [ ] model/thinking
-  - [ ] usage/cost
-  - [ ] context/compaction
-  - [ ] statuses
-- [ ] add focused tests for semantic footer data independent of adapter width/layout
+- [x] identify all footer query/projection logic currently split between RPC and TUI
+- [x] extract one canonical footer semantic projection into `app_runtime.footer`
+- [x] define stable footer sections:
+  - [x] path/worktree/git
+  - [x] model/thinking
+  - [x] usage/cost
+  - [x] context/compaction
+  - [x] statuses
+- [x] add focused tests for semantic footer data independent of adapter width/layout
 
 ##### 2B. Migrate RPC footer events
-- [ ] make RPC footer payload a transport projection of the app-runtime footer model
-- [ ] remove RPC-local footer semantic assembly helpers once replaced
-- [ ] keep only RPC event naming/framing concerns in RPC
+- [x] make RPC footer payload a transport projection of the app-runtime footer model
+- [x] remove RPC-local footer semantic assembly helpers once replaced
+- [x] keep only RPC event naming/framing concerns in RPC
 
 ##### 2C. Migrate TUI footer rendering
-- [ ] make TUI read the shared footer model
-- [ ] keep width-aware line wrapping/alignment in TUI only
+- [x] make TUI read the shared footer model
+- [x] keep width-aware line wrapping/alignment in TUI only
 - [ ] update TUI tests to assert rendering from canonical footer semantics
 
 #### Phase 3 — shared picker/action vocabulary

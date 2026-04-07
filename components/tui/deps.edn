@@ -4,4 +4,5 @@
         io.github.timokramer/charm.clj {:git/tag "v0.1.60"
                                         :git/sha "a6657a8"}
         org.commonmark/commonmark {:mvn/version "0.24.0"}
+        psi/app-runtime     {:local/root "../app-runtime"}
         psi/ui-state        {:local/root "../ui-state"}}}

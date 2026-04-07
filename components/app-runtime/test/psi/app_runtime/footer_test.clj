@@ -1,0 +1,74 @@
+(ns psi.app-runtime.footer-test
+  (:require
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]]
+   [psi.app-runtime.footer :as footer]))
+
+(deftest footer-model-from-data-builds-canonical-lines-test
+  (let [home  (System/getProperty "user.home")
+        model (footer/footer-model-from-data
+               {:psi.agent-session/cwd (str home "/projects/hugoduncan/psi/psi-main")
+                :psi.agent-session/git-branch "master"
+                :psi.agent-session/session-name "xhig"
+                :psi.agent-session/session-display-name "xhig"
+                :psi.agent-session/usage-input 172000
+                :psi.agent-session/usage-output 17000
+                :psi.agent-session/usage-cache-read 5200000
+                :psi.agent-session/usage-cache-write 1200
+                :psi.agent-session/usage-cost-total 1.444
+                :psi.agent-session/context-fraction 0.319
+                :psi.agent-session/context-window 272000
+                :psi.agent-session/auto-compaction-enabled true
+                :psi.agent-session/model-provider "openai-codex"
+                :psi.agent-session/model-id "gpt-5.3-codex"
+                :psi.agent-session/model-reasoning true
+                :psi.agent-session/thinking-level :xhigh
+                :psi.agent-session/effective-reasoning-effort "high"
+                :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
+                                  {:extension-id "a" :text "Clojure-LSP\nclojure-lsp"}]})]
+    (is (= "~/projects/hugoduncan/psi/psi-main (master) • xhig"
+           (get-in model [:footer/lines :path-line])))
+    (is (= ["↑172k" "↓17k" "CR5.2M" "CW1.2k" "$1.444" "31.9%/272k (auto)"]
+           (get-in model [:footer/usage :parts])))
+    (is (= "(openai-codex) gpt-5.3-codex • thinking high"
+           (get-in model [:footer/model :text])))
+    (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
+           (get-in model [:footer/lines :status-line])))
+    (is (= ["a" "b"]
+           (mapv :status/extension-id (:footer/statuses model))))))
+
+(deftest footer-model-from-data-prefers-session-display-name-test
+  (testing "derived display name wins when explicit session name is absent"
+    (let [model (footer/footer-model-from-data
+                 {:psi.agent-session/cwd "/repo/project"
+                  :psi.agent-session/git-branch "master"
+                  :psi.agent-session/session-name nil
+                  :psi.agent-session/session-display-name "Investigate failing tests"
+                  :psi.agent-session/context-window 400000
+                  :psi.agent-session/model-provider "openai"
+                  :psi.agent-session/model-id "gpt-5.3-codex"
+                  :psi.agent-session/model-reasoning true
+                  :psi.agent-session/thinking-level :high
+                  :psi.ui/statuses []})]
+      (is (= "/repo/project (master) • Investigate failing tests"
+             (get-in model [:footer/lines :path-line]))))))
+
+(deftest footer-model-from-data-handles-missing-usage-test
+  (testing "footer still produces context/model text when usage counters are zero or absent"
+    (let [model (footer/footer-model-from-data
+                 {:psi.agent-session/cwd "/repo/project"
+                  :psi.agent-session/context-fraction nil
+                  :psi.agent-session/context-window 400000
+                  :psi.agent-session/auto-compaction-enabled false
+                  :psi.agent-session/model-provider "openai"
+                  :psi.agent-session/model-id "gpt-5.3-codex"
+                  :psi.agent-session/model-reasoning true
+                  :psi.agent-session/thinking-level :off
+                  :psi.ui/statuses []})]
+      (is (= ["?/400k"]
+             (get-in model [:footer/usage :parts])))
+      (is (= "(openai) gpt-5.3-codex • thinking off"
+             (get-in model [:footer/model :text])))
+      (is (= "?/400k (openai) gpt-5.3-codex • thinking off"
+             (get-in model [:footer/lines :stats-line])))
+      (is (nil? (get-in model [:footer/lines :status-line]))))))

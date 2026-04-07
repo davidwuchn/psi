@@ -7,6 +7,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.footer :as footer]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [default-session-id-in event-frame protocol-version]]))
 
@@ -231,178 +232,15 @@
     {:active-session-id active-id*
      :sessions          slots}))
 
-(def footer-query
-  [:psi.agent-session/cwd
-   :psi.agent-session/git-branch
-   :psi.agent-session/session-name
-   :psi.agent-session/session-display-name
-   :psi.agent-session/usage-input
-   :psi.agent-session/usage-output
-   :psi.agent-session/usage-cache-read
-   :psi.agent-session/usage-cache-write
-   :psi.agent-session/usage-cost-total
-   :psi.agent-session/context-fraction
-   :psi.agent-session/context-window
-   :psi.agent-session/auto-compaction-enabled
-   :psi.agent-session/model-provider
-   :psi.agent-session/model-id
-   :psi.agent-session/model-reasoning
-   :psi.agent-session/thinking-level
-   :psi.agent-session/effective-reasoning-effort
-   :psi.ui/statuses])
-
-(defn- footer-data
-  ([ctx]
-   (try
-     (or (session/query-in ctx footer-query) {})
-     (catch Throwable _
-       {})))
-  ([ctx session-id]
-   (try
-     (or (if session-id
-           (session/query-in ctx session-id footer-query)
-           (session/query-in ctx footer-query))
-         {})
-     (catch Throwable _
-       {}))))
-
-(defn- format-token-count
-  [n]
-  (let [n (or n 0)]
-    (cond
-      (< n 1000) (str n)
-      (< n 10000) (format "%.1fk" (/ n 1000.0))
-      (< n 1000000) (str (Math/round (double (/ n 1000.0))) "k")
-      (< n 10000000) (format "%.1fM" (/ n 1000000.0))
-      :else (str (Math/round (double (/ n 1000000.0))) "M"))))
-
-(defn- replace-home-with-tilde
-  [path]
-  (let [home (System/getProperty "user.home")]
-    (if (and (string? path)
-             (string? home)
-             (str/starts-with? path home))
-      (str "~" (subs path (count home)))
-      (or path ""))))
-
-(defn- positive-number?
-  [n]
-  (and (number? n) (pos? (double n))))
-
-(defn- normalize-thinking-level
-  [level]
-  (cond
-    (keyword? level) (name level)
-    (string? level)  level
-    :else            "off"))
-
-(defn- footer-context-text
-  [fraction context-window auto-compact?]
-  (let [suffix (if auto-compact? " (auto)" "")
-        window (format-token-count (or context-window 0))]
-    (if (number? fraction)
-      (str (format "%.1f" (* 100.0 fraction)) "%/" window suffix)
-      (str "?/" window suffix))))
-
-(defn- footer-path-line
-  [ctx session-id d]
-  (let [cwd                  (or (:psi.agent-session/cwd d)
-                                 (ss/effective-cwd-in ctx session-id)
-                                 "")
-        git-branch           (:psi.agent-session/git-branch d)
-        session-display-name (or (:psi.agent-session/session-display-name d)
-                                 (:psi.agent-session/session-name d))
-        path0                (replace-home-with-tilde cwd)
-        path1                (if (seq git-branch)
-                               (str path0 " (" git-branch ")")
-                               path0)]
-    (if (seq session-display-name)
-      (str path1 " • " session-display-name)
-      path1)))
-
-(defn- footer-stats-line
-  [d]
-  (let [usage-input       (or (:psi.agent-session/usage-input d) 0)
-        usage-output      (or (:psi.agent-session/usage-output d) 0)
-        usage-cache-read  (or (:psi.agent-session/usage-cache-read d) 0)
-        usage-cache-write (or (:psi.agent-session/usage-cache-write d) 0)
-        usage-cost-total  (or (:psi.agent-session/usage-cost-total d) 0.0)
-        context-fraction  (:psi.agent-session/context-fraction d)
-        context-window    (:psi.agent-session/context-window d)
-        auto-compact?     (boolean (:psi.agent-session/auto-compaction-enabled d))
-        model-provider    (:psi.agent-session/model-provider d)
-        model-id          (:psi.agent-session/model-id d)
-        model-reasoning?  (boolean (:psi.agent-session/model-reasoning d))
-        thinking-level    (:psi.agent-session/thinking-level d)
-        effective-effort  (:psi.agent-session/effective-reasoning-effort d)
-
-        left-parts
-        (cond-> []
-          (positive-number? usage-input)
-          (conj (str "↑" (format-token-count usage-input)))
-
-          (positive-number? usage-output)
-          (conj (str "↓" (format-token-count usage-output)))
-
-          (positive-number? usage-cache-read)
-          (conj (str "CR" (format-token-count usage-cache-read)))
-
-          (positive-number? usage-cache-write)
-          (conj (str "CW" (format-token-count usage-cache-write)))
-
-          (positive-number? usage-cost-total)
-          (conj (format "$%.3f" (double usage-cost-total)))
-
-          :always
-          (conj (footer-context-text context-fraction context-window auto-compact?)))
-
-        left (str/join " " left-parts)
-
-        model-label     (or model-id "no-model")
-        provider-label  (or model-provider "no-provider")
-        thinking-label  (normalize-thinking-level thinking-level)
-        effort-label    (or effective-effort
-                            (when (not= "off" thinking-label)
-                              thinking-label))
-        right-base      (if model-reasoning?
-                          (if (= "off" thinking-label)
-                            (str model-label " • thinking off")
-                            (str model-label " • thinking " effort-label))
-                          model-label)
-        right           (str "(" provider-label ") " right-base)]
-    (if (str/blank? left)
-      right
-      (str left " " right))))
-
-(defn- sanitize-status-text
-  [text]
-  (-> (or text "")
-      (str/replace #"[\r\n\t]" " ")
-      (str/replace #" +" " ")
-      (str/trim)))
-
-(defn- footer-status-line
-  [statuses]
-  (let [joined (->> (or statuses [])
-                    (sort-by #(or (:extension-id %) (:extensionId %) ""))
-                    (map #(sanitize-status-text (or (:text %) (:message %))))
-                    (remove str/blank?)
-                    (str/join " "))]
-    (when (seq joined)
-      joined)))
+(def footer-query footer/footer-query)
 
 (defn footer-updated-payload
   ([ctx]
-   (let [session-id (default-session-id-in ctx)
-         d          (footer-data ctx)]
-     {:path-line   (footer-path-line ctx session-id d)
-      :stats-line  (footer-stats-line d)
-      :status-line (footer-status-line (:psi.ui/statuses d))}))
+   (let [model (footer/footer-model ctx)]
+     (:footer/lines model)))
   ([ctx session-id]
-   (let [d (footer-data ctx session-id)]
-     {:path-line   (footer-path-line ctx session-id d)
-      :stats-line  (footer-stats-line d)
-      :status-line (footer-status-line (:psi.ui/statuses d))})))
+   (let [model (footer/footer-model ctx session-id)]
+     (:footer/lines model))))
 
 (defn progress-event->rpc-event
   [progress-event]

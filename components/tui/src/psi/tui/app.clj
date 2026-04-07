@@ -33,6 +33,7 @@
    [taoensso.timbre :as timbre]
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
+   [psi.app-runtime.footer :as footer]
    [psi.tui.ansi :as ansi]
    [psi.tui.markdown :as md])
   (:import
@@ -2137,24 +2138,7 @@
       (when (seq widgets)
         (str (str/join "\n" (mapcat :content widgets)) "\n")))))
 
-(def ^:private footer-query
-  [:psi.agent-session/cwd
-   :psi.agent-session/git-branch
-   :psi.agent-session/session-name
-   :psi.agent-session/session-display-name
-   :psi.agent-session/usage-input
-   :psi.agent-session/usage-output
-   :psi.agent-session/usage-cache-read
-   :psi.agent-session/usage-cache-write
-   :psi.agent-session/usage-cost-total
-   :psi.agent-session/context-fraction
-   :psi.agent-session/context-window
-   :psi.agent-session/auto-compaction-enabled
-   :psi.agent-session/model-provider
-   :psi.agent-session/model-id
-   :psi.agent-session/model-reasoning
-   :psi.agent-session/thinking-level
-   :psi.ui/statuses])
+(def ^:private footer-query footer/footer-query)
 
 (defn- footer-data
   [state]
@@ -2164,30 +2148,6 @@
       (catch Exception _
         {}))
     {}))
-
-(defn- format-token-count
-  [n]
-  (let [n (or n 0)]
-    (cond
-      (< n 1000) (str n)
-      (< n 10000) (format "%.1fk" (/ n 1000.0))
-      (< n 1000000) (str (Math/round (double (/ n 1000.0))) "k")
-      (< n 10000000) (format "%.1fM" (/ n 1000000.0))
-      :else (str (Math/round (double (/ n 1000000.0))) "M"))))
-
-(defn- sanitize-status-text
-  [text]
-  (-> (or text "")
-      (str/replace #"[\r\n\t]" " ")
-      (str/replace #" +" " ")
-      (str/trim)))
-
-(defn- replace-home-with-tilde
-  [path]
-  (let [home (System/getProperty "user.home")]
-    (if (and (string? path) (string? home) (str/starts-with? path home))
-      (str "~" (subs path (count home)))
-      (or path ""))))
 
 (defn- middle-truncate
   [s width]
@@ -2209,100 +2169,52 @@
     s
     (ansi/strip-ansi (ansi/truncate-to-width s width "..."))))
 
-(defn- context-piece
-  [fraction context-window auto-compact?]
-  (let [suffix (if auto-compact? " (auto)" "")
-        window (format-token-count (or context-window 0))
-        text (if (number? fraction)
-               (str (format "%.1f" (* 100.0 fraction)) "%/" window suffix)
-               (str "?/" window suffix))]
-    (cond
-      (and (number? fraction) (> fraction 0.9)) (charm/render error-style text)
-      (and (number? fraction) (> fraction 0.7)) (charm/render notify-warning-style text)
-      :else (charm/render dim-style text))))
-
-(defn- footer-path-line
-  [d state width]
-  (let [cwd                  (or (:psi.agent-session/cwd d) (:cwd state) "")
-        git-branch           (:psi.agent-session/git-branch d)
-        session-display-name (or (:psi.agent-session/session-display-name d)
-                                 (:psi.agent-session/session-name d))
-        path0                (replace-home-with-tilde cwd)
-        path1                (if (seq git-branch) (str path0 " (" git-branch ")") path0)
-        path2                (if (seq session-display-name) (str path1 " • " session-display-name) path1)]
-    (charm/render dim-style (middle-truncate path2 (max 1 width)))))
-
-(defn- footer-left-parts
-  [d]
-  (cond-> []
-    (pos? (or (:psi.agent-session/usage-input d) 0))
-    (conj (charm/render dim-style (str "↑" (format-token-count (:psi.agent-session/usage-input d)))))
-    (pos? (or (:psi.agent-session/usage-output d) 0))
-    (conj (charm/render dim-style (str "↓" (format-token-count (:psi.agent-session/usage-output d)))))
-    (pos? (or (:psi.agent-session/usage-cache-read d) 0))
-    (conj (charm/render dim-style (str "R" (format-token-count (:psi.agent-session/usage-cache-read d)))))
-    (pos? (or (:psi.agent-session/usage-cache-write d) 0))
-    (conj (charm/render dim-style (str "W" (format-token-count (:psi.agent-session/usage-cache-write d)))))
-    (pos? (or (:psi.agent-session/usage-cost-total d) 0.0))
-    (conj (charm/render dim-style (format "$%.3f" (double (:psi.agent-session/usage-cost-total d)))))
-    :always
-    (conj (context-piece (:psi.agent-session/context-fraction d)
-                         (:psi.agent-session/context-window d)
-                         (boolean (:psi.agent-session/auto-compaction-enabled d))))))
-
-(defn- footer-right-text
-  [d]
-  (let [model-label      (or (:psi.agent-session/model-id d) "no-model")
-        provider-label   (or (:psi.agent-session/model-provider d) "no-provider")
-        model-reasoning? (boolean (:psi.agent-session/model-reasoning d))
-        thinking-level   (:psi.agent-session/thinking-level d)
-        right-base       (if model-reasoning?
-                           (if (= :off thinking-level)
-                             (str model-label " • thinking off")
-                             (str model-label " • " (name (or thinking-level :off))))
-                           model-label)]
-    (str "(" provider-label ") " right-base)))
-
-(defn- footer-stats-line
-  [left right0 width]
-  (let [left    (if (> (ansi/visible-width left) width)
-                  (trim-right-visible left width)
-                  left)
-        right   (charm/render dim-style right0)
-        left-w  (ansi/visible-width left)
-        right-w (ansi/visible-width right)
-        min-pad 2]
-    (cond
-      (<= (+ left-w min-pad right-w) width)
-      (str left (apply str (repeat (- width left-w right-w) " ")) right)
-
-      (> (- width left-w min-pad) 3)
-      (let [avail       (- width left-w min-pad)
-            right-trunc (charm/render dim-style (trim-right-visible right0 avail))]
-        (str left
-             (apply str (repeat (max min-pad (- width left-w (ansi/visible-width right-trunc))) " "))
-             right-trunc))
-
-      :else left)))
-
-(defn- footer-status-line
-  [d width]
-  (let [joined (->> (or (:psi.ui/statuses d) [])
-                    (sort-by :extension-id)
-                    (map (comp sanitize-status-text :text))
-                    (remove str/blank?)
-                    (str/join " "))]
-    (when (seq joined)
-      (ansi/truncate-to-width joined width (charm/render dim-style "...")))))
+(defn- context-style
+  [fraction]
+  (cond
+    (and (number? fraction) (> fraction 0.9)) error-style
+    (and (number? fraction) (> fraction 0.7)) notify-warning-style
+    :else dim-style))
 
 (defn- build-footer-lines
   [state width]
-  (let [d           (footer-data state)
-        path-line   (footer-path-line d state width)
-        left        (str/join " " (footer-left-parts d))
-        right0      (footer-right-text d)
-        stats-line  (footer-stats-line left right0 width)
-        status-line (footer-status-line d width)]
+  (let [d               (footer-data state)
+        model           (footer/footer-model-from-data d {:cwd (:cwd state)})
+        path-text       (get-in model [:footer/lines :path-line] "")
+        usage-parts     (get-in model [:footer/usage :parts] [])
+        context-text    (get-in model [:footer/context :text] "")
+        model-text      (get-in model [:footer/model :text] "")
+        context-style*  (context-style (get-in model [:footer/context :fraction]))
+        left-parts      (mapv (fn [part]
+                                (charm/render (if (= part context-text)
+                                                context-style*
+                                                dim-style)
+                                              part))
+                              usage-parts)
+        left            (str/join " " left-parts)
+        right0          model-text
+        path-line       (charm/render dim-style (middle-truncate path-text (max 1 width)))
+        stats-line      (let [left*   (if (> (ansi/visible-width left) width)
+                                        (trim-right-visible left width)
+                                        left)
+                              right   (charm/render dim-style right0)
+                              left-w  (ansi/visible-width left*)
+                              right-w (ansi/visible-width right)
+                              min-pad 2]
+                          (cond
+                            (<= (+ left-w min-pad right-w) width)
+                            (str left* (apply str (repeat (- width left-w right-w) " ")) right)
+
+                            (> (- width left-w min-pad) 3)
+                            (let [avail       (- width left-w min-pad)
+                                  right-trunc (charm/render dim-style (trim-right-visible right0 avail))]
+                              (str left*
+                                   (apply str (repeat (max min-pad (- width left-w (ansi/visible-width right-trunc))) " "))
+                                   right-trunc))
+
+                            :else left*))
+        status-line     (some-> (get-in model [:footer/lines :status-line])
+                                (ansi/truncate-to-width width (charm/render dim-style "...")))]
     (cond-> [path-line stats-line]
       status-line (conj status-line))))
 
