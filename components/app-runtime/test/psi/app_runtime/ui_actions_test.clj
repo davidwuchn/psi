@@ -60,51 +60,51 @@
     (is (= ["off" "minimal" "low" "medium" "high" "xhigh"]
            (mapv :ui.item/value (:ui/items thinking-action))))))
 
-(deftest action-result-normalizes-legacy-and-canonical-action-ids-and-statuses-test
-  (testing "legacy action names normalize to canonical action keys"
+(deftest action-result-normalizes-canonical-action-ids-and-statuses-test
+  (testing "canonical action names normalize to canonical action keys"
     (is (= :select-session
            (:ui.result/action-key
-            (ui-actions/action-result {:action-name "context-session-selector"
+            (ui-actions/action-result {:action-name "select-session"
                                        :status "submitted"}))))
     (is (= :select-resume-session
            (:ui.result/action-key
-            (ui-actions/action-result {:action-name "resume-selector"
+            (ui-actions/action-result {:action-name "select-resume-session"
                                        :status "submitted"}))))
     (is (= :select-model
            (:ui.result/action-key
-            (ui-actions/action-result {:action-name "model-picker"
+            (ui-actions/action-result {:action-name "select-model"
                                        :status "submitted"}))))
     (is (= :select-thinking-level
            (:ui.result/action-key
-            (ui-actions/action-result {:action-name "thinking-picker"
+            (ui-actions/action-result {:action-name "select-thinking-level"
                                        :status "submitted"})))))
   (testing "status values normalize to canonical keywords"
     (is (= :submitted (:ui.result/status (ui-actions/action-result {:status "submitted"}))))
     (is (= :cancelled (:ui.result/status (ui-actions/action-result {:status "cancelled"}))))
     (is (= :failed (:ui.result/status (ui-actions/action-result {:status "failed"})))))
   (testing "cancelled and failed results derive canonical messages"
-    (is (= "Cancelled model-picker."
-           (:ui.result/message (ui-actions/action-result {:action-name "model-picker"
+    (is (= "Cancelled select-model."
+           (:ui.result/message (ui-actions/action-result {:action-name "select-model"
                                                           :status "cancelled"}))))
-    (is (= "Frontend action failed: model-picker"
-           (:ui.result/message (ui-actions/action-result {:action-name "model-picker"
+    (is (= "Frontend action failed: select-model"
+           (:ui.result/message (ui-actions/action-result {:action-name "select-model"
                                                           :status "failed"}))))
     (is (= "boom"
-           (:ui.result/message (ui-actions/action-result {:action-name "model-picker"
+           (:ui.result/message (ui-actions/action-result {:action-name "select-model"
                                                           :status "failed"
                                                           :error-message "boom"})))))
   (testing "session selector values normalize to canonical action maps"
     (is (= {:action/kind :switch-session
             :action/session-id "s2"}
            (:ui.result/value
-            (ui-actions/action-result {:action-name "context-session-selector"
+            (ui-actions/action-result {:action-name "select-session"
                                        :status "submitted"
                                        :value "s2"}))))
     (is (= {:action/kind :fork-session
             :action/session-id "s1"
             :action/entry-id "e1"}
            (:ui.result/value
-            (ui-actions/action-result {:action-name "context-session-selector"
+            (ui-actions/action-result {:action-name "select-session"
                                        :status "submitted"
                                        :value {:action/kind :fork-session
                                                :action/session-id "s1"
@@ -112,11 +112,11 @@
   (testing "model and thinking picker values normalize to canonical submitted values"
     (is (= {:provider "openai" :id "gpt-5.3-codex"}
            (:ui.result/value
-            (ui-actions/action-result {:action-name "model-picker"
+            (ui-actions/action-result {:action-name "select-model"
                                        :status "submitted"
                                        :value {:provider "openai" :id "gpt-5.3-codex"}}))))
     (is (= "high"
            (:ui.result/value
-            (ui-actions/action-result {:action-name "thinking-picker"
+            (ui-actions/action-result {:action-name "select-thinking-level"
                                        :status "submitted"
                                        :value :high}))))))
