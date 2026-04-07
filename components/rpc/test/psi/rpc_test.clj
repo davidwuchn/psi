@@ -1818,7 +1818,7 @@
       (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions])))))
 
-  (testing "frontend_action_result context-session-selector accepts fork-point payload and forks"
+  (testing "frontend_action_result select-session accepts fork-point payload and forks"
     (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-rpc-frontend-fork-" (java.util.UUID/randomUUID))
           _        (.mkdirs (java.io.File. cwd))
           [ctx sid] (create-session-context {:cwd cwd})
@@ -1830,7 +1830,7 @@
                            :subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}})
           handler   (make-handler ctx state)
           input     (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                         "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-1\" :action-name \"context-session-selector\" :status \"submitted\" :value {:action/kind :fork-session :action/entry-id \"" (:id entry) "\" :action/session-id \"" sid "\"}}}\n")
+                         "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-1\" :action-name \"select-session\" :status \"submitted\" :value {:action/kind :fork-session :action/entry-id \"" (:id entry) "\" :action/session-id \"" sid "\"}}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames      (parse-frames out-lines)
           resumed-evt (some #(when (= "session/resumed" (:event %)) %) frames)
