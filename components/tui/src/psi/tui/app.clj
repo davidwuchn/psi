@@ -640,7 +640,7 @@
 ;; ── Dialog state helpers ────────────────────────────────────
 
 (defn- has-active-dialog? [state]
-  (boolean (get-in state [:ui-snapshot :dialog-queue :active])))
+  (boolean (get-in state [:ui-snapshot :active-dialog])))
 
 (defn- clear-dialog-local-state
   [state]
@@ -714,7 +714,7 @@
   "Route keypress to the active dialog. Returns [new-state cmd] or nil
    if no dialog is active."
   [state m]
-  (when-let [dialog (get-in state [:ui-snapshot :dialog-queue :active])]
+  (when-let [dialog (get-in state [:ui-snapshot :active-dialog])]
     (cond
       (msg/key-match? m "escape")
       (do
@@ -2148,7 +2148,7 @@
 
 (defn- render-widgets [ui-snapshot placement]
   (when ui-snapshot
-    (let [widgets (->> (vals (:widgets ui-snapshot))
+    (let [widgets (->> (:widgets ui-snapshot)
                        (filter #(= placement (:placement %)))
                        vec)]
       (when (seq widgets)
@@ -2242,10 +2242,7 @@
 
 (defn- render-notifications [ui-snapshot]
   (when ui-snapshot
-    (let [notes (->> (:notifications ui-snapshot)
-                     (remove :dismissed?)
-                     (take-last 3)
-                     vec)]
+    (let [notes (vec (:visible-notifications ui-snapshot))]
       (when (seq notes)
         (str (str/join "\n"
                        (map (fn [n]
@@ -2259,7 +2256,7 @@
 
 (defn- render-dialog [ui-snapshot selected-index input-text]
   (when ui-snapshot
-    (when-let [dialog (get-in ui-snapshot [:dialog-queue :active])]
+    (when-let [dialog (:active-dialog ui-snapshot)]
       (case (:kind dialog)
         :confirm
         (str (charm/render title-style (:title dialog)) "\n"

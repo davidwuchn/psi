@@ -11,6 +11,7 @@
    [charm.input.keymap :as keymap]
    [charm.message :as msg]
    [psi.agent-session.persistence :as persist]
+   [psi.app-runtime.projections :as projections]
    [psi.app-runtime.ui-actions :as ui-actions]
    [psi.tui.app :as app]
    [psi.tui.ansi :as ansi]
@@ -44,8 +45,18 @@
   ([model-name] (init-state model-name {}))
   ([model-name opts]
    (let [ui-atom      (:ui-state* opts)
-         opts'        (dissoc opts :ui-state*)
-         ui-read-fn   (when ui-atom (fn [] @ui-atom))
+         ui-read-fn*  (:ui-read-fn opts)
+         opts'        (dissoc opts :ui-state* :ui-read-fn)
+         ui-read-fn   (or ui-read-fn*
+                          (when ui-atom
+                            (fn []
+                              (assoc (projections/extension-ui-snapshot-from-state @ui-atom)
+                                     :tool-renderers (into {}
+                                                            (map (juxt :tool-name identity)
+                                                                 (ui-state/all-tool-renderers ui-atom)))
+                                     :message-renderers (into {}
+                                                               (map (juxt :custom-type identity)
+                                                                    (ui-state/all-message-renderers ui-atom)))))))
          ui-disp-fn   (when ui-atom
                         (fn [event-type payload]
                           (case event-type
