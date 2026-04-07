@@ -496,6 +496,20 @@ Goal of the first implementation slice:
 - [x] refresh `mementum/state.md` after the convergence cleanup lands
 - [ ] refresh user/docs references if `/jobs` and context/session-tree ownership should now be described in terms of shared app-runtime projections
 
+#### Remaining convergence cleanup plan
+- [ ] footer semantics: stop making Emacs re-parse canonical `:stats-line` for provider/model alignment
+  - [ ] expose structured footer stats parts from `app-runtime.footer` through RPC (`usage/context` left side + model right side)
+  - [ ] make Emacs footer alignment consume structured footer fields first, keeping string parsing only as fallback compatibility
+  - [ ] add focused RPC + Emacs tests proving footer alignment no longer depends on regex parsing of `:stats-line`
+- [ ] session summary semantics: extract a shared session-summary projection for frontend diagnostics/header reuse
+  - [ ] add adapter-neutral session-summary/model-label projection in `app-runtime`
+  - [ ] make `rpc.events/session-updated-payload` include shared summary fields
+  - [ ] make Emacs `/status` session summary + header model label consume shared summary fields rather than rebuilding them locally
+- [ ] RPC startup convergence: remove handshake/bootstrap duplication with subscribed snapshot delivery
+  - [ ] keep handshake transport-focused (`server-info` only)
+  - [ ] rely on subscribed initial snapshot emission for `session/updated` / `footer/updated` / `context/updated`
+  - [ ] delete the handshake bootstrap `context/updated` event path and adjust startup tests accordingly
+
 #### Cross-cutting cleanup tasks
 - [ ] remove obsolete duplicated helpers after each phase instead of leaving parallel paths
 - [ ] keep adapter tests focused on adaptation/rendering, not shared-domain ordering rules
