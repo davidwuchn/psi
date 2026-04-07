@@ -59,8 +59,9 @@ Adapters should differ only in:
 - selector/picker models and item ordering
 - footer semantic model
 - context snapshot / session tree model
-- canonical UI action/result vocabulary
+- canonical transcript message reconstruction from journal state
 - transcript rehydration packages and other shared presentation-facing domain projections
+- canonical UI action/result vocabulary
 - shared public summaries for jobs, statuses, and extension UI state where both adapters need the same meaning
 
 #### `rpc` owns
@@ -68,7 +69,8 @@ Adapters should differ only in:
 - subscriptions and event delivery
 - request/response correlation
 - adaptation of `app-runtime` models onto the RPC protocol
-- RPC-local focus pointer only as transport-scoped adapter state
+- explicit `session-id` routing whenever the operation can reasonably carry it
+- RPC-local focus pointer only as transport-scoped adapter fallback state
 
 RPC should not be the long-term home for selector semantics, footer semantics,
 or session navigation domain logic.
@@ -374,13 +376,14 @@ Near-term architectural direction:
 1. move shared selector/session-tree semantics into `app-runtime`
 2. move shared footer semantic projection into `app-runtime`
 3. define a canonical adapter-neutral picker/action vocabulary in `app-runtime`
-4. converge navigation result shaping and transcript rehydration packages into `app-runtime`
+4. converge navigation result shaping, context snapshots, and transcript rehydration packages into `app-runtime`
 5. leave RPC as protocol adaptation and adapters as rendering/mechanics
 
 What success looks like:
-- TUI and Emacs consume the same selector, footer, and navigation models
+- TUI and Emacs consume the same selector, footer, navigation, context, and transcript rehydration models
 - RPC projects shared runtime models onto transport events instead of owning their semantics
 - adapter bugs no longer require re-solving shared domain questions in multiple places
+- explicit `session-id` routing becomes the default for targetable RPC operations, with adapter focus used only as fallback
 
 ## Roadmap
 
