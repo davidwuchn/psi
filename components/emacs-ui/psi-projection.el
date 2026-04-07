@@ -237,13 +237,53 @@ LINE unchanged."
             line))
       line)))
 
+(defun psi-emacs--projection-footer-stats-line (data)
+  "Return canonical footer stats line text from event DATA.
+
+Prefers structured footer fields so Emacs does not need to re-parse backend
+semantic text. Falls back to legacy `:stats-line` payloads for compatibility."
+  (let* ((usage-parts* (psi-emacs--event-data-get data '(:usage-parts usage-parts :usageParts usageParts)))
+         (usage-parts (psi-emacs--projection-seq usage-parts*))
+         (model-text (psi-emacs--event-data-get data '(:model-text model-text :modelText modelText)))
+         (structured-left (and usage-parts
+                               (string-join
+                                (delq nil
+                                      (mapcar (lambda (part)
+                                                (when (and (stringp part)
+                                                           (not (string-empty-p part)))
+                                                  part))
+                                              usage-parts))
+                                " ")))
+         (structured-right (and (stringp model-text)
+                                (not (string-empty-p model-text))
+                                model-text))
+         (legacy-line (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine))))
+    (cond
+     ((and structured-right
+           structured-left
+           (not (string-empty-p structured-left)))
+      (let* ((width (psi-emacs--projection-window-width))
+             (left-w (string-width structured-left))
+             (right-w (string-width structured-right))
+             (min-pad 2)
+             (total (+ left-w min-pad right-w)))
+        (if (<= total width)
+            (concat structured-left
+                    (make-string (- width left-w right-w) ?\s)
+                    structured-right)
+          (concat structured-left " " structured-right))))
+     (structured-right structured-right)
+     ((and (stringp legacy-line) (not (string-empty-p legacy-line)))
+      (psi-emacs--align-footer-stats-line legacy-line))
+     (t nil))))
+
 (defun psi-emacs--projection-footer-text (data)
   "Extract deterministic footer projection text from event DATA.
 
 Canonical payload lines are rendered as multi-line text in this order:
 path-line, stats-line, status-line (blank lines omitted)."
   (let* ((path-line* (psi-emacs--event-data-get data '(:path-line path-line :pathLine pathLine)))
-         (stats-line* (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine)))
+         (stats-line* (psi-emacs--projection-footer-stats-line data))
          (status-line* (psi-emacs--event-data-get data '(:status-line status-line :statusLine statusLine)))
          (path-line (and (stringp path-line*)
                          (not (string-empty-p path-line*))
@@ -252,7 +292,7 @@ path-line, stats-line, status-line (blank lines omitted)."
                                      'font-lock-face 'psi-emacs-projection-footer-path-face)))
          (stats-line (and (stringp stats-line*)
                           (not (string-empty-p stats-line*))
-                          (propertize (psi-emacs--align-footer-stats-line stats-line*)
+                          (propertize stats-line*
                                       'face 'psi-emacs-projection-footer-stats-face
                                       'font-lock-face 'psi-emacs-projection-footer-stats-face)))
          (status-line (and (stringp status-line*)

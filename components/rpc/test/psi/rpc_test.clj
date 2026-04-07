@@ -115,6 +115,10 @@
                     (rpc.events/footer-updated-payload ctx))]
       (is (= "~/projects/hugoduncan/psi/psi-main (master) • xhig"
              (:path-line payload)))
+      (is (= ["↑172k" "↓17k" "CR5.2M" "CW1.2k" "$1.444" "31.9%/272k (auto)"]
+             (:usage-parts payload)))
+      (is (= "(openai-codex) gpt-5.3-codex • thinking high"
+             (:model-text payload)))
       (is (str/includes? (:stats-line payload) "↑172k"))
       (is (str/includes? (:stats-line payload) "↓17k"))
       (is (str/includes? (:stats-line payload) "CR5.2M"))
@@ -153,7 +157,11 @@
                                    :psi.ui/statuses []})]
                     (rpc.events/footer-updated-payload ctx))]
       (is (= "~/projects/hugoduncan/psi/psi-main (master) • Investigate failing tests"
-             (:path-line payload))))))
+             (:path-line payload)))
+      (is (= ["?/272k"]
+             (:usage-parts payload)))
+      (is (= "(openai-codex) gpt-5.3-codex • thinking high"
+             (:model-text payload))))))
 
 (deftest session-updated-payload-includes-model-metadata-test
   (testing "session payload includes model metadata for frontend header projection"
@@ -1797,6 +1805,10 @@
                                                                           :output-tokens 22}}}})
           payload (rpc.events/footer-updated-payload ctx)
           stats-line (:stats-line payload)]
+      (is (= ["↑111" "↓22" "4.0%/100k"]
+             (:usage-parts payload)))
+      (is (= "(openai) gpt-5.3-codex • thinking high"
+             (:model-text payload)))
       (is (string? stats-line))
       (is (str/includes? stats-line "↑111"))
       (is (str/includes? stats-line "↓22"))

@@ -163,13 +163,19 @@
 
 (def footer-query footer/footer-query)
 
+(defn- footer-event-payload
+  [model]
+  (merge (:footer/lines model)
+         {:usage-parts (get-in model [:footer/usage :parts])
+          :model-text  (get-in model [:footer/model :text])}))
+
 (defn footer-updated-payload
   ([ctx]
    (let [model (footer/footer-model ctx)]
-     (:footer/lines model)))
+     (footer-event-payload model)))
   ([ctx session-id]
    (let [model (footer/footer-model ctx session-id)]
-     (:footer/lines model))))
+     (footer-event-payload model))))
 
 (defn progress-event->rpc-event
   [progress-event]

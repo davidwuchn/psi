@@ -3712,6 +3712,27 @@ command rehydration."
       (psi-emacs--handle-rpc-event
        '((:event . "footer/updated")
          (:data . ((:path-line . "~/psi-main")
+                   (:usage-parts . ["↑4.6k" "↓14" "$0.008" "1.7%/272k"])
+                   (:model-text . "(openai) gpt-5.3-codex • thinking off")
+                   (:stats-line . "↑4.6k ↓14 $0.008 1.7%/272k (openai) gpt-5.3-codex • thinking off"))))))
+    (let* ((lines (split-string (buffer-string) "\n" t))
+           (stats-line (seq-find (lambda (line)
+                                   (string-match-p "↑4\\.6k" line))
+                                 lines)))
+      (should (stringp stats-line))
+      (should (string-match-p "  (openai) gpt-5\\.3-codex • thinking off$" stats-line))
+      (should (= 70 (string-width stats-line))))))
+
+(ert-deftest psi-extension-ui-footer-updated-falls-back-to-stats-line-parsing-when-structured-fields-absent ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
+               (lambda () 70)))
+      (psi-emacs--handle-rpc-event
+       '((:event . "footer/updated")
+         (:data . ((:path-line . "~/psi-main")
                    (:stats-line . "↑4.6k ↓14 $0.008 1.7%/272k (openai) gpt-5.3-codex • thinking off"))))))
     (let* ((lines (split-string (buffer-string) "\n" t))
            (stats-line (seq-find (lambda (line)
