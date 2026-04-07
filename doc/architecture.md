@@ -60,7 +60,7 @@ Adapters should differ only in:
 - selector/picker models and item ordering
 - footer semantic model
 - shared session-summary/model-label/status fragments for adapter diagnostics/header use
-- context snapshot / session tree model
+- context snapshot / session tree model, including canonical session-tree widget projection when adapters need the same rendered structure
 - canonical transcript message reconstruction from journal state
 - transcript rehydration packages and other shared presentation-facing domain projections
 - canonical UI action/result vocabulary

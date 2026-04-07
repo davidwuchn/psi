@@ -70,7 +70,7 @@ For architecture overview, components, EQL introspection guidance, and roadmap, 
 Current adapter-convergence direction:
 - `app-runtime` owns shared selector, footer, session-summary, navigation, context snapshot, and transcript rehydration semantics
 - RPC adapts those shared models to the wire protocol
-- RPC handshake is transport-focused; initial `session/updated` / `footer/updated` / `context/updated` snapshots come through subscribed event paths
+- RPC handshake is transport-focused; initial `session/updated` / `footer/updated` / `context/updated` event snapshots come through subscribed event paths, with `context/updated` carrying both the snapshot and canonical session-tree widget projection
 - explicit `session-id` routing is preferred over adapter-focus inference whenever an operation can carry it
 
 ## Graph discovery

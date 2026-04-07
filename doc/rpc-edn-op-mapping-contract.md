@@ -89,7 +89,7 @@ The transport op router MUST remain a thin translation boundary over existing `p
 |---|---|---|---|---|
 | `handshake` | `{:client-info {:name s :version s :protocol-version s :features [s*]?}}` | transport-level negotiation (not session domain op) | `{:server-info {:protocol-version s :features [s*] :session-id s? :model-id s? :thinking-level s?}}` | `protocol/unsupported-version`, `request/invalid-params` |
 
-Handshake remains transport-focused. Initial session/UI snapshots are delivered through normal subscribed events rather than a special handshake bootstrap event.
+Handshake remains transport-focused. Initial session/UI snapshots are delivered through normal subscribed events rather than a special handshake bootstrap event. `context/updated` now carries the canonical context snapshot plus backend-projected session-tree widget payload.
 | `query_eql` | `{:query <edn-string-vector>}` | `session/query-in` | `{:result any}` | `request/invalid-params`, `request/invalid-query`, `runtime/query-failed` |
 | `command` | `{:text s}` | backend slash-command dispatch | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `frontend_action_result` | `{:request-id s :action-name s :status ("submitted"\|"cancelled"\|"failed") :value ? :error-message s?}` | apply/cancel/fail a backend-requested frontend action | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |

@@ -67,6 +67,7 @@ Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
 Startup note:
 - handshake is transport-only
 - initial `session/updated`, `footer/updated`, and `context/updated` state arrives via subscribed event snapshots, not a handshake bootstrap event
+- `context/updated` now carries both the canonical context snapshot and the backend-projected session-tree widget used by Emacs rendering
 
 ## Slash commands
 

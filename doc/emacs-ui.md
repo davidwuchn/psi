@@ -170,7 +170,8 @@ Emacs subscribes to the full default topic set (core + extension/footer topics):
 
 Startup note:
 - RPC handshake is transport-focused and does not bootstrap `context/updated` directly.
-- Initial `session/updated`, `footer/updated`, and `context/updated` snapshots arrive through the normal subscribed event path.
+- Initial `session/updated`, `footer/updated`, and `context/updated` event snapshots arrive through the normal subscribed event path.
+- `context/updated` carries both the context snapshot and the canonical backend-projected session-tree widget used by Emacs.
 
 ## Reconnect semantics
 
