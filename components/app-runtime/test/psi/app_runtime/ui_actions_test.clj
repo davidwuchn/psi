@@ -1,6 +1,6 @@
 (ns psi.app-runtime.ui-actions-test
   (:require
-   [clojure.test :refer [deftest is]]
+   [clojure.test :refer [deftest is testing]]
    [psi.app-runtime.ui-actions :as ui-actions]))
 
 (deftest context-session-action-preserves-selector-order-and-action-values-test
@@ -48,3 +48,26 @@
     (is (= :select-thinking-level (:ui/action-name thinking-action)))
     (is (= ["off" "minimal" "low" "medium" "high" "xhigh"]
            (mapv :ui.item/value (:ui/items thinking-action))))))
+
+(deftest action-result-normalizes-legacy-and-canonical-action-ids-and-statuses-test
+  (testing "legacy action names normalize to canonical action keys"
+    (is (= :select-session
+           (:ui.result/action-key
+            (ui-actions/action-result {:action-name "context-session-selector"
+                                       :status "submitted"}))))
+    (is (= :select-resume-session
+           (:ui.result/action-key
+            (ui-actions/action-result {:action-name "resume-selector"
+                                       :status "submitted"}))))
+    (is (= :select-model
+           (:ui.result/action-key
+            (ui-actions/action-result {:action-name "model-picker"
+                                       :status "submitted"}))))
+    (is (= :select-thinking-level
+           (:ui.result/action-key
+            (ui-actions/action-result {:action-name "thinking-picker"
+                                       :status "submitted"})))))
+  (testing "status values normalize to canonical keywords"
+    (is (= :submitted (:ui.result/status (ui-actions/action-result {:status "submitted"}))))
+    (is (= :cancelled (:ui.result/status (ui-actions/action-result {:status "cancelled"}))))
+    (is (= :failed (:ui.result/status (ui-actions/action-result {:status "failed"}))))))

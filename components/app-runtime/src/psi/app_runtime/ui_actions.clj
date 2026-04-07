@@ -3,6 +3,39 @@
   (:require
    [psi.app-runtime.selectors :as selectors]))
 
+(defn frontend-action-key
+  [ui-action action-name]
+  (let [k (keyword (or (some-> ui-action :ui/action-name name)
+                       action-name
+                       ""))]
+    (case k
+      :resume-selector :select-resume-session
+      :context-session-selector :select-session
+      :model-picker :select-model
+      :thinking-picker :select-thinking-level
+      k)))
+
+(defn normalize-result-status
+  [status]
+  (case status
+    :submitted :submitted
+    "submitted" :submitted
+    :cancelled :cancelled
+    "cancelled" :cancelled
+    :failed :failed
+    "failed" :failed
+    nil))
+
+(defn action-result
+  [{:keys [request-id action-name ui-action status value error-message]}]
+  {:ui.result/request-id    request-id
+   :ui.result/action-name   action-name
+   :ui.result/action-key    (frontend-action-key ui-action action-name)
+   :ui.result/ui-action     ui-action
+   :ui.result/status        (normalize-result-status status)
+   :ui.result/value         value
+   :ui.result/error-message error-message})
+
 (def thinking-levels
   ["off" "minimal" "low" "medium" "high" "xhigh"])
 

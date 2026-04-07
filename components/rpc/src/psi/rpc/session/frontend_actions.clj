@@ -5,43 +5,33 @@
    [clojure.string :as str]
    [psi.agent-session.core :as session]
    [psi.app-runtime.navigation :as navigation]
+   [psi.app-runtime.ui-actions :as ui-actions]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
    [psi.rpc.transport :refer [response-frame]]))
 
-(defn- normalize-action-key
-  [ui-action action-name]
-  (let [k (keyword (or (some-> ui-action :ui/action-name name)
-                       action-name
-                       ""))]
-    (case k
-      :resume-selector :select-resume-session
-      :context-session-selector :select-session
-      :model-picker :select-model
-      :thinking-picker :select-thinking-level
-      k)))
-
 (defn handle-frontend-action-result!
   [{:keys [ctx request params state session-id resolve-model]}]
-  (let [request-id  (:request-id params)
-        action-name (:action-name params)
-        ui-action   (:ui/action params)
-        action-key  (normalize-action-key ui-action action-name)
-        status      (:status params)
-        value       (:value params)
+  (let [{:ui.result/keys [request-id action-name action-key status value error-message]}
+        (ui-actions/action-result {:request-id (:request-id params)
+                                   :action-name (:action-name params)
+                                   :ui-action (:ui/action params)
+                                   :status (:status params)
+                                   :value (:value params)
+                                   :error-message (:error-message params)})
         emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))
         nav-result* (volatile! nil)]
     (cond
-      (= status "cancelled")
+      (= status :cancelled)
       (do
         (emit/emit-command-result! emit! {:type "text"
                                           :message (str "Cancelled " action-name ".")})
         (response-frame (:id request) "frontend_action_result" true {:accepted true}))
 
-      (= status "failed")
+      (= status :failed)
       (do
         (emit/emit-command-result! emit! {:type "error"
-                                          :message (or (:error-message params)
+                                          :message (or error-message
                                                        (str "Frontend action failed: " action-name))})
         (response-frame (:id request) "frontend_action_result" true {:accepted true}))
 
