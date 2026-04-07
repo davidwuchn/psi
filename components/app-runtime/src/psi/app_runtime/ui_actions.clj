@@ -126,7 +126,7 @@
 (defn context-session-action
   [selector]
   (select-action
-   {:action-id :context-session-selector
+   {:action-id :select-session
     :action-name :select-session
     :prompt (:selector/prompt selector)
     :order :preserve
@@ -144,7 +144,7 @@
   [query-result]
   (let [sessions (vec (or (:psi.session/list query-result) []))]
     (select-action
-     {:action-id :resume-selector
+     {:action-id :select-resume-session
       :action-name :select-resume-session
       :prompt "Select a session to resume"
       :order :default
@@ -161,7 +161,7 @@
 (defn model-picker-action
   [models]
   (select-action
-   {:action-id :model-picker
+   {:action-id :select-model
     :action-name :select-model
     :prompt "Select a model"
     :order :default
@@ -181,7 +181,7 @@
    (thinking-picker-action thinking-levels))
   ([levels]
    (select-action
-    {:action-id :thinking-picker
+    {:action-id :select-thinking-level
      :action-name :select-thinking-level
      :prompt "Select a thinking level"
      :order :default

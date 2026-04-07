@@ -18,6 +18,7 @@
                                                  :action/session-id "s1"
                                                  :action/entry-id "e1"}}]})]
     (is (= :select (:ui/action-kind action)))
+    (is (= :select-session (:ui/action-id action)))
     (is (= :select-session (:ui/action-name action)))
     (is (= :preserve (:ui/order action)))
     (is (= ["Main" "⎇ Branch from here"]
@@ -44,6 +45,7 @@
   (let [query-result {:psi.session/list [{:psi.session-info/path "/tmp/a.ndedn"
                                           :psi.session-info/name "Alpha"}]}
         action (ui-actions/resume-session-action query-result)]
+    (is (= :select-resume-session (:ui/action-id action)))
     (is (= :select-resume-session (:ui/action-name action)))
     (is (= "/tmp/a.ndedn" (get-in action [:ui/items 0 :ui.item/value])))
     (is (= {:query query-result} (get-in action [:ui/legacy :payload])))))
@@ -54,8 +56,10 @@
                                                        :reasoning true}])
         thinking-action (ui-actions/thinking-picker-action)]
     (is (= :set-model (get-in model-action [:ui/on-submit :submit/kind])))
+    (is (= :select-model (:ui/action-id model-action)))
     (is (= :select-model (:ui/action-name model-action)))
     (is (= :set-thinking-level (get-in thinking-action [:ui/on-submit :submit/kind])))
+    (is (= :select-thinking-level (:ui/action-id thinking-action)))
     (is (= :select-thinking-level (:ui/action-name thinking-action)))
     (is (= ["off" "minimal" "low" "medium" "high" "xhigh"]
            (mapv :ui.item/value (:ui/items thinking-action))))))
