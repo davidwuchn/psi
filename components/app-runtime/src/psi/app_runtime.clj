@@ -61,6 +61,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.app-runtime.background-job-ui :as background-job-ui]
    [psi.app-runtime.projections :as projections]
    [psi.app-runtime.selectors :as selectors]
    [psi.app-runtime.ui-actions :as ui-actions]
@@ -511,6 +512,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
          _                (doseq [d diagnostics]
                             (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
          cwd              (or cwd (System/getProperty "user.dir"))
+         _                (background-job-ui/install-background-job-ui-refresh! ctx)
          ctx-files        (sys-prompt/discover-context-files cwd)
          sd               (ss/get-session-data-in ctx session-id)
          prompt-mode      (or (:prompt-mode sd) :lambda)

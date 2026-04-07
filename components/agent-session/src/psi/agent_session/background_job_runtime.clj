@@ -163,11 +163,17 @@
                   (catch clojure.lang.ArityException _
                     (send-msg ctx "assistant" content "background-job-terminal")))))))))))
 
+(defn- maybe-refresh-background-job-ui!
+  [ctx session-id]
+  (when-let [refresh-fn (some-> ctx :background-job-ui-refresh-fn deref)]
+    (refresh-fn ctx session-id)))
+
 (defn reconcile-and-emit-background-job-terminals-in!
   "Reconcile workflow-backed background jobs and emit any newly terminal job messages."
   [ctx session-id]
   (maybe-mark-workflow-jobs-terminal! ctx)
   (maybe-emit-background-job-terminal-messages! ctx session-id)
+  (maybe-refresh-background-job-ui! ctx session-id)
   (background-jobs-state-in ctx))
 
 (defn reconcile-workflow-background-jobs-in!
@@ -212,4 +218,5 @@
                                  "cancel requested"))
         (catch Exception _
           nil)))
+    (maybe-refresh-background-job-ui! ctx thread-id)
     job))

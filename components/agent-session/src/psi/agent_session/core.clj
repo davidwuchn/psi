@@ -248,7 +248,10 @@
                             ;; Atom holding (fn [text source]) that actually runs the agent loop.
                             ;; Set by the runtime layer (main/RPC) after bootstrap.
                             ;; Extensions use this to submit prompts that trigger real LLM calls.
-                            :extension-run-fn-atom (atom nil)}
+                            :extension-run-fn-atom (atom nil)
+                            ;; Optional runtime-owned hook for projecting background jobs into
+                            ;; adapter-neutral UI state after command/runtime transitions.
+                            :background-job-ui-refresh-fn (atom nil)}
                            (callback-fns mutations))
         _                 (dispatch-handlers/register-all! ctx0)
         actions-fn        (dispatch-handlers/make-actions-fn ctx0)

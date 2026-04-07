@@ -52,3 +52,7 @@
   [ctx session-id cmd-result]
   (when (contains? #{:text} (:type cmd-result))
     (refresh-background-jobs-ui! ctx session-id)))
+
+(defn install-background-job-ui-refresh!
+  [ctx]
+  (reset! (:background-job-ui-refresh-fn ctx) refresh-background-jobs-ui!))
