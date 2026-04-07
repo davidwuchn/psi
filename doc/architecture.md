@@ -1,11 +1,14 @@
 # Architecture
 
 ```text
-Engine (statecharts) → substrate
-Query  (EQL/Pathom3) → capability surface
-AI     (providers)   → streaming LLM layer
-Agent  (statechart)  → per-turn lifecycle
-TUI    (charm.clj)   → Elm Architecture terminal UI
+Engine      (statecharts) → substrate
+Query       (EQL/Pathom3) → capability surface
+AI          (providers)   → streaming LLM layer
+Agent       (statechart)  → per-turn lifecycle
+App Runtime (interactive) → shared adapter-neutral UI/session domain
+RPC         (transport)   → remote adapter over app-runtime
+TUI         (charm.clj)   → terminal adapter over app-runtime
+Emacs       (rpc client)  → editor adapter over app-runtime
 ```
 
 ## Components
@@ -16,10 +19,72 @@ TUI    (charm.clj)   → Elm Architecture terminal UI
 | `query`         | Pathom3 EQL registry, `query-in`                  |
 | `ai`            | Provider streaming, model registry (Anthropic, OpenAI) |
 | `agent-core`    | LLM agent lifecycle statechart + EQL resolvers    |
-| `agent-session` | Full coding-agent session: tools, extensions, OAuth, TUI |
+| `agent-session` | Full coding-agent session: tools, extensions, OAuth, canonical state |
+| `app-runtime`   | Shared interactive application runtime for adapter-neutral session/UI semantics |
 | `history`       | Git log resolvers                                 |
 | `introspection` | Engine queries itself — self-describing graph     |
-| `tui`           | JLine3 + charm.clj terminal UI, extension UI points |
+| `rpc`           | Transport, framing, subscriptions, request/response adaptation |
+| `tui`           | JLine3 + charm.clj terminal adapter               |
+| `emacs-ui`      | Emacs RPC client adapter                          |
+
+## Adapter convergence target
+
+The architecture target is:
+
+> `app-runtime` contains everything common between TUI and Emacs.
+> RPC is a transport layer on top of `app-runtime`, not a second home for
+> session or UI-domain logic.
+
+Current duplication pressure exists where the same user-visible question is
+answered in more than one adapter path, for example:
+- session selector/tree ordering and fork-point interleaving
+- footer/status semantic composition
+- picker definitions (`/tree`, `/resume`, `/model`, `/thinking`)
+- session navigation result shaping (`new` / `resume` / `switch` / `fork`)
+- background job and context snapshot presentation data
+
+### Convergence rule
+
+If both TUI and Emacs need the same answer, `app-runtime` should answer it once.
+Adapters should differ only in:
+- rendering
+- local interaction mechanics
+- transport/protocol concerns
+
+### Ownership target
+
+#### `app-runtime` owns
+- adapter-neutral session navigation operations
+- focus-scoped session operations parameterized by adapter-owned focus
+- selector/picker models and item ordering
+- footer semantic model
+- context snapshot / session tree model
+- canonical UI action/result vocabulary
+- transcript rehydration packages and other shared presentation-facing domain projections
+- shared public summaries for jobs, statuses, and extension UI state where both adapters need the same meaning
+
+#### `rpc` owns
+- transport framing
+- subscriptions and event delivery
+- request/response correlation
+- adaptation of `app-runtime` models onto the RPC protocol
+- RPC-local focus pointer only as transport-scoped adapter state
+
+RPC should not be the long-term home for selector semantics, footer semantics,
+or session navigation domain logic.
+
+#### `tui` owns
+- terminal layout
+- key handling
+- local widget/view state
+- adapter-specific rendering concerns
+
+#### `emacs-ui` owns
+- buffer rendering
+- minibuffer completion
+- overlays/faces
+- local widget/view state
+- adapter-specific rendering concerns
 
 ## EQL Introspection Tips
 
@@ -302,6 +367,20 @@ Current intentional boundary:
        and agent-core tool-result recording
   - the executor now owns only batch scheduling and deterministic ordered recording,
     not tool transaction semantics
+
+## Adapter convergence roadmap
+
+Near-term architectural direction:
+1. move shared selector/session-tree semantics into `app-runtime`
+2. move shared footer semantic projection into `app-runtime`
+3. define a canonical adapter-neutral picker/action vocabulary in `app-runtime`
+4. converge navigation result shaping and transcript rehydration packages into `app-runtime`
+5. leave RPC as protocol adaptation and adapters as rendering/mechanics
+
+What success looks like:
+- TUI and Emacs consume the same selector, footer, and navigation models
+- RPC projects shared runtime models onto transport events instead of owning their semantics
+- adapter bugs no longer require re-solving shared domain questions in multiple places
 
 ## Roadmap
 
