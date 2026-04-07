@@ -4,6 +4,10 @@
    All commands return data maps — no side effects, no printing.
    REPL and TUI are renderers of command results.
 
+   `:post-command-fn` in opts, when present, is invoked as:
+   `(post-command-fn ctx session-id cmd-result)` after command dispatch.
+   This is used by runtimes to project command-owned shared UI state.
+
    Result types:
      :text          — {:type :text :message string}
      :new-session   — {:type :new-session :message string :rehydrate {:messages [...] :tool-calls {...} :tool-order [...]}}
@@ -630,5 +634,8 @@
 (defn dispatch-in
   "Explicit session-targeted command dispatch over the shared pipeline."
   [ctx session-id text opts]
-  (dispatch* ctx session-id text opts))
+  (let [result (dispatch* ctx session-id text opts)]
+    (when-let [f (:post-command-fn opts)]
+      (f ctx session-id result))
+    result))
 
