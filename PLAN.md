@@ -450,15 +450,20 @@ Goal of the first implementation slice:
   - [x] context snapshot
   - [x] follow-up action hints
 - [x] add focused tests for navigation result semantics
+- [x] decision: `rename session` is not a navigation operation
+  - keep rename on the command/mutation path as metadata update
+  - do not force rename into `app_runtime.navigation`
 
 ##### 4B. Migrate RPC navigation handlers
 - [x] replace RPC-local navigation result shaping with app-runtime navigation results
 - [x] keep only protocol emission in RPC navigation paths
 - [x] remove duplicate rehydration package construction from RPC-local code where possible
+- [x] route frontend-action navigation submissions through shared navigation emission
 
 ##### 4C. Migrate TUI session transitions
 - [x] have TUI session-switch/new/fork flows consume canonical navigation result maps
 - [x] keep only TUI-local state updates/render effects outside the shared result semantics
+- [x] allow TUI transition restore helpers to accept legacy payloads or canonical nav results during migration
 
 #### Phase 5 — shared public summaries for jobs/context/status
 - [ ] identify remaining duplicated presentation-facing summaries across RPC and TUI
