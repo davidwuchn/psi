@@ -431,8 +431,8 @@ Goal of the first implementation slice:
 
 ##### 3C. Reuse action model in TUI and Emacs
 - [ ] map TUI picker flows onto canonical action model where practical
-- [ ] make Emacs generic selection handling consume canonical action model
-- [ ] reduce per-command selection branching in adapters
+- [x] make Emacs generic selection handling consume canonical action model
+- [x] reduce per-command selection branching in adapters
 
 #### Phase 4 — shared navigation result + rehydration model
 
