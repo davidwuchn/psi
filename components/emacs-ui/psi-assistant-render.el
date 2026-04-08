@@ -158,12 +158,17 @@ When CLEAR-ARCHIVED is non-nil, also clear archived thinking marker ranges."
   (concat psi-emacs--thinking-line-prefix (or text "") "\n"))
 
 (defun psi-emacs--apply-prefix-overlay (line-start prefix face)
-  "Apply high-priority FACE overlay for PREFIX at LINE-START."
+  "Apply high-priority FACE overlay for PREFIX at LINE-START.
+
+The overlay must exclude insertions at both boundaries. Tool rows and other
+transcript text are often inserted immediately before or after an existing
+`ψ:`/`User:` prefix. If boundary insertions are considered inside the overlay,
+the prefix face leaks onto unrelated later text."
   (let ((line-end (line-end-position))
         (prefix-end (+ line-start (length prefix))))
     (when (<= prefix-end line-end)
       (remove-overlays line-start prefix-end 'category 'psi-emacs-prefix)
-      (let ((ov (make-overlay line-start prefix-end nil nil t)))
+      (let ((ov (make-overlay line-start prefix-end nil t nil)))
         (overlay-put ov 'category 'psi-emacs-prefix)
         (overlay-put ov 'face face)
         (overlay-put ov 'priority 1000)

@@ -89,9 +89,99 @@
     (should-not (string-match-p "first" (buffer-string)))
     ;; Toggle to expanded
     (psi-emacs-toggle-tool-output-view)
-    ;; Expanded: accumulated text visible
-    (let ((buf (buffer-string)))
-      (should (string-match-p "final" buf)))))
+    ;; Expanded: accumulated text visible below the header line
+    (let* ((buf (buffer-string))
+           (header (string-match-p "t-acc success\n" buf))
+           (body (string-match-p "\nfinal\n" buf)))
+      (should header)
+      (should body)
+      (should (< header body)))))
+
+(ert-deftest psi-emacs-test-expanded-tool-output-keeps-header-and-body-on-separate-lines ()
+  "Expanded rows keep header/status on one line and body output below it."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-separate")
+                 (:tool-name . "bash")
+                 (:arguments . "{\"command\":\"ls\"}")
+                 (:result-text . "line one\nline two")))))
+    (psi-emacs-toggle-tool-output-view)
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p (regexp-quote "$ ls success\nline one\nline two\n") text)))))
+
+(ert-deftest psi-emacs-test-toggle-expanded-preserves-header-faces ()
+  "Expanding keeps summary and status faces confined to the header line."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-face")
+                 (:tool-name . "bash")
+                 (:arguments . "{\"command\":\"ls\"}")
+                 (:result-text . "body text")))))
+    (psi-emacs-toggle-tool-output-view)
+    (goto-char (point-min))
+    (search-forward "$ ls")
+    (let ((summary-face (get-text-property (1- (point)) 'face)))
+      (search-forward "success")
+      (let ((status-face (get-text-property (1- (point)) 'face)))
+        (search-forward "body text")
+        (let ((body-face (get-text-property (- (point) (length "text")) 'face))
+              (body-font-lock-face (get-text-property (- (point) (length "text")) 'font-lock-face)))
+          (should summary-face)
+          (should status-face)
+          (should (eq summary-face 'psi-emacs-tool-call-face))
+          (should (eq status-face 'psi-emacs-tool-success-face))
+          (should (eq body-face 'default))
+          (should (eq body-font-lock-face 'default)))))))
+
+(ert-deftest psi-emacs-test-toggle-preserves-adjacent-tool-rows ()
+  "Toggling expanded/collapsed must not make adjacent tool rows disappear."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-1") (:tool-name . "bash") (:arguments . "{\"command\":\"echo 1\"}") (:result-text . "ok1")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-2") (:tool-name . "bash") (:arguments . "{\"command\":\"echo 2\"}") (:result-text . "ok2")))))
+    (psi-emacs-toggle-tool-output-view)
+    (psi-emacs-toggle-tool-output-view)
+    (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+      (should (string-match-p (regexp-quote "$ echo 1 success") text))
+      (should (string-match-p (regexp-quote "$ echo 2 success") text))
+      (should (= 2 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))))
+
+(ert-deftest psi-emacs-test-tool-row-after-frozen-assistant-line-does-not-inherit-prefix-overlay ()
+  "Tool rows inserted after a frozen assistant line must not inherit the ψ: prefix overlay face."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; Create a live assistant line so a ψ: prefix overlay exists.
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta") (:data . ((:text . "I'll inspect the tree")))))
+    ;; Tool boundary freezes that line, then inserts a tool row immediately after it.
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-overlay")
+                 (:tool-name . "bash")
+                 (:arguments . "{\"command\":\"ls\"}")
+                 (:result-text . "out")))))
+    (psi-emacs-toggle-tool-output-view)
+    (let ((text (buffer-string)))
+      (goto-char (point-min))
+      (search-forward "$ ls")
+      (backward-char 1)
+      (let ((faces (list (face-at-point nil t)
+                         (get-char-property (point) 'face)
+                         (get-char-property (point) 'font-lock-face))))
+        (should-not (member 'psi-emacs-assistant-reply-face faces))
+        (should (eq (nth 2 faces) 'psi-emacs-tool-call-face))))))
 
 (ert-deftest psi-emacs-test-error-row-stays-collapsed-in-collapsed-mode ()
   "AC7: Error tool results do not auto-expand in collapsed mode."

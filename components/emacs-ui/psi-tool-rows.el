@@ -345,28 +345,49 @@ properties and recreate live markers. Returns updated row plist or ROW."
   (concat (propertize (or tool-summary "")
                       'face 'psi-emacs-tool-call-face
                       'font-lock-face 'psi-emacs-tool-call-face)
-          " "
+          (propertize " "
+                      'face 'default
+                      'font-lock-face 'default)
           (let ((status-face (psi-emacs--tool-status-face status)))
             (propertize (or status "")
                         'face status-face
                         'font-lock-face status-face))
-          "\n"))
+          (propertize "\n"
+                      'face 'default
+                      'font-lock-face 'default)))
+
+(defun psi-emacs--tool-body-string (text)
+  "Return TEXT with ANSI faces applied and explicit default baseline.
+
+Unstyled characters get an explicit default face so header/status faces never
+stick to the tool body during rerenders or toggles. ANSI-colored spans keep
+their original face properties."
+  (let* ((body (copy-sequence (psi-emacs--ansi-to-face (or text ""))))
+         (len (length body)))
+    (dotimes (i len)
+      (when (and (null (get-text-property i 'face body))
+                 (null (get-text-property i 'font-lock-face body)))
+        (add-text-properties i (1+ i)
+                             '(face default font-lock-face default)
+                             body)))
+    body))
 
 (defun psi-emacs--tool-row-string (tool-summary status text)
   "Build expanded tool row string from TOOL-SUMMARY STATUS and TEXT.
 
-ANSI sequences in TEXT are converted to Emacs faces."
-  (let* ((status-face (psi-emacs--tool-status-face status))
-         (prefix (concat (propertize (or tool-summary "")
-                                     'face 'psi-emacs-tool-call-face
-                                     'font-lock-face 'psi-emacs-tool-call-face)
-                         " "
-                         (propertize (or status "")
-                                     'face status-face
-                                     'font-lock-face status-face)
-                         ": "))
-         (body (psi-emacs--ansi-to-face text)))
-    (concat prefix body "\n")))
+The header stays on its own line and any tool output renders below it so
+header/status faces do not bleed into the body when toggled open. ANSI
+sequences in TEXT are converted to Emacs faces."
+  (let* ((header (psi-emacs--tool-row-header-string tool-summary status))
+         (body-text (or text "")))
+    (if (string-empty-p body-text)
+        header
+      (let ((body (psi-emacs--tool-body-string body-text)))
+        (concat header
+                body
+                (if (string-suffix-p "\n" body)
+                    ""
+                  (propertize "\n" 'face 'default 'font-lock-face 'default)))))))
 
 (defun psi-emacs--render-tool-row (tool-summary status accumulated-text mode)
   "Render tool row using TOOL-SUMMARY STATUS ACCUMULATED-TEXT and MODE."
@@ -587,10 +608,22 @@ This command is valid even when no tool rows exist."
                                (goto-char start-pos)
                                (delete-region start-pos end-pos)
                                (insert rendered)
-                               (psi-emacs--mark-region-read-only start-pos (point))
                                (set-marker end (point))
                                ;; Keep row boundary stable with projection/footer.
                                (set-marker-insertion-type end nil)
+                               ;; Adjacent row boundaries can collapse to the deleted
+                               ;; start position during rerender. Advance any other row
+                               ;; start markers that landed there to this row's new end
+                               ;; so toggle passes cannot make subsequent rows disappear.
+                               (maphash (lambda (other-id other-row)
+                                          (unless (equal other-id tool-id)
+                                            (let ((other-start (plist-get other-row :start)))
+                                              (when (and (markerp other-start)
+                                                         (marker-buffer other-start)
+                                                         (= (marker-position other-start) start-pos))
+                                                (set-marker other-start (point))))))
+                                        rows)
+                               (psi-emacs--mark-region-read-only start-pos (point))
                                (psi-emacs--sync-tool-row-region tool-id start end))))))))
                  rows))
       (psi-emacs--refresh-header-line))))

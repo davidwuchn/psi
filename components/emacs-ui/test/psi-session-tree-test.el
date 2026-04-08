@@ -319,7 +319,7 @@ summaries and made toggling body visibility ineffective after returning."
           (should-not (string-match-p "tool output" text))
           (psi-emacs-toggle-tool-output-view)
           (let ((expanded (buffer-string)))
-            (should (string-match-p "\$ ls success: tool output" expanded))))))))
+            (should (string-match-p "\$ ls success\ntool output" expanded))))))))
 
 (ert-deftest psi-tree-slash-command-no-op-when-already-active ()
   "'/tree <active-id>' appends a message and sends no RPC."
