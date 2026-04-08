@@ -8,6 +8,9 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(defvar psi-emacs--allow-protected-input-edit nil
+  "Non-nil while psi performs internal rewrites of the editable input area.")
+
 (defconst psi-emacs--startup-banner-line "ψ"
   "Deterministic startup banner line rendered before transcript content.")
 
@@ -31,16 +34,25 @@ Banner is rendered as a standalone first line (`ψ`)."
         (psi-emacs--mark-region-read-only (point-min) (point)))))))
 
 (defun psi-emacs--mark-region-read-only (start end)
-  "Mark transcript/output region START..END as read-only."
+  "Mark transcript/output region START..END as read-only.
+
+Use non-sticky end protection only, so insertion at a writable boundary just
+before a protected region stays editable (notably the compose area immediately
+before the projection/footer block)."
   (when (< start end)
-    (add-text-properties start end '(read-only t front-sticky (read-only) rear-nonsticky (read-only)))))
+    (let ((inhibit-read-only t)
+          (inhibit-modification-hooks t)
+          (psi-emacs--allow-protected-input-edit t))
+      (add-text-properties start end '(read-only t rear-nonsticky (read-only))))))
 
 (defun psi-emacs--input-read-only-filter (beg end)
   "Prevent edits outside compose input region between BEG and END.
 
 Programmatic frontend updates can bypass this guard by binding
-`inhibit-read-only' to non-nil around transcript mutations."
-  (unless inhibit-read-only
+`inhibit-read-only' or `psi-emacs--allow-protected-input-edit' during
+internal input rewrites."
+  (unless (or inhibit-read-only
+              psi-emacs--allow-protected-input-edit)
     (let* ((range (psi-emacs--input-range))
            (start (car range))
            (finish (cdr range)))
@@ -48,9 +60,36 @@ Programmatic frontend updates can bypass this guard by binding
                    (<= end finish))
         (signal 'text-read-only nil)))))
 
+(defun psi-emacs--clear-read-only-props-in-input-range (&optional start end)
+  "Remove read-only-related text properties from input area overlap START..END.
+
+When START/END are nil, scrub the full current input range."
+  (when psi-emacs--state
+    (let* ((range (psi-emacs--input-range))
+           (input-start (car range))
+           (input-end (cdr range))
+           (from (max input-start (or start input-start)))
+           (to (min input-end (or end input-end))))
+      (when (< from to)
+        (let ((inhibit-read-only t)
+              (inhibit-modification-hooks t)
+              (psi-emacs--allow-protected-input-edit t))
+          (remove-text-properties from
+                                  to
+                                  '(read-only nil
+                                    front-sticky nil
+                                    rear-nonsticky nil)))))))
+
+(defun psi-emacs--input-after-change-scrub (beg end _len)
+  "Keep the editable input area free of inherited read-only text properties."
+  (unless (or inhibit-read-only
+              psi-emacs--allow-protected-input-edit)
+    (psi-emacs--clear-read-only-props-in-input-range beg end)))
+
 (defun psi-emacs--install-input-read-only-guard ()
   "Install compose input-only edit guard in current psi buffer."
-  (add-hook 'before-change-functions #'psi-emacs--input-read-only-filter nil t))
+  (add-hook 'before-change-functions #'psi-emacs--input-read-only-filter nil t)
+  (add-hook 'after-change-functions #'psi-emacs--input-after-change-scrub nil t))
 
 (defun psi-emacs--streaming-p ()
   "Return non-nil when the frontend is in streaming mode."
@@ -149,6 +188,8 @@ When marker state drifted, attempt property-backed recovery first."
       (save-excursion
         (goto-char separator-start)
         (let ((inhibit-read-only t)
+              (inhibit-modification-hooks t)
+              (psi-emacs--allow-protected-input-edit t)
               (bol (line-beginning-position))
               (eol (line-end-position)))
           (delete-region bol (min (point-max) (1+ eol)))
@@ -182,23 +223,25 @@ When marker state drifted, attempt property-backed recovery first."
   "Ensure a dedicated input area exists before projection/footer content."
   (when psi-emacs--state
     (psi-emacs--install-input-read-only-guard)
-    (cond
-     ((psi-emacs--input-separator-marker-valid-p)
-      (let ((separator-pos (psi-emacs--input-separator-position)))
-        (when (and (integerp separator-pos)
-                   (> separator-pos (point-min)))
-          (psi-emacs--mark-region-read-only (1- separator-pos) separator-pos)))
-      (when (psi-emacs--input-separator-needs-refresh-p)
-        (psi-emacs--refresh-input-separator-line)))
-     (t
-      (let* ((input-start (psi-emacs--input-start-position))
-             (input-end (psi-emacs--draft-end-position))
-             (point-in-input? (and (>= (point) input-start)
-                                   (<= (point) input-end)))
-             (point-offset (and point-in-input? (- (point) input-start)))
-             (existing-input (buffer-substring-no-properties input-start input-end)))
-        (save-excursion
-          (let ((inhibit-read-only t))
+    (let ((inhibit-read-only t)
+          (inhibit-modification-hooks t)
+          (psi-emacs--allow-protected-input-edit t))
+      (cond
+       ((psi-emacs--input-separator-marker-valid-p)
+        (let ((separator-pos (psi-emacs--input-separator-position)))
+          (when (and (integerp separator-pos)
+                     (> separator-pos (point-min)))
+            (psi-emacs--mark-region-read-only (1- separator-pos) separator-pos)))
+        (when (psi-emacs--input-separator-needs-refresh-p)
+          (psi-emacs--refresh-input-separator-line)))
+       (t
+        (let* ((input-start (psi-emacs--input-start-position))
+               (input-end (psi-emacs--draft-end-position))
+               (point-in-input? (and (>= (point) input-start)
+                                     (<= (point) input-end)))
+               (point-offset (and point-in-input? (- (point) input-start)))
+               (existing-input (buffer-substring-no-properties input-start input-end)))
+          (save-excursion
             (goto-char input-start)
             (delete-region input-start input-end)
             (unless (or (bobp)
@@ -219,11 +262,12 @@ When marker state drifted, attempt property-backed recovery first."
                   (psi-emacs--mark-region-read-only (1- separator-start) separator-start)))
               (setf (psi-emacs-state-draft-anchor psi-emacs--state)
                     (copy-marker (point) nil))
-              (insert existing-input))))
-        (when point-in-input?
-          (goto-char (+ (psi-emacs--input-start-position)
-                        (min (or point-offset 0)
-                             (length existing-input))))))))))
+              (insert existing-input)))
+          (psi-emacs--clear-read-only-props-in-input-range)
+          (when point-in-input?
+            (goto-char (+ (psi-emacs--input-start-position)
+                          (min (or point-offset 0)
+                               (length existing-input)))))))))))
 
 (defun psi-emacs--input-range ()
   "Return dedicated input range as (START . END)."
@@ -306,10 +350,13 @@ legacy draft end behavior."
          (end (cdr range))
          (text* (or text "")))
     (save-excursion
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t)
+            (inhibit-modification-hooks t)
+            (psi-emacs--allow-protected-input-edit t))
         (goto-char start)
         (delete-region start end)
-        (insert text*)))
+        (insert text*)
+        (psi-emacs--clear-read-only-props-in-input-range start (+ start (length text*)))))
     (goto-char (+ start (length text*)))
     (psi-emacs--set-draft-anchor-to-end)))
 

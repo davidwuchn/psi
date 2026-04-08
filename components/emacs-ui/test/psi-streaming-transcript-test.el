@@ -1447,6 +1447,80 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
     (psi-emacs-next-input)
     (should (equal "draft" (psi-emacs--tail-draft-text)))))
 
+(ert-deftest psi-input-history-navigation-works-with-projection-present ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--history-record-input "first")
+    (psi-emacs--history-record-input "second")
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "latency 12ms")))))
+    (psi-emacs--replace-input-text "draft")
+    (goto-char (point-max))
+    (psi-emacs-previous-input)
+    (should (equal "second" (psi-emacs--tail-draft-text)))
+    (psi-emacs-previous-input)
+    (should (equal "first" (psi-emacs--tail-draft-text)))
+    (psi-emacs-next-input)
+    (should (equal "second" (psi-emacs--tail-draft-text)))
+    (psi-emacs-next-input)
+    (should (equal "draft" (psi-emacs--tail-draft-text)))))
+
+(ert-deftest psi-input-history-navigation-survives-guarded-before-change-hooks ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--history-record-input "first")
+    (psi-emacs--history-record-input "second")
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--replace-input-text "draft")
+    (add-hook 'before-change-functions
+              (lambda (_beg _end)
+                (unless psi-emacs--allow-protected-input-edit
+                  (signal 'text-read-only nil)))
+              nil
+              t)
+    (psi-emacs-previous-input)
+    (should (equal "second" (psi-emacs--tail-draft-text)))))
+
+(ert-deftest psi-input-area-scrubs-inherited-read-only-properties ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (let* ((range (psi-emacs--input-range))
+           (start (car range)))
+      (let ((inhibit-read-only t))
+        (insert (propertize "draft" 'read-only t)))
+      (should (get-text-property start 'read-only))
+      (psi-emacs--clear-read-only-props-in-input-range)
+      (should-not (get-text-property start 'read-only)))))
+
+(ert-deftest psi-projection-boundary-does-not-make-input-read-only ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "latency 12ms")))))
+    (let* ((range (psi-emacs--input-range))
+           (start (car range)))
+      (should-not (get-text-property start 'read-only))
+      (should-not (get-text-property start 'front-sticky))
+      (let ((inhibit-read-only t))
+        (goto-char start)
+        (insert "draft"))
+      (should (equal "draft" (psi-emacs--tail-draft-text))))))
+
 
 (provide 'psi-streaming-transcript-test)
 
