@@ -3,6 +3,9 @@
    [clojure.test :refer [deftest testing is]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.prompt-chain]
+   [psi.agent-session.prompt-request]
+   [psi.agent-session.prompt-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]))
 
@@ -123,4 +126,7 @@
       (is (some #(= :session/prompt-submit (:event-type %)) entries))
       (is (some #(= :session/prompt-prepare-request (:event-type %)) entries))
       (is (some #(= :session/prompt-record-response (:event-type %)) entries))
+      (is (some #(= :session/prompt-finish (:event-type %)) entries))
+      (is (= :idle (ss/sc-phase-in ctx session-id)))
+      (is (false? (:is-streaming (ss/get-session-data-in ctx session-id))))
       (is (= ["user" "assistant"] (mapv :role msgs))))))

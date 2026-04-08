@@ -102,8 +102,14 @@
 
   (register-core-handler!
    :session/prompt-finish
-   (fn [_ctx {:keys [turn-id terminal-result]}]
-     {:effects [{:effect/type :runtime/reconcile-and-emit-background-job-terminals}]
+   (fn [_ctx {:keys [session-id turn-id terminal-result]}]
+     {:effects [{:effect/type :runtime/dispatch-event
+                 :event-type :on-agent-done
+                 :event-data {:session-id session-id}
+                 :origin :core}
+                {:effect/type :runtime/reconcile-and-emit-background-job-terminals}
+                {:effect/type :statechart/send-event
+                 :event :session/reset}]
       :return {:finished? true
                :turn-id turn-id
                :turn-outcome (:execution-result/turn-outcome terminal-result)}}))

@@ -7,6 +7,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support])
   (:import
@@ -57,7 +58,7 @@
                        :execution-result/tool-calls []
                        :execution-result/stop-reason :stop})]
         (session/prompt-in! ctx session-id "hello"))
-      (is (= :streaming (ss/sc-phase-in ctx session-id)))
+      (is (= :idle (ss/sc-phase-in ctx session-id)))
       (let [entries   (dispatch/event-log-entries)
             submit-e  (first (filter #(= :session/prompt-submit (:event-type %)) entries))
             prompt-e  (first (filter #(= :session/prompt (:event-type %)) entries))
