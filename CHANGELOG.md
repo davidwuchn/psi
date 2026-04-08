@@ -103,7 +103,7 @@
   - `assistant/message` with empty content now falls back to `:error-message` when present.
   - Truly empty finalizations no longer clobber streamed text or inject blank assistant lines.
   - Replay path now also renders assistant top-level error messages.
-  - Updated tests in `components/emacs-ui/test/psi-test.el`.
+  - Updated Emacs frontend tests; the large `psi-test.el` suite was later split into focused files including `psi-buffer-lifecycle-test.el`, `psi-dispatch-test.el`, `psi-streaming-transcript-test.el`, `psi-tool-output-mode-test.el`, `psi-extension-ui-test.el`, `psi-capf-test.el`, and `psi-session-tree-test.el`.
 
 - λ Δ Added RPC transport tracing configuration with both CLI and graph control:
   - New CLI flag: `--rpc-trace-file <path>` (rpc-edn mode).

@@ -44,4 +44,4 @@
 
   test:emacs
   {:doc "Test emacs frontend (already working)"
-   :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-test.el -f ert-run-tests-batch-and-exit")}}}
+   :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-test-support.el -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-buffer-lifecycle-test.el -l components/emacs-ui/test/psi-dispatch-test.el -l components/emacs-ui/test/psi-streaming-transcript-test.el -l components/emacs-ui/test/psi-tool-output-mode-test.el -l components/emacs-ui/test/psi-extension-ui-test.el -l components/emacs-ui/test/psi-capf-test.el -l components/emacs-ui/test/psi-session-tree-test.el -f ert-run-tests-batch-and-exit")}}}
