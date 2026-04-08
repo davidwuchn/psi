@@ -3,7 +3,8 @@
   (:require
    [psi.agent-core.core :as agent]
    [psi.agent-session.commands :as commands]
-   [psi.agent-session.executor :as executor]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.events :as events]
@@ -21,7 +22,6 @@
         _            (when-not session-id
                        (throw (ex-info "no target session available for prompt"
                                        {:error-code "request/not-found"})))
-        run-loop-fn  (or (:run-agent-loop-fn session-deps) executor/run-agent-loop!)
         sync-on-git-head-change? (effective-sync-on-git-head-change? session-deps)
         on-new-session! (:on-new-session! session-deps)
         progress-q   (java.util.concurrent.LinkedBlockingQueue.)
@@ -84,21 +84,30 @@
                                     (emit/emit-session-snapshots! emit! ctx state session-id))
 
                                   :else
-                                  (let [_        (emit/emit-session-snapshots! emit! ctx state session-id)
-                                        {:keys [user-message]} (runtime/prepare-user-message-in! ctx session-id message images)
-                                        api-key  (runtime/resolve-api-key-in ctx session-id ai-model)
-                                        result   (runtime/run-agent-loop-in!
-                                                  ctx session-id nil ai-model [user-message]
-                                                  {:run-loop-fn   run-loop-fn
-                                                   :api-key       api-key
-                                                   :progress-queue progress-q
-                                                   :sync-on-git-head-change? sync-on-git-head-change?})]
+                                  (let [_           (emit/emit-session-snapshots! emit! ctx state session-id)
+                                        ;; Ensure session has the resolved model before prompt lifecycle
+                                        _           (dispatch/dispatch! ctx :session/set-model
+                                                                        {:session-id session-id
+                                                                         :model ai-model
+                                                                         :scope :session}
+                                                                        {:origin :core})
+                                        {:keys [text]} (runtime/expand-input-in ctx session-id message)
+                                        _           (runtime/safe-recover-memory! text)
+                                        api-key     (runtime/resolve-api-key-in ctx session-id ai-model)
+                                        _           (session/prompt-in! ctx session-id text images
+                                                                        {:progress-queue progress-q
+                                                                         :runtime-opts (cond-> {}
+                                                                                         api-key (assoc :api-key api-key))})
+                                        assistant   (session/last-assistant-message-in ctx session-id)]
                                     (streams/stop-progress-loop! {:stop? stop?
                                                                   :thread thread
                                                                   :progress-q progress-q
                                                                   :emit! emit!
                                                                   :session-id session-id})
-                                    (emit/emit-assistant-message! emit! session-id result)
+                                    (when assistant
+                                      (emit/emit-assistant-message! emit! session-id assistant))
+                                    (when sync-on-git-head-change?
+                                      (runtime/safe-maybe-sync-on-git-head-change! ctx session-id))
                                     (emit/emit-session-snapshots! emit! ctx state session-id))))
                               (catch Throwable t
                                 (emit! "error" {:error-code "runtime/failed"

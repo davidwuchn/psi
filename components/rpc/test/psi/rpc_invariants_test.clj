@@ -5,6 +5,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.runtime :as runtime]
    [psi.rpc :as rpc]
    [psi.rpc.events :as rpc.events]
@@ -164,29 +165,31 @@
       (is (= ["call-1"]
              (get-in rehydrate-event [:data :tool-order]))))))
 
-(deftest rpc-prompt-uses-explicit-run-loop-invariant-test
-  (testing "prompt agent-loop behavior comes from explicit session deps, not mutable state"
-    (let [[ctx _]       (create-session-context)
-          wrong-called? (atom false)
-          right-called? (atom false)
-          state         (atom {:ready? true
-                               :pending {}
-                               :rpc-ai-model {:provider "anthropic" :id "wrong" :supports-reasoning true}
-                               :run-agent-loop-fn (fn [& _]
-                                                    (reset! wrong-called? true)
-                                                    {:role "assistant"
-                                                     :content [{:type :text :text "wrong"}]})})
-          handler       (rpc/make-session-request-handler
-                         ctx
-                         {:rpc-ai-model {:provider "anthropic" :id "right" :supports-reasoning true}
-                          :run-agent-loop-fn (fn [& _]
-                                               (reset! right-called? true)
-                                               {:role "assistant"
-                                                :content [{:type :text :text "right"}]})})
-          input         (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
+(deftest rpc-prompt-uses-dispatch-lifecycle-invariant-test
+  (testing "prompt routes through dispatch-visible prompt lifecycle, not mutable executor"
+    (let [[ctx _]        (create-session-context)
+          lifecycle-used? (atom false)
+          state          (atom {:ready? true
+                                :pending {}
+                                :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}})
+          handler        (rpc/make-session-request-handler
+                          ctx
+                          {:rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}})
+          input          (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                              "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)
-                    runtime/resolve-api-key-in (fn [_ctx _session-id _model] nil)]
+                    runtime/resolve-api-key-in (fn [_ctx _session-id _model] nil)
+                    prompt-runtime/execute-prepared-request!
+                    (fn [_ai-ctx _ctx session-id _agent-ctx prepared _pq]
+                      (reset! lifecycle-used? true)
+                      {:execution-result/turn-id (:prepared-request/id prepared)
+                       :execution-result/session-id session-id
+                       :execution-result/assistant-message {:role "assistant"
+                                                            :content [{:type :text :text "done"}]
+                                                            :stop-reason :stop
+                                                            :timestamp (java.time.Instant/now)}
+                       :execution-result/turn-outcome :turn.outcome/stop
+                       :execution-result/tool-calls []
+                       :execution-result/stop-reason :stop})]
         (run-loop input handler state 250)
-        (is (true? @right-called?))
-        (is (false? @wrong-called?))))))
+        (is (true? @lifecycle-used?))))))

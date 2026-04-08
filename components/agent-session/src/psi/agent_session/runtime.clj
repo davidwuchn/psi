@@ -70,14 +70,16 @@
         {:text      text
          :expansion nil}))))
 
-(defn- safe-recover-memory!
+(defn safe-recover-memory!
+  "Trigger memory recovery for the given query text. No-op on failure."
   [query-text]
   (try
     (memory-runtime/recover-for-query! query-text)
     (catch Exception _
       nil)))
 
-(defn- safe-remember-session-message!
+(defn safe-remember-session-message!
+  "Record a session message to memory. No-op on failure."
   [_ctx session-id msg]
   (try
     (memory-runtime/remember-session-message!

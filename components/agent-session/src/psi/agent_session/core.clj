@@ -368,10 +368,16 @@
 
    The slice is now shared by initial prompt submission and tool-result
    continuation. The active path uses a runtime execute-and-record bridge
-   between prepared request projection and recorded turn outcome."
+   between prepared request projection and recorded turn outcome.
+
+   opts (optional map):
+     :progress-queue  — LinkedBlockingQueue for streaming progress events
+     :runtime-opts    — map passed through to request preparation (e.g. {:api-key k})"
   ([ctx session-id text]
    (prompt-in! ctx session-id text nil))
   ([ctx session-id text images]
+   (prompt-in! ctx session-id text images nil))
+  ([ctx session-id text images opts]
    (when-not (ss/idle-in? ctx session-id)
      (throw (ex-info "Session is not idle" {:phase (ss/sc-phase-in ctx session-id)})))
    (let [user-msg {:role      "user"
@@ -384,10 +390,24 @@
          turn-id  (:turn-id submit-r)
          _        (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :core})]
      (dispatch/dispatch! ctx :session/prompt-prepare-request
-                         {:session-id session-id
-                          :turn-id    turn-id
-                          :user-msg   user-msg}
+                         (cond-> {:session-id session-id
+                                  :turn-id    turn-id
+                                  :user-msg   user-msg}
+                           (:progress-queue opts)
+                           (assoc :progress-queue (:progress-queue opts))
+                           (:runtime-opts opts)
+                           (assoc :runtime-opts (:runtime-opts opts)))
                          {:origin :core}))))
+
+(defn last-assistant-message-in
+  "Return the last assistant message from the session journal, or nil."
+  [ctx session-id]
+  (let [journal (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal])]
+    (some (fn [entry]
+            (when (and (= :message (:kind entry))
+                       (= "assistant" (:role (get-in entry [:data :message]))))
+              (get-in entry [:data :message])))
+          (rseq (vec journal)))))
 
 (defn steer-in!
   "Inject a steering message while the agent is streaming for `session-id`.

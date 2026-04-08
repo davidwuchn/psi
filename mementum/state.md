@@ -114,10 +114,10 @@ Bootstrapped on 2026-04-02.
 
 ## Recent relevant commits
 - `0347a1bb` — ⚒ prompt-finish: wire terminal statechart completion
+- `1e6e5a0c` — ◈ state: prompt-finish wired, lifecycle scaffold complete
 - `3c5e55af` — ⚒ emacs: de-emphasize tool output body
 - `5a40f9b7` — ⊘ emacs: fix tool row overlay face bleed
 - `b568aa5c` — ⊘ emacs: restore bare /tree picker flow
-- `a3326fe5` — ◈ state: refresh post-convergence handoff
 
 ## Prompt lifecycle convergence — current status
 - The prepare → execute → record → finish scaffold is now fully wired end-to-end.
@@ -126,11 +126,15 @@ Bootstrapped on 2026-04-02.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 
 ## Suggested next step
-- The prompt lifecycle scaffold is complete. The new path works end-to-end through tests.
-- Best next move: **migrate one real caller from old executor path onto the new prompt path**.
-- Best candidate: RPC prompt flow in `components/rpc/src/psi/rpc/session/prompt.clj` — it currently uses `runtime/run-agent-loop-in!` and is the main user-visible path.
-- This would reduce split-brain architecture and prove the new path works under real I/O.
-- Alternative next slice: begin collapsing system prompt / profile / skill injection into request preparation.
+- RPC prompt flow is now migrated onto the new prompt lifecycle path.
+- The main user-visible RPC path now uses prompt lifecycle orchestration instead of direct `run-agent-loop-in!`.
+- Migration follow-on landed with compatibility fixes:
+  - `prompt-in!` now accepts `:progress-queue` and `:runtime-opts`
+  - RPC resolves the effective model, stores it on the session for the turn, and uses prompt lifecycle execution
+  - prepared-request API key resolution now survives continuation/tool-use turns via session-stored runtime key fallback
+  - prompt recording updates context usage from execution results
+- Best next move: migrate the next real caller off old executor path, likely app-runtime/TUI prompt flow or extension/startup prompt entry points.
+- Parallel refinement slice: converge remaining prompt semantics (system prompt / profile / skill injection) into request preparation.
 - Keep LSP follow-on work as a secondary thread.
 
 ## Notes for future ψ

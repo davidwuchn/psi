@@ -8,6 +8,7 @@
    the current executor-owned runtime path."
   (:require
    [psi.agent-session.conversation :as conv]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.session-state :as ss]))
 
 (defn journal->provider-messages
@@ -20,19 +21,30 @@
                   (get-in entry [:data :message]))))
         journal))
 
+(defn- resolve-api-key
+  "Resolve API key: prefer explicit runtime-opts, fall back to session-stored
+   key from prior turn, fall back to oauth context."
+  [ctx session-data runtime-opts]
+  (or (:api-key runtime-opts)
+      (:runtime-api-key session-data)
+      (when-let [oauth-ctx (:oauth-ctx ctx)]
+        (when-let [provider (:provider (:model session-data))]
+          (oauth/get-api-key oauth-ctx provider)))))
+
 (defn session->request-options
   "Build request/runtime options from canonical session data.
    Initial scaffold only returns the currently relevant keys."
-  [session-data runtime-opts]
-  (cond-> {}
-    (contains? session-data :thinking-level)
-    (assoc :thinking-level (:thinking-level session-data))
+  [ctx session-data runtime-opts]
+  (let [api-key (resolve-api-key ctx session-data runtime-opts)]
+    (cond-> {}
+      (contains? session-data :thinking-level)
+      (assoc :thinking-level (:thinking-level session-data))
 
-    (contains? runtime-opts :api-key)
-    (assoc :api-key (:api-key runtime-opts))
+      (some? api-key)
+      (assoc :api-key api-key)
 
-    (contains? runtime-opts :llm-stream-idle-timeout-ms)
-    (assoc :llm-stream-idle-timeout-ms (:llm-stream-idle-timeout-ms runtime-opts))))
+      (contains? runtime-opts :llm-stream-idle-timeout-ms)
+      (assoc :llm-stream-idle-timeout-ms (:llm-stream-idle-timeout-ms runtime-opts)))))
 
 (defn build-prompt-layers
   "Return prompt layers for the prepared request.
@@ -58,7 +70,7 @@
         journal        (or (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal]) [])
         messages       (journal->provider-messages journal)
         tool-schemas   (or (:tool-schemas session-data) [])
-        ai-options     (session->request-options session-data (or runtime-opts {}))
+        ai-options     (session->request-options ctx session-data (or runtime-opts {}))
         cache-bps      (set (or (:cache-breakpoints session-data) #{}))
         system-prompt  (:system-prompt session-data)
         prompt-layers  (build-prompt-layers session-data opts)

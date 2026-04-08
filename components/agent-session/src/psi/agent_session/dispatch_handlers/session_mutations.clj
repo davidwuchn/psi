@@ -45,17 +45,20 @@
      (let [prepared-request ((:build-prepared-request-fn ctx)
                              ctx session-id {:turn-id turn-id
                                              :user-message user-msg
-                                             :runtime-opts runtime-opts})]
+                                             :runtime-opts runtime-opts})
+           api-key (get-in prepared-request [:prepared-request/ai-options :api-key])]
        {:root-state-update
         (session/session-update
          session-id
-         #(assoc % :last-prepared-request-summary
-                 {:turn-id             turn-id
-                  :system-prompt-chars (count (or (:prepared-request/system-prompt prepared-request) ""))
-                  :message-count       (count (:prepared-request/messages prepared-request))
-                  :tool-count          (count (:prepared-request/tools prepared-request))
-                  :cache-breakpoints   (get-in prepared-request [:prepared-request/session-snapshot :cache-breakpoints])
-                  :prepared-at         (now-inst)}))
+         #(cond-> (assoc % :last-prepared-request-summary
+                         {:turn-id             turn-id
+                          :system-prompt-chars (count (or (:prepared-request/system-prompt prepared-request) ""))
+                          :message-count       (count (:prepared-request/messages prepared-request))
+                          :tool-count          (count (:prepared-request/tools prepared-request))
+                          :cache-breakpoints   (get-in prepared-request [:prepared-request/session-snapshot :cache-breakpoints])
+                          :prepared-at         (now-inst)})
+              ;; Persist resolved API key so continuations can read it
+            api-key (assoc :runtime-api-key api-key)))
         :effects [{:effect/type :runtime/prompt-execute-and-record
                    :prepared-request prepared-request
                    :progress-queue   progress-queue}]
@@ -72,12 +75,30 @@
                                  :progress-queue progress-queue}
                           (= next-event :session/prompt-finish)
                           (assoc :turn-id (:execution-result/turn-id execution-result)
-                                 :terminal-result execution-result))]
+                                 :terminal-result execution-result))
+           ;; Context usage update from execution result
+           usage  (:execution-result/usage execution-result)
+           tokens (when (map? usage)
+                    (let [total (or (:total-tokens usage)
+                                    (+ (or (:input-tokens usage) 0)
+                                       (or (:output-tokens usage) 0)
+                                       (or (:cache-read-tokens usage) 0)
+                                       (or (:cache-write-tokens usage) 0)))]
+                      (when (and (number? total) (pos? total)) total)))
+           sd     (when tokens (session/get-session-data-in ctx session-id))
+           window (when sd (:context-window sd))]
        (cond-> result
          next-event
          (update :effects (fnil conj []) {:effect/type :runtime/dispatch-event
                                           :event-type next-event
                                           :event-data next-payload
+                                          :origin :core})
+         (and tokens (number? window) (pos? window))
+         (update :effects (fnil conj []) {:effect/type :runtime/dispatch-event
+                                          :event-type :session/update-context-usage
+                                          :event-data {:session-id session-id
+                                                       :tokens tokens
+                                                       :window window}
                                           :origin :core})))))
 
   (register-core-handler!
@@ -225,8 +246,8 @@
    :session/set-active-tools
    (fn [_ctx {:keys [session-id tool-maps]}]
      {:root-state-update (session/session-update session-id #(assoc %
-                                                               :active-tools (->> tool-maps (map :name) set)
-                                                               :tool-schemas (vec tool-maps)))
+                                                                    :active-tools (->> tool-maps (map :name) set)
+                                                                    :tool-schemas (vec tool-maps)))
       :effects [{:effect/type :runtime/agent-set-tools
                  :tool-maps tool-maps}
                 {:effect/type :runtime/refresh-system-prompt}]})))
@@ -236,10 +257,10 @@
    :session/startup-bootstrap-begin
    (fn [_ctx {:keys [session-id started-at]}]
      {:root-state-update (session/session-update session-id #(assoc %
-                                                               :startup-bootstrap-started-at started-at
-                                                               :startup-bootstrap-completed? false
-                                                               :startup-bootstrap-completed-at nil
-                                                               :startup-message-ids []))}))
+                                                                    :startup-bootstrap-started-at started-at
+                                                                    :startup-bootstrap-completed? false
+                                                                    :startup-bootstrap-completed-at nil
+                                                                    :startup-message-ids []))}))
 
   (register-core-handler!
    :session/record-startup-message-id
@@ -272,9 +293,9 @@
    :session/record-extension-prompt
    (fn [_ctx {:keys [session-id source delivery at]}]
      {:root-state-update (session/session-update session-id #(assoc %
-                                                               :extension-last-prompt-source   (some-> source str)
-                                                               :extension-last-prompt-delivery delivery
-                                                               :extension-last-prompt-at       at))}))
+                                                                    :extension-last-prompt-source   (some-> source str)
+                                                                    :extension-last-prompt-delivery delivery
+                                                                    :extension-last-prompt-at       at))}))
 
   (register-core-handler!
    :session/retarget-runtime-prompt-metadata
