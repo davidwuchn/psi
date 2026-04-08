@@ -1,6 +1,6 @@
 (ns psi.agent-session.extensions-post-tool-api-test
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is]]
    [psi.agent-session.extensions :as ext]
    [psi.extension-test-helpers.nullable-api :as nullable]))
 

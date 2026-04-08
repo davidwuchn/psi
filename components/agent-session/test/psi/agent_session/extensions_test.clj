@@ -486,6 +486,23 @@
           api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
       (is (= {:echo [:x]} ((:query api) [:x])))))
 
+  (testing "API :list-services delegates to runtime query fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          services    [{:psi.service/key [:lsp "/repo"]
+                        :psi.service/status :running}]
+          runtime-fns {:query-fn (fn [q]
+                                   (is (= [{:psi.service/services [:psi.service/key
+                                                                   :psi.service/status
+                                                                   :psi.service/command
+                                                                   :psi.service/cwd
+                                                                   :psi.service/transport
+                                                                   :psi.service/ext-path]}]
+                                          q))
+                                   {:psi.service/services services})}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= services ((:list-services api))))))
+
   (testing "API :ui-type delegates to runtime ui-type fn"
     (let [reg         (ext/create-registry)
           _           (ext/register-extension-in! reg "/ext/test")
