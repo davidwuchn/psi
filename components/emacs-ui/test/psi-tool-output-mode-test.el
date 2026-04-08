@@ -136,8 +136,8 @@
           (should status-face)
           (should (eq summary-face 'psi-emacs-tool-call-face))
           (should (eq status-face 'psi-emacs-tool-success-face))
-          (should (eq body-face 'default))
-          (should (eq body-font-lock-face 'default)))))))
+          (should (eq body-face 'psi-emacs-tool-output-face))
+          (should (eq body-font-lock-face 'psi-emacs-tool-output-face)))))))
 
 (ert-deftest psi-emacs-test-toggle-preserves-adjacent-tool-rows ()
   "Toggling expanded/collapsed must not make adjacent tool rows disappear."

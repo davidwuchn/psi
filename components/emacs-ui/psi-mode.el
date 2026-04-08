@@ -51,6 +51,11 @@
   "Face for errored tool status labels."
   :group 'psi-emacs)
 
+(defface psi-emacs-tool-output-face
+  '((t :inherit shadow))
+  "Face for de-emphasized tool output body text."
+  :group 'psi-emacs)
+
 (defface psi-emacs-error-line-face
   '((t :inherit error))
   "Face for persistent transcript error lines."

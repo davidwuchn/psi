@@ -15,7 +15,7 @@ Bootstrapped on 2026-04-02.
 
 ## Current work state
 - The adapter-convergence cleanup thread has now landed the remaining targeted ownership shifts for shared interactive semantics.
-- New follow-on fix landed in Emacs tool rows: expanded tool output now renders on lines below the tool summary/status header instead of inline; tool body text now gets an explicit default-face baseline so summary/status faces do not bleed into output; and a `ψ:` prefix overlay boundary bug was fixed so tool rows inserted at assistant/tool boundaries no longer inherit the assistant prefix face. Toggle rerenders still preserve adjacent row boundaries so rows no longer disappear.
+- New follow-on fix landed in Emacs tool rows: expanded tool output now renders on lines below the tool summary/status header instead of inline; tool body text now gets an explicit de-emphasized baseline face (`psi-emacs-tool-output-face`) so summary/status faces do not bleed into output; and a `ψ:` prefix overlay boundary bug was fixed so tool rows inserted at assistant/tool boundaries no longer inherit the assistant prefix face. Toggle rerenders still preserve adjacent row boundaries so rows no longer disappear.
 - Recent completed convergence work now includes:
   - unified RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
   - expanded explicit RPC session routing so more ops carry `session-id` through request handling instead of relying on adapter focus inference

@@ -357,18 +357,19 @@ properties and recreate live markers. Returns updated row plist or ROW."
                       'font-lock-face 'default)))
 
 (defun psi-emacs--tool-body-string (text)
-  "Return TEXT with ANSI faces applied and explicit default baseline.
+  "Return TEXT with ANSI faces applied and explicit de-emphasized baseline.
 
-Unstyled characters get an explicit default face so header/status faces never
-stick to the tool body during rerenders or toggles. ANSI-colored spans keep
-their original face properties."
+Unstyled characters get `psi-emacs-tool-output-face' so header/status faces
+never stick to the tool body during rerenders or toggles. ANSI-colored spans
+keep their original face properties."
   (let* ((body (copy-sequence (psi-emacs--ansi-to-face (or text ""))))
          (len (length body)))
     (dotimes (i len)
       (when (and (null (get-text-property i 'face body))
                  (null (get-text-property i 'font-lock-face body)))
         (add-text-properties i (1+ i)
-                             '(face default font-lock-face default)
+                             '(face psi-emacs-tool-output-face
+                               font-lock-face psi-emacs-tool-output-face)
                              body)))
     body))
 
