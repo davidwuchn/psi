@@ -112,36 +112,28 @@ Bootstrapped on 2026-04-02.
   - projected background-job widgets render from shared UI projection state
 
 ## Recent relevant commits
+- `b568aa5c` — ⊘ emacs: restore bare /tree picker flow
+- `a3326fe5` — ◈ state: refresh post-convergence handoff
 - `a9b637d1` — ⚒ cleanup: remove obsolete handshake and tree label compatibility
 - `6e48a54a` — ⚒ docs: describe context widget projection ownership
 - `a09cee36` — ⚒ context: project canonical session-tree widget from backend
-- `2fd49ae3` — ⚒ docs: reflect shared session summary and subscribe bootstrap
-- `6825ebd7` — ⚒ rpc: remove handshake context bootstrap event path
-- `bcb90af0` — ⚒ session-summary: share header and diagnostics fragments
-- `70bf3e24` — ⚒ footer: expose structured stats parts for emacs alignment
 
 ## Suggested next step
-- The originally targeted adapter-convergence cleanup slice is done.
-- A small but important follow-on regression was fixed in the Emacs frontend: bare `/tree` stopped opening its picker even though `/tree <session-id>` still worked.
-- Root cause was a combination of:
-  - prompt-opening frontend actions arriving on the RPC event/process-filter path and needing deferral
-  - a stale loaded `psi-events.el` in the live Emacs session still using legacy frontend-action candidate mapping (`context-session-selector`) instead of canonical action names (`select-session`)
-- Fix/update applied:
-  - `components/emacs-ui/psi-lifecycle.el` now defers prompt-opening RPC events (`ui/frontend-action-requested`, `ui/dialog-requested`) onto an idle-timer path anchored to the psi window/frame when available
-  - `components/emacs-ui/test/psi-test.el` now includes a regression test proving frontend-action prompting is deferred out of the process-filter path
-  - reloading `components/emacs-ui/psi-events.el` in the live Emacs session was required so canonical `:ui/action` candidate mapping took effect
-- Verification:
-  - Emacs test suite passed after the change
-  - live Emacs confirmed bare `/tree` and `/new` working again after reloading `psi-events.el`
-- Best next move is now to switch out of convergence cleanup and onto whichever active thread now has highest leverage, likely one of:
-  - prompt lifecycle architectural convergence (`prepare -> execute -> record`)
-  - dispatch trace follow-on decisions
-  - LSP integration follow-on simplification/telemetry decisions
-- Before doing more convergence work, prefer checking `PLAN.md` for whichever non-convergence thread is now most active.
+- The targeted adapter-convergence cleanup thread is done, including the bare `/tree` Emacs regression follow-on.
+- `PLAN.md` has now been pruned so active work starts at `Prompt lifecycle architectural convergence`; the completed convergence plan was removed per the file's own rule.
+- Best next move is to begin the prompt lifecycle convergence slice rather than continue cleanup work.
+- Immediate highest-leverage target:
+  - make prompt flow fully explicit as `prepare -> execute -> record`
+- First concrete slice to take from `PLAN.md`:
+  - extract a pure prepared-request projection from canonical session state
+  - route prompt execution through dispatch-visible `:session/prompt-prepare-request`
+  - make execution consume the prepared artifact instead of ambient recomputation
+  - record the assistant/tool outcome deterministically through `:session/prompt-record-response`
+- Keep dispatch trace and LSP follow-on work as secondary threads unless prompt lifecycle is blocked.
 
 ## Notes for future ψ
-- `PLAN.md` is still the main active-work tracker.
-- For this just-finished architectural thread, trust the recent commits and the current docs over older state notes.
+- `PLAN.md` is the main active-work tracker and now begins with prompt lifecycle work; treat that as the current primary thread.
+- For the just-finished adapter-convergence thread, trust the recent commits and the current docs over older state notes.
 - `ui/frontend-action-requested` should be treated as a canonical `:ui/action` contract; do not reintroduce payload duplication or legacy action-name compatibility without a deliberate compatibility decision.
 - Background jobs should now be understood in three layers:
   - canonical summary text/maps in `app_runtime.background_jobs`
