@@ -122,7 +122,18 @@ Bootstrapped on 2026-04-02.
 
 ## Suggested next step
 - The originally targeted adapter-convergence cleanup slice is done.
-- Best next move is to switch out of convergence cleanup and onto whichever active thread now has highest leverage, likely one of:
+- A small but important follow-on regression was fixed in the Emacs frontend: bare `/tree` stopped opening its picker even though `/tree <session-id>` still worked.
+- Root cause was a combination of:
+  - prompt-opening frontend actions arriving on the RPC event/process-filter path and needing deferral
+  - a stale loaded `psi-events.el` in the live Emacs session still using legacy frontend-action candidate mapping (`context-session-selector`) instead of canonical action names (`select-session`)
+- Fix/update applied:
+  - `components/emacs-ui/psi-lifecycle.el` now defers prompt-opening RPC events (`ui/frontend-action-requested`, `ui/dialog-requested`) onto an idle-timer path anchored to the psi window/frame when available
+  - `components/emacs-ui/test/psi-test.el` now includes a regression test proving frontend-action prompting is deferred out of the process-filter path
+  - reloading `components/emacs-ui/psi-events.el` in the live Emacs session was required so canonical `:ui/action` candidate mapping took effect
+- Verification:
+  - Emacs test suite passed after the change
+  - live Emacs confirmed bare `/tree` and `/new` working again after reloading `psi-events.el`
+- Best next move is now to switch out of convergence cleanup and onto whichever active thread now has highest leverage, likely one of:
   - prompt lifecycle architectural convergence (`prepare -> execute -> record`)
   - dispatch trace follow-on decisions
   - LSP integration follow-on simplification/telemetry decisions

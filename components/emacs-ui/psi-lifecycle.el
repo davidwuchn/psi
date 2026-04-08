@@ -122,23 +122,58 @@
           (psi-emacs--set-run-state psi-emacs--state 'error))))
     (message "psi rpc error [%s]: %s" code message-text)))
 
+(defun psi-emacs--defer-rpc-event (buffer frame)
+  "Handle prompt-opening rpc FRAME on the next idle turn for BUFFER.
+
+This keeps minibuffer/UI prompting out of the process filter path and anchors
+prompting to the psi window/frame when one is visible." 
+  (let ((state psi-emacs--state))
+    (run-with-idle-timer
+     0 nil
+     (lambda ()
+       (when (buffer-live-p buffer)
+         (let* ((window (get-buffer-window buffer t))
+                (frame* (and (window-live-p window) (window-frame window))))
+           (with-current-buffer buffer
+             (when (eq state psi-emacs--state)
+               (condition-case err
+                   (cond
+                    ((and (frame-live-p frame*) (window-live-p window))
+                     (with-selected-frame frame*
+                       (select-frame-set-input-focus frame*)
+                       (with-selected-window window
+                         (psi-emacs--handle-rpc-event frame))))
+                    ((window-live-p window)
+                     (with-selected-window window
+                       (psi-emacs--handle-rpc-event frame)))
+                    (t
+                     (psi-emacs--handle-rpc-event frame)))
+                 (error
+                  (message "psi deferred rpc event failed [%s]: %s"
+                           (alist-get :event frame nil nil #'equal)
+                           (error-message-string err))))))))))))
+
 (defun psi-emacs--on-rpc-event (buffer frame)
   "Handle rpc event FRAME for BUFFER, keeping errors out of transcript."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let ((event (alist-get :event frame nil nil #'equal))
             (data (alist-get :data frame nil nil #'equal)))
-        (if (equal event "error")
-            (psi-emacs--on-rpc-error
-             buffer
-             (or (alist-get :code data nil nil #'equal)
-                 (alist-get :error-code data nil nil #'equal)
-                 "rpc/error")
-             (or (alist-get :message data nil nil #'equal)
-                 (alist-get :error-message data nil nil #'equal)
-                 "rpc error")
-             frame)
-          (psi-emacs--handle-rpc-event frame))))))
+        (cond
+         ((equal event "error")
+          (psi-emacs--on-rpc-error
+           buffer
+           (or (alist-get :code data nil nil #'equal)
+               (alist-get :error-code data nil nil #'equal)
+               "rpc/error")
+           (or (alist-get :message data nil nil #'equal)
+               (alist-get :error-message data nil nil #'equal)
+               "rpc error")
+           frame))
+         ((member event '("ui/dialog-requested" "ui/frontend-action-requested"))
+          (psi-emacs--defer-rpc-event buffer frame))
+         (t
+          (psi-emacs--handle-rpc-event frame)))))))
 
 (defun psi-emacs--start-rpc-client (buffer)
   "Start rpc-edn client for BUFFER and wire callbacks."

@@ -1296,6 +1296,39 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-on-rpc-event-defers-frontend-action-prompts-out-of-process-filter-path ()
+  "Frontend action prompts should be deferred off the process filter path.
+
+Regression: bare `/tree` now arrives as `ui/frontend-action-requested`. Prompting
+synchronously from the RPC event callback can make Emacs appear to do nothing."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let* ((scheduled-fn nil)
+           (handled nil)
+           (frame '((:event . "ui/frontend-action-requested")
+                    (:data . ((:request-id . "req-tree")
+                              (:action-name . "select-session")
+                              (:ui/action . ((:ui/action-name . :select-session)
+                                             (:ui/prompt . "Select a live session")
+                                             (:ui/items . []))))))))
+      (cl-letf (((symbol-function 'run-with-idle-timer)
+                 (lambda (_secs _repeat fn &rest _args)
+                   (setq scheduled-fn fn)
+                   'fake-timer))
+                ((symbol-function 'psi-emacs--handle-rpc-event)
+                 (lambda (frm)
+                   (setq handled frm)))
+                ((symbol-function 'get-buffer-window)
+                 (lambda (&rest _args) nil))
+                ((symbol-function 'frame-live-p)
+                 (lambda (&rest _args) nil)))
+        (psi-emacs--on-rpc-event (current-buffer) frame)
+        (should (null handled))
+        (should (functionp scheduled-fn))
+        (funcall scheduled-fn)
+        (should (equal frame handled))))))
+
 (ert-deftest psi-resume-session-candidates-sort-newest-first-by-modified ()
   (let* ((sessions (list '((:psi.session-info/path . "/tmp/sessions/older.ndedn")
                            (:psi.session-info/name . "Older")
