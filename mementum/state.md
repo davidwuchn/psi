@@ -113,24 +113,25 @@ Bootstrapped on 2026-04-02.
   - projected background-job widgets render from shared UI projection state
 
 ## Recent relevant commits
+- `0347a1bb` — ⚒ prompt-finish: wire terminal statechart completion
+- `3c5e55af` — ⚒ emacs: de-emphasize tool output body
+- `5a40f9b7` — ⊘ emacs: fix tool row overlay face bleed
 - `b568aa5c` — ⊘ emacs: restore bare /tree picker flow
 - `a3326fe5` — ◈ state: refresh post-convergence handoff
-- `a9b637d1` — ⚒ cleanup: remove obsolete handshake and tree label compatibility
-- `6e48a54a` — ⚒ docs: describe context widget projection ownership
-- `a09cee36` — ⚒ context: project canonical session-tree widget from backend
+
+## Prompt lifecycle convergence — current status
+- The prepare → execute → record → finish scaffold is now fully wired end-to-end.
+- `prompt-finish` drives terminal statechart completion: dispatches `:on-agent-done`, sends `:session/reset` to statechart, reconciles background jobs. Session returns to `:idle` with `is-streaming false`.
+- Tests prove: submit → prepare → execute → record → finish → idle, including tool-use continuation paths.
+- All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 
 ## Suggested next step
-- The targeted adapter-convergence cleanup thread is done, including the bare `/tree` Emacs regression follow-on.
-- `PLAN.md` has now been pruned so active work starts at `Prompt lifecycle architectural convergence`; the completed convergence plan was removed per the file's own rule.
-- Best next move is to begin the prompt lifecycle convergence slice rather than continue cleanup work.
-- Immediate highest-leverage target:
-  - make prompt flow fully explicit as `prepare -> execute -> record`
-- First concrete slice to take from `PLAN.md`:
-  - extract a pure prepared-request projection from canonical session state
-  - route prompt execution through dispatch-visible `:session/prompt-prepare-request`
-  - make execution consume the prepared artifact instead of ambient recomputation
-  - record the assistant/tool outcome deterministically through `:session/prompt-record-response`
-- Keep dispatch trace and LSP follow-on work as secondary threads unless prompt lifecycle is blocked.
+- The prompt lifecycle scaffold is complete. The new path works end-to-end through tests.
+- Best next move: **migrate one real caller from old executor path onto the new prompt path**.
+- Best candidate: RPC prompt flow in `components/rpc/src/psi/rpc/session/prompt.clj` — it currently uses `runtime/run-agent-loop-in!` and is the main user-visible path.
+- This would reduce split-brain architecture and prove the new path works under real I/O.
+- Alternative next slice: begin collapsing system prompt / profile / skill injection into request preparation.
+- Keep LSP follow-on work as a secondary thread.
 
 ## Notes for future ψ
 - `PLAN.md` is the main active-work tracker and now begins with prompt lifecycle work; treat that as the current primary thread.

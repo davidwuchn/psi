@@ -16,10 +16,11 @@ Active prompt lifecycle shape:
 - `:session/prompt-continue` | `:session/prompt-finish`
 
 Testing priorities:
-- prove initial prompt path logs `prompt-submit -> prompt-prepare-request -> prompt-record-response`
-- prove assistant messages are journaled exactly once through `prompt-record-response`
-- prove tool-use turns route through `:session/prompt-continue`
-- prove continuation re-enters the shared prepare path after tool execution
+- ✓ prove initial prompt path logs `prompt-submit -> prompt-prepare-request -> prompt-record-response`
+- ✓ prove assistant messages are journaled exactly once through `prompt-record-response`
+- ✓ prove tool-use turns route through `:session/prompt-continue`
+- ✓ prove continuation re-enters the shared prepare path after tool execution
+- ✓ prove terminal prompt result returns session to `:idle` with `is-streaming` false
 
 Goals:
 - make prompt lifecycle follow the same architectural transaction shape as tool execution:
@@ -78,12 +79,14 @@ Proposed handler / effect split:
   - effects:
     - runtime tool continuation boundary
     - next prompt preparation event
-- `:session/prompt-finish`
+- `:session/prompt-finish` ✓
   - handler:
-    - finalize turn lifecycle visibility in canonical state
+    - dispatches `:on-agent-done` (clears is-streaming, retry state)
+    - sends `:session/reset` to statechart → `:idle`
   - effects:
-    - background-job reconciliation / terminal emission
-    - statechart completion event if needed
+    - `:runtime/dispatch-event` → `:on-agent-done`
+    - `:runtime/reconcile-and-emit-background-job-terminals`
+    - `:statechart/send-event` → `:session/reset`
 
 Proposed code scaffold:
 - new namespace: `psi.agent-session.prompt-request`
