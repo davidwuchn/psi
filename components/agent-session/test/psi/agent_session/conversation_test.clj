@@ -66,7 +66,7 @@
     (testing "marks system prompt as single cached block and tools"
       (let [prompt "stable prompt with frozen time"
             conv   (#'conv-translate/agent-messages->ai-conversation
-                    prompt [] [{:name "read" :description "Read" :parameters "{:type \"object\"}"}]
+                    prompt [] [{:name "read" :description "Read" :parameters {:type "object"}}]
                     {:cache-breakpoints #{:system :tools}})]
         (is (= [{:kind :text :text prompt :cache-control {:type :ephemeral}}]
                (:system-prompt-blocks conv)))

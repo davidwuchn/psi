@@ -6,11 +6,11 @@
 
    Entry point: agent-messages->ai-conversation"
   (:require
-   [clojure.edn :as edn]
    [clojure.string :as str]
    [cheshire.core :as json]
    [psi.ai.conversation :as conv]
-   [psi.agent-session.system-prompt :as system-prompt]))
+   [psi.agent-session.system-prompt :as system-prompt]
+   [psi.agent-session.tool-defs :as tool-defs]))
 
 ;; ============================================================
 ;; JSON argument parsing
@@ -35,11 +35,6 @@
   [arguments]
   (let [{:keys [ok? value]} (parse-args-strict arguments)]
     (if ok? value {})))
-
-(defn- parse-tool-parameters
-  "Parse tool parameters from pr-str'd string to a map, or return as-is if already a map."
-  [params]
-  (if (string? params) (edn/read-string params) params))
 
 ;; ============================================================
 ;; Cache-control helpers
@@ -155,9 +150,7 @@
 (defn- add-tools-to-conv [conv agent-tools tools-cache?]
   (reduce (fn [c tool]
             (conv/add-tool c
-                           (cond-> {:name        (:name tool)
-                                    :description (:description tool)
-                                    :parameters  (parse-tool-parameters (:parameters tool))}
+                           (cond-> (tool-defs/provider-tool tool)
                              tools-cache?
                              (assoc :cache-control (maybe-cache-control tools-cache?)))))
           conv
