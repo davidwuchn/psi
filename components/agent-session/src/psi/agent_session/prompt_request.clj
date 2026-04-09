@@ -8,6 +8,7 @@
    the current executor-owned runtime path."
   (:require
    [clojure.string :as str]
+   [psi.ai.models :as ai-models]
    [psi.agent-session.conversation :as conv]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.session-state :as ss]))
@@ -46,6 +47,16 @@
 
       (contains? runtime-opts :llm-stream-idle-timeout-ms)
       (assoc :llm-stream-idle-timeout-ms (:llm-stream-idle-timeout-ms runtime-opts)))))
+
+(defn- resolve-runtime-model
+  [session-model]
+  (let [provider (some-> (:provider session-model) keyword)
+        model-id (:id session-model)]
+    (some (fn [[_ model]]
+            (when (and (= provider (:provider model))
+                       (= model-id (:id model)))
+              model))
+          ai-models/all-models)))
 
 (defn build-prompt-layers
   "Return prompt layers for the prepared request.
@@ -113,7 +124,8 @@
                          system-prompt
                          messages
                          tool-defs
-                         {:cache-breakpoints cache-bps})]
+                         {:cache-breakpoints cache-bps})
+        runtime-model   (resolve-runtime-model (:model session-data))]
     {:prepared-request/id                   turn-id
      :prepared-request/session-id           session-id
      :prepared-request/user-message         user-message
@@ -129,7 +141,7 @@
      :prepared-request/system-prompt-blocks (:system-prompt-blocks provider-conv)
      :prepared-request/messages             (:messages provider-conv)
      :prepared-request/tools                (:tools provider-conv)
-     :prepared-request/model                (:model session-data)
+     :prepared-request/model                runtime-model
      :prepared-request/ai-options           ai-options
      :prepared-request/cache-projection     {:cache-breakpoints cache-bps
                                              :system-cached?    (contains? cache-bps :system)
