@@ -16,6 +16,21 @@ Bootstrapped on 2026-04-02.
 ## Current work state
 - The adapter-convergence cleanup thread has now landed the remaining targeted ownership shifts for shared interactive semantics.
 - New follow-on fix landed in Emacs tool rows: expanded tool output now renders on lines below the tool summary/status header instead of inline; tool body text now gets an explicit de-emphasized baseline face (`psi-emacs-tool-output-face`) so summary/status faces do not bleed into output; and a `ψ:` prefix overlay boundary bug was fixed so tool rows inserted at assistant/tool boundaries no longer inherit the assistant prefix face. Toggle rerenders still preserve adjacent row boundaries so rows no longer disappear.
+- Tool schema convergence follow-on is now landed:
+  - canonical tool definitions now live in `components/agent-session/src/psi/agent_session/tool_defs.clj`
+  - built-in tools now use structured `:parameters` data instead of canonical `pr-str` strings
+  - extension tool registration now normalizes tool defs at registration time
+  - session state now stores canonical `:tool-defs`
+  - provider conversation/tool projection now consumes canonical tool defs directly
+  - agent-core tool schema now accepts structured parameters during migration
+  - child-session creation/runtime paths now use `:tool-defs` instead of `:tool-schemas`
+  - the `/new` regression caused by richer tool defs crossing into the stricter runtime boundary was fixed
+- Focused failing-test cleanup after the convergence work also landed:
+  - deferred extension prompt test now drives the session statechart explicitly instead of depending on prompt timing
+  - interrupt dispatch test now drives streaming state explicitly instead of depending on prompt timing
+  - service protocol mutation tests now match the current trace-opts arity
+  - dispatch/LSP tests now account for injected `:dispatch-id`
+  - full suite is green again (`1219 tests, 6903 assertions, 0 failures`)
 - Recent completed convergence work now includes:
   - unified RPC session navigation emission through `psi.rpc.session.emit/emit-navigation-result!`
   - expanded explicit RPC session routing so more ops carry `session-id` through request handling instead of relying on adapter focus inference
@@ -113,11 +128,14 @@ Bootstrapped on 2026-04-02.
   - projected background-job widgets render from shared UI projection state
 
 ## Recent relevant commits
-- `0347a1bb` — ⚒ prompt-finish: wire terminal statechart completion
-- `1e6e5a0c` — ◈ state: prompt-finish wired, lifecycle scaffold complete
-- `3c5e55af` — ⚒ emacs: de-emphasize tool output body
-- `5a40f9b7` — ⊘ emacs: fix tool row overlay face bleed
-- `b568aa5c` — ⊘ emacs: restore bare /tree picker flow
+- `a3f61cf0` — ⊘ tests: align dispatch-id expectations
+- `36459252` — ⊘ tests: align service protocol mutation stubs with trace opts
+- `faf4b3ba` — ⊘ tests: make interrupt dispatch test deterministic
+- `1b0a4424` — ⊘ tests: make deferred extension prompt test deterministic
+- `b10667f4` — ⊨ tools: remove tool-schemas child-session compatibility
+- `9eccca5f` — ⊨ tools: rename child-session payloads to tool-defs
+- `a0fec5be` — ⊨ tools: preserve structured params at agent-core projection
+- `6b5a206d` — ⊨ tools: relax agent-core parameter schema for migration
 
 ## Prompt lifecycle convergence — current status
 - The prepare → execute → record → finish scaffold is now fully wired end-to-end.
@@ -126,18 +144,6 @@ Bootstrapped on 2026-04-02.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 
 ## Suggested next step
-- RPC prompt flow is now migrated onto the new prompt lifecycle path.
-- app-runtime console and TUI prompt submission now also use prompt lifecycle orchestration instead of direct `run-agent-loop-in!`.
-- extension run-fn prompt submission now also uses prompt lifecycle orchestration instead of direct `run-agent-loop-in!`.
-- startup prompt entry now also uses prompt lifecycle orchestration on the default runtime path; `:run-loop-fn` compatibility remains in place.
-- Migration follow-on landed with compatibility fixes:
-  - `prompt-in!` now accepts `:progress-queue` and `:runtime-opts`
-  - RPC/app-runtime/extension-run-fn/startup-default-path resolve the effective model on the session before the turn and use prompt lifecycle execution
-  - app-runtime now expands skills/templates before `prompt-in!`, preserving expansion banners in CLI while letting prompt submission own journaling
-  - extension-run-fn now expands input + memory recovery before dispatch-visible prompt submission and still performs post-turn git sync
-  - startup prompt lifecycle path records startup message ids from the canonical journal after dispatch-visible submission
-  - prepared-request API key resolution now survives continuation/tool-use turns via session-stored runtime key fallback
-  - prompt recording updates context usage from execution results
 - Best next move: continue reducing remaining executor-only prompt semantics for shared-session paths.
 - Decision taken: keep extension/workflow-local ephemeral sessions executor-owned when they are intentionally isolated runtimes (for example workflow step-local sessions in `extensions/mcp_tasks_run.clj`) rather than forcing them into the shared session lifecycle.
 - The next convergence target should therefore be shared-session prompt semantics such as agent profile / skill injection in request preparation, not isolated workflow runtimes.
