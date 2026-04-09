@@ -48,7 +48,7 @@
    [:name :string]
    [:label :string]
    [:description :string]
-   [:parameters :string]])
+   [:parameters [:or :string :map]]])
 
 (def agent-state-schema
   [:map

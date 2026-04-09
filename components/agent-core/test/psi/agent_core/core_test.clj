@@ -42,12 +42,20 @@
                :steering-mode      :all
                :follow-up-mode     :all}))))
 
-  (testing "valid tool passes schema"
+  (testing "valid tool passes schema with string parameters"
     (is (agent/valid-agent-tool?
          {:name        "list-files"
           :label       "List Files"
           :description "Lists directory contents"
-          :parameters  "{}"}))))
+          :parameters  "{}"})))
+
+  (testing "valid tool passes schema with structured parameters"
+    (is (agent/valid-agent-tool?
+         {:name        "list-files"
+          :label       "List Files"
+          :description "Lists directory contents"
+          :parameters  {:type "object"
+                        :properties {"path" {:type "string"}}}}))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Lifecycle — statechart drives phase
@@ -130,6 +138,16 @@
           tool {:name "bash" :label "Bash" :description "Run shell" :parameters "{}"}]
       (agent/create-agent-in! ctx)
       (agent/set-tools-in! ctx [tool])
+      (is (= [tool] (:tools (agent/get-data-in ctx))))))
+
+  (testing "create-agent accepts structured tool parameters during migration"
+    (let [ctx (agent/create-context)
+          tool {:name "bash"
+                :label "Bash"
+                :description "Run shell"
+                :parameters {:type "object"
+                             :properties {"command" {:type "string"}}}}]
+      (agent/create-agent-in! ctx {:tools [tool]})
       (is (= [tool] (:tools (agent/get-data-in ctx)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
