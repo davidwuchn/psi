@@ -240,6 +240,9 @@
   [ctx]
   (first (filter :git.worktree/current? (worktree-list ctx))))
 
+(declare merge-in-progress?)
+(declare rebase-in-progress?)
+
 (defn git-dir
   "Return the canonical git dir for `ctx`, or nil when unavailable."
   [ctx]
