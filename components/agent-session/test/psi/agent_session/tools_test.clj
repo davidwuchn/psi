@@ -19,7 +19,7 @@
   (testing "app-query-tool schema is well-formed"
     (is (= "app-query-tool" (:name tools/app-query-tool)))
     (is (string? (:description tools/app-query-tool)))
-    (is (string? (:parameters tools/app-query-tool)))))
+    (is (map? (:parameters tools/app-query-tool)))))
 
 (deftest app-query-tool-in-all-schemas-test
   (testing "app-query-tool appears in all-tool-schemas"

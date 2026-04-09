@@ -25,47 +25,47 @@
   {:name        "read"
    :label       "Read"
    :description "Read the contents of a file. Returns the file text."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:path   {:type "string" :description "File path to read"}
-                                      :offset {:type "integer" :description "1-indexed line number to start reading from"}
-                                      :limit  {:type "integer" :description "Maximum number of lines to read from offset"}}
-                         :required   ["path"]})})
+   :parameters  {:type       "object"
+                 :properties {:path   {:type "string" :description "File path to read"}
+                              :offset {:type "integer" :description "1-indexed line number to start reading from"}
+                              :limit  {:type "integer" :description "Maximum number of lines to read from offset"}}
+                 :required   ["path"]}})
 
 (def bash-tool
   {:name        "bash"
    :label       "Bash"
    :description "Execute a bash command. Returns stdout and stderr combined."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:command {:type "string" :description "Bash command to run"}
-                                      :timeout {:type "integer" :description "Timeout in seconds (default 30)"}}
-                         :required   ["command"]})})
+   :parameters  {:type       "object"
+                 :properties {:command {:type "string" :description "Bash command to run"}
+                              :timeout {:type "integer" :description "Timeout in seconds (default 30)"}}
+                 :required   ["command"]}})
 
 (def edit-tool
   {:name        "edit"
    :label       "Edit"
    :description "Replace exact text in a file. oldText must match exactly."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:path    {:type "string" :description "File path"}
-                                      :oldText {:type "string" :description "Exact text to find"}
-                                      :newText {:type "string" :description "Replacement text"}}
-                         :required   ["path" "oldText" "newText"]})})
+   :parameters  {:type       "object"
+                 :properties {:path    {:type "string" :description "File path"}
+                              :oldText {:type "string" :description "Exact text to find"}
+                              :newText {:type "string" :description "Replacement text"}}
+                 :required   ["path" "oldText" "newText"]}})
 
 (def write-tool
   {:name        "write"
    :label       "Write"
    :description "Write content to a file, creating it if it does not exist."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:path    {:type "string" :description "File path"}
-                                      :content {:type "string" :description "Content to write"}}
-                         :required   ["path" "content"]})})
+   :parameters  {:type       "object"
+                 :properties {:path    {:type "string" :description "File path"}
+                              :content {:type "string" :description "Content to write"}}
+                 :required   ["path" "content"]}})
 
 (def app-query-tool
   {:name        "app-query-tool"
    :label       "App Query Tool"
    :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]"
-   :parameters  (pr-str {:type       "object"
-                         :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
-                         :required   ["query"]})})
+   :parameters  {:type       "object"
+                 :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
+                 :required   ["query"]}})
 
 (def all-tool-schemas
   [read-tool bash-tool edit-tool write-tool app-query-tool])
