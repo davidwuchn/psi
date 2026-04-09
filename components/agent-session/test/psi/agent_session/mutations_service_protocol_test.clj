@@ -25,12 +25,19 @@
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx sut/all-mutations true)
       (with-redefs [protocol/send-service-request!
-                    (fn [ctx' key req]
-                      (swap! calls conj [ctx' key req])
-                      {:service-key key
-                       :request-id (:request-id req)
-                       :payload (:payload req)
-                       :timeout-ms (:timeout-ms req)})]
+                    (fn
+                      ([ctx' key req]
+                       (swap! calls conj [ctx' key req])
+                       {:service-key key
+                        :request-id (:request-id req)
+                        :payload (:payload req)
+                        :timeout-ms (:timeout-ms req)})
+                      ([ctx' key req trace-opts]
+                       (swap! calls conj [ctx' key req trace-opts])
+                       {:service-key key
+                        :request-id (:request-id req)
+                        :payload (:payload req)
+                        :timeout-ms (:timeout-ms req)}))]
         (let [r (mutate 'psi.extension/service-request
                         {:ext-path "/ext/lsp.clj"
                          :key [:lsp "/repo"]
@@ -40,7 +47,8 @@
           (is (= [[ctx [:lsp "/repo"]
                    {:request-id "1"
                     :payload {"jsonrpc" "2.0"}
-                    :timeout-ms 250}]]
+                    :timeout-ms 250}
+                   {:dispatch-id nil}]]
                  @calls))
           (is (= "/ext/lsp.clj" (:psi.extension/path r)))
           (is (= [:lsp "/repo"] (:psi.extension.service/service-key r)))
@@ -60,15 +68,20 @@
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx sut/all-mutations true)
       (with-redefs [protocol/send-service-notification!
-                    (fn [ctx' key payload]
-                      (swap! calls conj [ctx' key payload])
-                      {:service-key key
-                       :payload payload})]
+                    (fn
+                      ([ctx' key payload]
+                       (swap! calls conj [ctx' key payload])
+                       {:service-key key
+                        :payload payload})
+                      ([ctx' key payload trace-opts]
+                       (swap! calls conj [ctx' key payload trace-opts])
+                       {:service-key key
+                        :payload payload}))]
         (let [r (mutate 'psi.extension/service-notify
                         {:ext-path "/ext/lsp.clj"
                          :key [:lsp "/repo"]
                          :payload {"method" "initialized"}})]
-          (is (= [[ctx [:lsp "/repo"] {"method" "initialized"}]]
+          (is (= [[ctx [:lsp "/repo"] {"method" "initialized"} {:dispatch-id nil}]]
                  @calls))
           (is (= "/ext/lsp.clj" (:psi.extension/path r)))
           (is (= [:lsp "/repo"] (:psi.extension.service/service-key r)))
