@@ -1,0 +1,53 @@
+(ns psi.app-runtime.nrepl-runtime
+  (:require
+   [clojure.string :as str]
+   [psi.agent-session.state-accessors :as accessors]))
+
+(defn active-session-id-in-session-state
+  [session-state-atom default-session-id-fn]
+  (let [{:keys [ctx focus-session-id* tui-focus*]} @session-state-atom]
+    (or (some-> focus-session-id* deref)
+        (some-> tui-focus* deref)
+        (default-session-id-fn ctx))))
+
+(defn start-nrepl!
+  [session-state-atom nrepl-runtime-atom default-session-id-fn port]
+  (let [start-server       (requiring-resolve 'nrepl.server/start-server)
+        original-systemout System/out
+        server             (try
+                             (binding [*out* *err*]
+                               (System/setOut (java.io.PrintStream. System/err true))
+                               (start-server :port port))
+                             (finally
+                               (System/setOut original-systemout)))
+        host               "localhost"
+        port-file          (java.io.File. ".nrepl-port")]
+    (reset! nrepl-runtime-atom {:host host
+                                :port (:port server)
+                                :endpoint (str host ":" (:port server))})
+    (when-let [ctx (:ctx @session-state-atom)]
+      (when-let [session-id (active-session-id-in-session-state session-state-atom default-session-id-fn)]
+        (accessors/set-nrepl-runtime-in!
+         ctx session-id
+         {:host host
+          :port (:port server)
+          :endpoint (str host ":" (:port server))})))
+    (spit port-file (str (:port server)))
+    (.deleteOnExit port-file)
+    (.println System/err (str "  nREPL : " host ":" (:port server)
+                              " (connect with your editor)"))
+    server))
+
+(defn stop-nrepl!
+  [session-state-atom nrepl-runtime-atom default-session-id-fn server]
+  (when server
+    (let [stop-server (requiring-resolve 'nrepl.server/stop-server)
+          port-file   (java.io.File. ".nrepl-port")]
+      (reset! nrepl-runtime-atom nil)
+      (when-let [ctx (:ctx @session-state-atom)]
+        (when-let [session-id (active-session-id-in-session-state session-state-atom default-session-id-fn)]
+          (accessors/set-nrepl-runtime-in! ctx session-id nil)))
+      (stop-server server)
+      (when (.exists port-file)
+        (when (= (str/trim (slurp port-file)) (str (:port server)))
+          (.delete port-file))))))

@@ -9,6 +9,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.app-runtime :as app-runtime]
+   [psi.app-runtime.transcript]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-runtime]
    [psi.agent-session.oauth.core :as oauth]
@@ -279,7 +280,7 @@
                   {:role "assistant"
                    :content [{:type :text :text "done"}]}]
         {:keys [messages tool-calls tool-order]}
-        (#'app-runtime/agent-messages->tui-resume-state messages)]
+        (#'psi.app-runtime.transcript/agent-messages->tui-resume-state messages)]
     (is (= [{:role :user :text "read file"}
             {:role :assistant :text "Sure"}
             {:role :assistant :text "done"}]
@@ -305,7 +306,7 @@
                    :content {:kind :structured
                              :blocks [{:kind :text :text "done"}]}}]
         {:keys [messages tool-calls tool-order]}
-        (#'app-runtime/agent-messages->tui-resume-state messages)]
+        (#'psi.app-runtime.transcript/agent-messages->tui-resume-state messages)]
     (is (= [{:role :assistant :text "planning"}
             {:role :assistant :text "done"}]
            messages))

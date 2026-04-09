@@ -58,12 +58,14 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.runtime :as runtime]
-   [psi.agent-session.message-text :as message-text]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.app-runtime.background-job-ui :as background-job-ui]
+   [psi.app-runtime.nrepl-runtime :as app-nrepl]
+   [psi.app-runtime.output :as output]
    [psi.app-runtime.projections :as projections]
    [psi.app-runtime.selectors :as selectors]
+   [psi.app-runtime.transcript :as transcript]
    [psi.app-runtime.ui-actions :as ui-actions]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.config-resolution :as config-res]
@@ -96,10 +98,7 @@
 
 (defn- active-session-id-in-session-state
   []
-  (let [{:keys [ctx focus-session-id* tui-focus*]} @session-state]
-    (or (some-> focus-session-id* deref)
-        (some-> tui-focus* deref)
-        (default-session-id-in ctx))))
+  (app-nrepl/active-session-id-in-session-state session-state default-session-id-in))
 
 ;; ============================================================
 ;; nREPL server (started conditionally via --nrepl)
@@ -110,45 +109,10 @@
    Writes the bound port to .nrepl-port for editor auto-discovery.
    Any startup chatter from nREPL is redirected to stderr so RPC stdout stays protocol-only."
   [port]
-  (let [start-server       (requiring-resolve 'nrepl.server/start-server)
-        original-systemout System/out
-        server             (try
-                             (binding [*out* *err*]
-                               (System/setOut (java.io.PrintStream. System/err true))
-                               (start-server :port port))
-                             (finally
-                               (System/setOut original-systemout)))
-        host               "localhost"
-        port-file          (java.io.File. ".nrepl-port")]
-    (reset! nrepl-runtime {:host host
-                           :port (:port server)
-                           :endpoint (str host ":" (:port server))})
-    (when-let [ctx (:ctx @session-state)]
-      (when-let [session-id (active-session-id-in-session-state)]
-        (psi.agent-session.state-accessors/set-nrepl-runtime-in!
-         ctx
-         session-id
-         {:host host
-          :port (:port server)
-          :endpoint (str host ":" (:port server))})))
-    (spit port-file (str (:port server)))
-    (.deleteOnExit port-file)
-    (.println System/err (str "  nREPL : " host ":" (:port server)
-                              " (connect with your editor)"))
-    server))
+  (app-nrepl/start-nrepl! session-state nrepl-runtime default-session-id-in port))
 
 (defn stop-nrepl! [server]
-  (when server
-    (let [stop-server (requiring-resolve 'nrepl.server/stop-server)
-          port-file   (java.io.File. ".nrepl-port")]
-      (reset! nrepl-runtime nil)
-      (when-let [ctx (:ctx @session-state)]
-        (when-let [session-id (active-session-id-in-session-state)]
-          (psi.agent-session.state-accessors/set-nrepl-runtime-in! ctx session-id nil)))
-      (stop-server server)
-      (when (.exists port-file)
-        (when (= (str/trim (slurp port-file)) (str (:port server)))
-          (.delete port-file))))))
+  (app-nrepl/stop-nrepl! session-state nrepl-runtime default-session-id-in server))
 
 (defn- developer-prompt-from-env
   "Return optional developer prompt text from PSI_DEVELOPER_PROMPT.
@@ -224,209 +188,14 @@ Available: " (str/join ", " (map name (keys models/all-models))))
      :expansion expansion
      :ai-model ai-model}))
 
-;; ============================================================
-;; Output helpers
-;; ============================================================
-
-(defn- print-banner [model templates loaded-skills ctx]
-  (println)
-  (println "╔══════════════════════════════════════╗")
-  (println "║  ψ  Psi Agent Session                ║")
-  (println "╚══════════════════════════════════════╝")
-  (println (str "  Model   : " (:name model)))
-  (println (str "  Tools   : " (str/join ", " (map :name tools/all-tool-schemas))))
-  (when (seq templates)
-    (println (str "  Prompts : " (count templates) " loaded"))
-    (doseq [t templates]
-      (println (str "    /" (:name t) " — " (:description t)))))
-  (when (seq loaded-skills)
-    (let [visible (skills/visible-skills loaded-skills)
-          hidden  (skills/hidden-skills loaded-skills)]
-      (println (str "  Skills  : " (count visible) " available"
-                    (when (seq hidden) (str ", " (count hidden) " hidden"))))))
-  (let [ext-details (ext/extension-details-in (:extension-registry ctx))]
-    (when (seq ext-details)
-      (println (str "  Exts    : " (count ext-details) " loaded"))
-      (doseq [d ext-details]
-        (let [parts (cond-> []
-                      (pos? (:tool-count d))    (conj (str (:tool-count d) " tools"))
-                      (pos? (:command-count d)) (conj (str (:command-count d) " cmds"))
-                      (pos? (:handler-count d)) (conj (str (:handler-count d) " handlers")))
-              suffix (when (seq parts) (str " (" (str/join ", " parts) ")"))]
-          (println (str "    " (.getName (java.io.File. ^String (:path d))) suffix))))))
-  (println "  /help for commands, /quit to exit")
-  (println))
-
 ;; print-status, print-history, print-help, print-prompts, print-skills
 ;; moved to psi.agent-session.commands as format-* functions
-
-;; ============================================================
-;; Response printing — streams to stdout as tokens arrive
-;; ============================================================
-
-(defn- print-assistant-message
-  "Print the text content of an assistant message map.
-  If the message carries an error, print it clearly instead of (or after) any partial text."
-  [msg]
-  (let [text   (some->> (message-text/content-text-parts (:content msg))
-                        seq
-                        (str/join ""))
-        errors (message-text/content-error-parts (:content msg))]
-    (when (seq text)
-      (println (str "\nψ: " text "\n")))
-    (doseq [err errors]
-      (println (str "\n[Provider error: " err "]\n")))
-    (when (and (empty? (or text "")) (empty? errors))
-      (println "\nψ: (no response)\n"))))
-
-(defn- print-initial-transcript!
-  [rehydrate]
-  (doseq [m (:messages rehydrate)]
-    (case (:role m)
-      :user (println (str "刀(startup): " (:text m)))
-      :assistant (println (str "ψ(startup): " (:text m)))
-      nil)))
-
-(defn- message->display-text
-  "Extract display text from an agent-core message map.
-   Includes :text blocks and :error blocks."
-  [msg]
-  (or (message-text/content-display-text (:content msg))
-      ""))
-
-(defn- ->kw
-  [x]
-  (cond
-    (keyword? x) x
-    (string? x)  (keyword x)
-    :else        nil))
-
-(defn- block-attr
-  [block k]
-  (or (get block k)
-      (get block (name k))))
-
-(defn- tool-call-block?
-  [block]
-  (= :tool-call (->kw (or (block-attr block :type)
-                          (block-attr block :kind)))))
-
-(defn- normalize-tool-call-block
-  [block]
-  {:id        (block-attr block :id)
-   :name      (block-attr block :name)
-   :arguments (or (block-attr block :arguments)
-                  (some-> (block-attr block :input) pr-str)
-                  "")})
-
-(defn- assistant-tool-call-blocks
-  [content]
-  (cond
-    (sequential? content)
-    (->> content
-         (filter map?)
-         (filter tool-call-block?)
-         (mapv normalize-tool-call-block))
-
-    (and (map? content)
-         (= :structured (->kw (block-attr content :kind))))
-    (assistant-tool-call-blocks (block-attr content :blocks))
-
-    :else
-    []))
-
-(defn- tool-result->display-text
-  "Best-effort display text for a toolResult message content vector."
-  [msg]
-  (let [text (message->display-text msg)]
-    (when-not (str/blank? text)
-      text)))
-
-(defn- agent-messages->tui-resume-state
-  "Convert agent-core history to TUI resume state.
-   Returns {:messages [...], :tool-calls {...}, :tool-order [...]}.
-   Tool rows are reconstructed by correlating assistant tool-call blocks
-   with toolResult messages by tool-call-id."
-  [messages]
-  (reduce
-   (fn [acc msg]
-     (case (:role msg)
-       "user"
-       (let [text (message->display-text msg)]
-         (update acc :messages conj {:role :user
-                                     :text (if (str/blank? text) "[user]" text)}))
-
-       "assistant"
-       (let [text        (message->display-text msg)
-             tool-blocks (assistant-tool-call-blocks (:content msg))
-             acc'        (if (str/blank? text)
-                           acc
-                           (update acc :messages conj {:role :assistant :text text}))]
-         (reduce
-          (fn [a block]
-            (let [id (:id block)
-                  tc {:name      (:name block)
-                      :args      (or (:arguments block) "")
-                      :status    :pending
-                      :result    nil
-                      :is-error  false
-                      :expanded? false}]
-              (-> a
-                  (update :tool-calls #(if (contains? % id) % (assoc % id tc)))
-                  (update :tool-order #(if (some #{id} %) % (conj % id))))))
-          acc'
-          tool-blocks))
-
-       "toolResult"
-       (let [id      (:tool-call-id msg)
-             text    (tool-result->display-text msg)
-             content (:content msg)
-             details (:details msg)
-             err?    (boolean (:is-error msg))
-             fallback {:name      (:tool-name msg)
-                       :args      ""
-                       :status    (if err? :error :success)
-                       :result    text
-                       :content   content
-                       :details   details
-                       :is-error  err?
-                       :expanded? false}]
-         (-> acc
-             (update :tool-calls
-                     (fn [m]
-                       (if-let [tc (get m id)]
-                         (assoc m id
-                                (-> tc
-                                    (assoc :status (if err? :error :success)
-                                           :content content
-                                           :details details
-                                           :is-error err?)
-                                    (cond-> text (assoc :result text))))
-                         (assoc m id fallback))))
-             (update :tool-order #(if (some #{id} %) % (conj % id)))))
-
-       ;; unknown roles — ignore
-       acc))
-   {:messages [] :tool-calls {} :tool-order []}
-   messages))
 
 ;; select-login-provider moved to psi.agent-session.commands
 
 ;; ============================================================
 ;; Core: one prompt → response cycle
 ;; ============================================================
-
-(defn- print-expansion-banner!
-  [expansion]
-  (when expansion
-    (case (:kind expansion)
-      :skill
-      (println (str "[Skill: " (:name expansion) "]\n"))
-
-      :template
-      (println (str "[Template: " (:name expansion) "]\n"))
-
-      nil)))
 
 (defn- run-prompt!
   "Send `text` to `session-id` and block until done, printing the response.
@@ -435,8 +204,8 @@ Available: " (str/join ", " (map name (keys models/all-models))))
   (let [{:keys [assistant-message]}
         (submit-prompt-in! ctx session-id ai-model text nil
                            {:sync-on-git-head-change? true
-                            :on-expansion print-expansion-banner!})]
-    (print-assistant-message assistant-message)))
+                            :on-expansion output/print-expansion-banner!})]
+    (output/print-assistant-message assistant-message)))
 
 (defn- graph-capabilities-in
   "Best-effort read of current capability summaries from the live graph."
@@ -462,7 +231,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
     (catch Throwable t
       (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
   (let [agent-messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))
-        tui-state      (agent-messages->tui-resume-state agent-messages)]
+        tui-state      (transcript/agent-messages->tui-resume-state agent-messages)]
     (assoc tui-state :agent-messages agent-messages)))
 
 (defn- start-new-session-with-startup!
@@ -612,9 +381,6 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 ;; Main prompt loop
 ;; ============================================================
 
-(defn- print-command-message! [message]
-  (println (str "\n" message "\n")))
-
 (defn- complete-cli-login!
   [oauth-ctx {:keys [provider url login-state uses-callback-server]}]
   (println "\n── OAuth Login ────────────────────────")
@@ -647,27 +413,27 @@ Available: " (str/join ", " (map name (keys models/all-models))))
   [oauth-ctx result]
   (case (:type result)
     :quit false
-    :resume (do (print-command-message! "  /resume is only available in TUI mode (--tui).") true)
+    :resume (do (output/print-command-message! "  /resume is only available in TUI mode (--tui).") true)
     (:text :new-session :logout)
     (do
       (when (= :new-session (:type result))
-        (print-initial-transcript! (:rehydrate result)))
-      (print-command-message! (:message result))
+        (output/print-initial-transcript! (:rehydrate result)))
+      (output/print-command-message! (:message result))
       true)
     :login-start (do (complete-cli-login! oauth-ctx result) true)
-    :login-error (do (print-command-message! (str "  " (:message result))) true)
+    :login-error (do (output/print-command-message! (str "  " (:message result))) true)
     :extension-cmd
     (do
       (try
         (when-let [handler (:handler result)]
           (let [captured (with-out-str (handler (:args result)))]
             (when-not (str/blank? captured)
-              (print-command-message! (str/trimr captured)))))
+              (output/print-command-message! (str/trimr captured)))))
         (catch Exception e
           (println (str "\n[Command error: " (ex-message e) "]\n"))))
       true)
     (do
-      (print-command-message! result)
+      (output/print-command-message! result)
       true)))
 
 (defn- cli-command-opts
@@ -734,8 +500,8 @@ Available: " (str/join ", " (map name (keys models/all-models))))
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                             :oauth-ctx oauth-ctx
                             :nrepl-runtime-atom nrepl-runtime})
-     (print-banner ai-model templates skills ctx)
-     (print-initial-transcript! startup-rehydrate)
+     (output/print-banner ai-model templates skills ctx)
+     (output/print-initial-transcript! startup-rehydrate)
      (run-cli-loop! ctx cli-focus* ai-ctx ai-model oauth-ctx cmd-opts))))
 
 ;; TUI session (charm.clj Elm Architecture)
@@ -796,7 +562,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                               sid         (:session-id sd)
                               _           (reset! tui-focus* sid)
                               msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                          (agent-messages->tui-resume-state msgs))
+                          (transcript/agent-messages->tui-resume-state msgs))
                         (catch Exception e
                           (timbre/error e "Resume failed:" session-path)
                           {:messages [{:role :assistant
@@ -811,7 +577,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                       sid                (:session-id sd)
                                       _                  (reset! tui-focus* sid)
                                       msgs               (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                                  (agent-messages->tui-resume-state msgs))
+                                  (transcript/agent-messages->tui-resume-state msgs))
                                 (catch Exception e
                                   (timbre/error e "Session switch failed:" session-id)
                                   {:messages [{:role :assistant
@@ -826,7 +592,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                     sid               (:session-id sd)
                                     _                 (reset! tui-focus* sid)
                                     msgs              (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                                (assoc (agent-messages->tui-resume-state msgs)
+                                (assoc (transcript/agent-messages->tui-resume-state msgs)
                                        :session-id sid))
                               (catch Exception e
                                 (timbre/error e "Session fork failed:" entry-id)
