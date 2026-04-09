@@ -6,7 +6,8 @@
    transferred between sessions."
   (:require
    [psi.agent-core.core :as agent]
-   [psi.agent-session.statechart :as sc]))
+   [psi.agent-session.statechart :as sc]
+   [psi.agent-session.tool-defs :as tool-defs]))
 
 (defn telemetry-state []
   {:tool-output-stats {:calls []
@@ -32,7 +33,7 @@
   (merge
    (cond-> {:system-prompt   (or (:system-prompt session-data) "")
             :thinking-level  (or (:thinking-level session-data) :off)
-            :tools           (vec (or (:tool-schemas session-data) []))
+            :tools           (tool-defs/agent-core-tools (:tool-schemas session-data))
             :messages        (vec (or messages []))
             :steering-queue  []
             :follow-up-queue []}

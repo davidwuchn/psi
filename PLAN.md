@@ -348,6 +348,43 @@ Acceptance criteria:
 - trace storage is bounded and safe for long-running sessions
 - the new trace surface reduces dependence on ad hoc debug atoms for normal diagnosis
 
+## Tool schema convergence
+
+Problem:
+- tool definitions currently drift across:
+  - extension registry tool maps
+  - session `:tool-schemas`
+  - agent-core runtime tool schema
+  - provider-facing conversation tool projection
+- the recent `/new` regression showed that richer session/extension tool maps can leak into the stricter agent-core runtime boundary
+- canonical tool identity, provider projection, and prompt-rendering metadata are not cleanly separated
+
+Goal:
+- establish one canonical structured tool definition model in `agent-session`
+- project explicitly to:
+  - agent-core runtime tool view
+  - provider request tool view
+  - prompt-rendering view
+- remove stringly canonical `:parameters` over time while keeping provider/runtime compatibility during migration
+
+Staged increments:
+1. ✓ add a boundary normalizer so agent-core only receives projected tool defs
+2. introduce canonical tool-def helpers/schema in `psi.agent-session.tool-defs`
+3. convert built-in tools to canonical structured `:parameters` data
+4. normalize extension tool registration into canonical tool defs at registration time
+5. make session active-tool storage explicitly canonical tool defs
+6. make provider conversation/tool projection consume canonical tool defs directly
+7. relax/remove agent-core's divergent tool schema once all callers use projections
+8. rename `:tool-schemas` to a clearer canonical field when migration risk is low
+
+Acceptance criteria:
+- built-in tools use structured `:parameters`
+- extension tools are normalized on registration
+- session active tools are stored canonically
+- provider projection no longer depends on parsing `pr-str`ed parameters in the common path
+- agent-core only sees projected runtime tool defs
+- `/new`, fork, child-session, and runtime tool updates are stable across richer tool metadata
+
 ## Agent tool skill prelude follow-on
 
 - Add a `:skill` argument to the `agent` tool.

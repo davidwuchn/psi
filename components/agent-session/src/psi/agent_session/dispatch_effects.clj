@@ -12,7 +12,8 @@
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.user-config :as user-cfg]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.statechart :as sc]))
+   [psi.agent-session.statechart :as sc]
+   [psi.agent-session.tool-defs :as tool-defs]))
 
 (defmulti execute-effect!
   "Execute one dispatch effect description.
@@ -70,7 +71,8 @@
   (when-let [ac (effect-agent-ctx ctx effect)] (agent/set-system-prompt-in! ac (:prompt effect))))
 
 (defmethod execute-effect! :runtime/agent-set-tools [ctx effect]
-  (when-let [ac (effect-agent-ctx ctx effect)] (agent/set-tools-in! ac (:tool-maps effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)]
+    (agent/set-tools-in! ac (tool-defs/agent-core-tools (:tool-maps effect)))))
 
 (defmethod execute-effect! :runtime/agent-reset [ctx effect]
   (when-let [ac (effect-agent-ctx ctx effect)] (agent/reset-agent-in! ac)))
