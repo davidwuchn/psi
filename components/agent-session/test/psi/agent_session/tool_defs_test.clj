@@ -41,10 +41,9 @@
     (is (= "x" (:name projected)))
     (is (= "x" (:label projected)))
     (is (= "desc" (:description projected)))
-    (is (string? (:parameters projected)))
     (is (= {:type "object"
             :properties {"p" {:type "string"}}}
-           (read-string (:parameters projected))))))
+           (:parameters projected)))))
 
 (deftest provider-tool-projection-test
   (let [tool {:name "x"

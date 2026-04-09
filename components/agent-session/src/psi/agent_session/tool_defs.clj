@@ -40,8 +40,8 @@
   (mapv normalize-tool-def (filter map? (or tools []))))
 
 (defn agent-core-tool
-  "Project a canonical or richer tool map into the minimal shape required by
-   psi.agent-core.core/agent-state-schema. Returns nil when :name is blank."
+  "Project a canonical or richer tool map into the agent-core runtime shape.
+   During migration this preserves structured `:parameters` data."
   [tool]
   (when-let [name (some-> (:name tool) str not-empty)]
     {:name        name
@@ -49,7 +49,7 @@
                       name)
      :description (or (some-> (:description tool) str)
                       "")
-     :parameters  (pr-str (parse-parameters (:parameters tool)))}))
+     :parameters  (parse-parameters (:parameters tool))}))
 
 (defn agent-core-tools
   [tools]
