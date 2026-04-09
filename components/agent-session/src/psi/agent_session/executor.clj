@@ -37,9 +37,8 @@
                   (get-in entry [:data :message]))))
         (sa/journal-state-in ctx session-id)))
 
-(defn- session-tool-schemas [session-data]
+(defn- session-tool-defs [session-data]
   (or (:tool-defs session-data)
-      (:tool-schemas session-data)
       []))
 
 ;; ============================================================
@@ -88,7 +87,7 @@
         ai-conv          (conv-translate/agent-messages->ai-conversation
                           (:system-prompt sd)
                           (session-messages ctx session-id)
-                          (session-tool-schemas sd)
+                          (session-tool-defs sd)
                           {:cache-breakpoints (:cache-breakpoints sd)})
         base-ai-options  (or extra-ai-options {})
         ai-options       (-> base-ai-options

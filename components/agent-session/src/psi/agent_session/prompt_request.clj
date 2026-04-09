@@ -104,9 +104,7 @@
   (let [session-data    (ss/get-session-data-in ctx session-id)
         journal         (or (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal]) [])
         messages        (journal->provider-messages journal)
-        tool-schemas    (or (:tool-defs session-data)
-                            (:tool-schemas session-data)
-                            [])
+        tool-defs       (or (:tool-defs session-data) [])
         ai-options      (session->request-options ctx session-data (or runtime-opts {}))
         cache-bps       (set (or (:cache-breakpoints session-data) #{}))
         prompt-layers   (build-prompt-layers session-data opts)
@@ -114,7 +112,7 @@
         provider-conv   (conv/agent-messages->ai-conversation
                          system-prompt
                          messages
-                         tool-schemas
+                         tool-defs
                          {:cache-breakpoints cache-bps})]
     {:prepared-request/id                   turn-id
      :prepared-request/session-id           session-id

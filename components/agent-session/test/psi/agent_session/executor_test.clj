@@ -615,7 +615,7 @@
                      :spawn-mode     :agent
                      :parent-session-id parent-id
                      :system-prompt  "child sys"
-                     :tool-schemas   []}
+                     :tool-defs      []}
         _           (add-child-session-to-state! session-ctx child-id child-sd)
         scoped      (scoped-ctx session-ctx child-id)
         user-msg    {:role "user"

@@ -297,7 +297,7 @@
                           (mutate-fn 'psi.extension/create-child-session
                                      {:session-name    (:session-name config)
                                       :system-prompt   (:system-prompt config)
-                                      :tool-schemas    (:tools config)
+                                      :tool-defs       (:tools config)
                                       :thinking-level  (:thinking-level config)}))))]
     (if-not session-id
       {:ok?           false
@@ -858,7 +858,7 @@
                          (mf 'psi.extension/create-child-session
                              {:session-name   agent-name
                               :system-prompt  (:system-prompt config)
-                              :tool-schemas   (:tools config)
+                              :tool-defs      (:tools config)
                               :thinking-level (:thinking-level config)})))]
     {:agent/agent-name                 agent-name
      :agent/fork-session?              fork-session?

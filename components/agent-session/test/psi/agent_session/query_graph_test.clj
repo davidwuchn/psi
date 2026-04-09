@@ -829,7 +829,7 @@
         parent-id     session-id
         child-id    (str (java.util.UUID/randomUUID))
         sys-prompt  "child system"
-        tool-schemas [{:name "tool1"}]]
+        tool-defs [{:name "tool1"}]]
     (testing ":session/create-child dispatch"
       (dispatch/dispatch! ctx
                           :session/create-child
@@ -837,7 +837,7 @@
                            :child-session-id child-id
                            :session-name     "child-work"
                            :system-prompt    sys-prompt
-                           :tool-schemas     tool-schemas
+                           :tool-defs        tool-defs
                            :thinking-level   :off}
                           {:origin :core})
       (let [sessions   (ss/get-sessions-map-in ctx)

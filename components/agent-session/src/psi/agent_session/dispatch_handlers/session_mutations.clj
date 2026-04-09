@@ -249,8 +249,7 @@
      (let [tool-defs (tool-defs/normalize-tool-defs tool-maps)]
        {:root-state-update (session/session-update session-id #(assoc %
                                                                       :active-tools (->> tool-defs (map :name) set)
-                                                                      :tool-defs tool-defs
-                                                                      :tool-schemas tool-defs))
+                                                                      :tool-defs tool-defs))
         :effects [{:effect/type :runtime/agent-set-tools
                    :tool-maps tool-defs}
                   {:effect/type :runtime/refresh-system-prompt}]}))))
