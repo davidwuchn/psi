@@ -10,6 +10,7 @@
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as session]
+   [psi.agent-session.tool-defs :as tool-defs]
    [psi.agent-session.tool-execution :as tool-exec]))
 
 (defn- now-inst []
@@ -245,12 +246,14 @@
   (register-core-handler!
    :session/set-active-tools
    (fn [_ctx {:keys [session-id tool-maps]}]
-     {:root-state-update (session/session-update session-id #(assoc %
-                                                                    :active-tools (->> tool-maps (map :name) set)
-                                                                    :tool-schemas (vec tool-maps)))
-      :effects [{:effect/type :runtime/agent-set-tools
-                 :tool-maps tool-maps}
-                {:effect/type :runtime/refresh-system-prompt}]})))
+     (let [tool-defs (tool-defs/normalize-tool-defs tool-maps)]
+       {:root-state-update (session/session-update session-id #(assoc %
+                                                                      :active-tools (->> tool-defs (map :name) set)
+                                                                      :tool-defs tool-defs
+                                                                      :tool-schemas tool-defs))
+        :effects [{:effect/type :runtime/agent-set-tools
+                   :tool-maps tool-defs}
+                  {:effect/type :runtime/refresh-system-prompt}]}))))
 
 (defn- register-session-state-handlers! []
   (register-core-handler!

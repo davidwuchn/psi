@@ -33,7 +33,9 @@
   (merge
    (cond-> {:system-prompt   (or (:system-prompt session-data) "")
             :thinking-level  (or (:thinking-level session-data) :off)
-            :tools           (tool-defs/agent-core-tools (:tool-schemas session-data))
+            :tools           (tool-defs/agent-core-tools
+                              (or (:tool-defs session-data)
+                                  (:tool-schemas session-data)))
             :messages        (vec (or messages []))
             :steering-queue  []
             :follow-up-queue []}

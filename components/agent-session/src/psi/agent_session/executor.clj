@@ -38,7 +38,9 @@
         (sa/journal-state-in ctx session-id)))
 
 (defn- session-tool-schemas [session-data]
-  (or (:tool-schemas session-data) []))
+  (or (:tool-defs session-data)
+      (:tool-schemas session-data)
+      []))
 
 ;; ============================================================
 ;; Single LLM turn

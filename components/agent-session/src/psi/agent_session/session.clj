@@ -145,6 +145,7 @@
    [:skills [:vector skill-schema]]
    [:prompt-templates [:vector prompt-template-schema]]
    [:prompt-contributions {:optional true} [:vector prompt-contribution-schema]]
+   [:tool-defs {:optional true} [:vector :map]]
    [:extensions [:map-of :string extension-schema]]
    [:session-entries [:vector session-entry-schema]]
    [:startup-bootstrap {:optional true}
@@ -239,6 +240,7 @@
      :skills                  []
      :prompt-templates        []
      :prompt-contributions    []
+     :tool-defs               []
      :extensions              {}
      :session-entries         []
      :startup-prompts         []

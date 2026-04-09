@@ -118,7 +118,8 @@
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
   [state parent-sd {:keys [child-session-id session-name system-prompt tool-schemas thinking-level]}]
-  (let [child-sd (merge (session-data-ns/initial-session
+  (let [tool-defs (or tool-schemas (:tool-defs parent-sd) (:tool-schemas parent-sd))
+        child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
                         {:session-id         child-session-id
                          :session-name       session-name
@@ -127,7 +128,8 @@
                          :system-prompt      (or system-prompt (:system-prompt parent-sd))
                          :base-system-prompt (or system-prompt (:base-system-prompt parent-sd))
                          :thinking-level     (or thinking-level :off)
-                         :tool-schemas       tool-schemas
+                         :tool-defs          tool-defs
+                         :tool-schemas       tool-defs
                          :model              (:model parent-sd)
                          :created-at         (java.time.Instant/now)})]
     (-> state
