@@ -1,5 +1,6 @@
 {:tasks
- {:requires ([babashka.tasks :refer [shell]])
+ {:requires ([babashka.tasks :refer [shell]]
+             [clojure.string :as str])
 
   fmt:check
   {:doc  "Check Clojure and EDN formatting with cljfmt CLI."
@@ -8,6 +9,32 @@
   lint
   {:doc  "Lint repository Clojure and EDN sources with clj-kondo."
    :task (shell "clojure -M:lint")}
+
+  commit-check:rama-cc
+  {:doc  "Run rama-cc against components/ and bases/ with commit-check thresholds."
+   :task (let [result (shell {:continue true}
+                             "rama-cc" "--threshold" "21" "--fail-above" "20" "components/" "bases/")]
+           (System/exit (:exit result)))}
+
+  commit-check:file-lengths
+  {:doc  "Fail when any src/ or test/ file under components/ or bases/ exceeds 800 lines."
+   :task (let [result (shell {:out :string}
+                             "find" "components" "bases" "-type" "f"
+                             "(" "-path" "*/src/*" "-o" "-path" "*/test/*" ")"
+                             "-exec" "wc" "-l" "{}" ";")
+               lines  (str/split-lines (:out result))
+               bad    (->> lines
+                           (keep (fn [line]
+                                   (let [[_ n path] (re-matches (re-pattern "\\s*(\\d+)\\s+(.+)") line)]
+                                     (when (and n path (> (Long/parseLong n) 800))
+                                       (str path " (" n " lines)")))))
+                           vec)]
+           (when (seq bad)
+             (binding [*out* *err*]
+               (println "Files longer than 800 lines:")
+               (doseq [line bad]
+                 (println line)))
+             (System/exit 1)))}
 
   clojure:test:unit
   {:doc  "Run Clojure unit tests (Kaocha :unit suite)."
@@ -53,39 +80,39 @@
   {:doc     "Run all repository tests checked in CI."
    :depends [clojure:test emacs:check]}
 
-  ;; Component-isolated tests to avoid circular dependencies  
+  ;; Component-isolated tests to avoid circular dependencies
   test:agent-core
-  {:doc "Test agent-core component in isolation"
+  {:doc  "Test agent-core component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :agent-core")}
 
   test:memory
-  {:doc "Test memory component in isolation"
+  {:doc  "Test memory component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :memory")}
 
   test:query
-  {:doc "Test query component in isolation"
+  {:doc  "Test query component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :query")}
 
   test:engine
-  {:doc "Test engine component in isolation"
+  {:doc  "Test engine component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :engine")}
 
   test:history
-  {:doc "Test history component in isolation"
+  {:doc  "Test history component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :history")}
 
   test:recursion
-  {:doc "Test recursion component in isolation"
+  {:doc  "Test recursion component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :recursion")}
 
   test:ai
-  {:doc "Test ai component in isolation"
+  {:doc  "Test ai component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :ai")}
 
   test:tui
-  {:doc "Test tui component in isolation"
+  {:doc  "Test tui component in isolation"
    :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :tui")}
 
   test:components
-  {:doc "Test all components in isolation (bypasses circular dependencies)"
+  {:doc     "Test all components in isolation (bypasses circular dependencies)"
    :depends [test:agent-core test:memory test:query test:engine test:history test:recursion test:ai test:tui]}}}

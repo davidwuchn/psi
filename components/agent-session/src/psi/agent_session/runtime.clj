@@ -222,7 +222,9 @@
                (string? (:head git-sync))
                (not (str/blank? (:head git-sync)))
                (true? (:notify-extensions? classification)))
-      (let [payload {:cwd (ss/effective-cwd-in ctx session-id)
+      (let [payload {:session-id session-id
+                     :workspace-dir (ss/effective-cwd-in ctx session-id)
+                     :cwd (ss/effective-cwd-in ctx session-id)
                      :head (:head git-sync)
                      :previous-head (:previous-head git-sync)
                      :reason "head-changed"

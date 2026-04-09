@@ -91,6 +91,36 @@ cljfmt fix bb.edn deps.edn .lsp/config.edn .psi/startup-prompts.edn \
 bb lint
 ```
 
+## Commit checks
+
+Project-local commit checks can be wired through `.psi/commit-checks.edn` and
+run bb tasks that fail with a non-zero exit when a check should block follow-up.
+
+This repo defines:
+
+```bash
+bb commit-check:rama-cc
+bb commit-check:file-lengths
+```
+
+### `commit-check:rama-cc`
+
+Runs:
+
+```bash
+rama-cc --threshold 21 --fail-above 20 components/ bases/
+```
+
+This task exits with the same exit code returned by the shell command, even
+when `rama-cc` reports zero matched files.
+
+### `commit-check:file-lengths`
+
+Scans `components/` and `bases/` for files under `src/` or `test/` and fails if
+any exceed 800 lines.
+
+When it fails it prints the matching files to stderr and exits non-zero.
+
 ## CI
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on:

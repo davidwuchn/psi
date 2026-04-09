@@ -62,6 +62,12 @@ workflow-backed extensions.
 For built-in extension docs (`extensions/src`), see:
 - [`doc/extensions.md`](doc/extensions.md)
 
+Project-local extension/config examples in this repo include:
+- [`.psi/extensions/commit_checks.clj`](.psi/extensions/commit_checks.clj)
+- [`.psi/commit-checks.edn`](.psi/commit-checks.edn)
+- `bb commit-check:rama-cc`
+- `bb commit-check:file-lengths`
+
 ## Architecture
 
 For architecture overview, components, EQL introspection guidance, and roadmap, see:

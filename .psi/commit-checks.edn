@@ -1,0 +1,10 @@
+{:enabled true
+ :prompt-header "Commit checks failed after the latest commit. Diagnose and fix the problems with minimal changes."
+ :max-output-chars 12000
+ :commands
+ [{:id "rama-cc"
+   :cmd ["bb" "commit-check:rama-cc"]
+   :timeout-ms 20000}
+  {:id "file-lengths"
+   :cmd ["bb" "commit-check:file-lengths"]
+   :timeout-ms 20000}]}

@@ -151,6 +151,46 @@ Current in-repo examples:
 - `extensions.agent-chain` — widget + `action=list` reuse `:chain/display`
 - `extensions.agent` — widget + `agent-list` reuse `:agent/display`
 
+### `extensions/commit_checks.clj` (`extensions.commit-checks`)
+
+Purpose: run project-local external checks after a new local commit and inject failures back into the session as a prompt.
+
+- Trigger: `git_commit_created` event
+- Config:
+  - `.psi/commit-checks.edn`
+- Behavior:
+  - reads config from the session `:workspace-dir`
+  - runs each configured command with `babashka.process`
+  - command form is a non-empty vector of strings under `:cmd`
+  - collects only failing commands (non-zero exit or timeout)
+  - injects one combined follow-up prompt with the failing outputs
+- Event payload relied on:
+  - `:session-id`
+  - `:workspace-dir`
+  - `:head`
+
+Example config:
+
+```clojure
+{:enabled true
+ :prompt-header "Commit checks failed after the latest commit. Diagnose and fix the problems with minimal changes."
+ :max-output-chars 12000
+ :commands
+ [{:id "rama-cc"
+   :cmd ["bb" "commit-check:rama-cc"]
+   :timeout-ms 20000}
+  {:id "file-lengths"
+   :cmd ["bb" "commit-check:file-lengths"]
+   :timeout-ms 20000}]}
+```
+
+The example project config in this repo defines these bb tasks:
+- `bb commit-check:rama-cc`
+  - runs `rama-cc components/ --threshold 21 --fail-above 20`
+  - then runs `rama-cc bases/ --threshold 21 --fail-above 20`
+- `bb commit-check:file-lengths`
+  - fails if any file under `components/` or `bases/` in a `src/` or `test/` path exceeds 800 lines
+
 ### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
 
 Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
@@ -208,7 +248,7 @@ The `init` function receives a map with these keys:
 Common extension events emitted by the runtime include:
 - `git_commit_created` — emitted only for normal local commit creation
   - suppressed for merges, rebases, amend, reset, checkout, cherry-pick, and transient git operations
-  - payload includes `:cwd`, `:head`, `:previous-head`, `:reason`, `:classification`, `:timestamp`
+  - payload includes `:session-id`, `:workspace-dir`, `:cwd`, `:head`, `:previous-head`, `:reason`, `:classification`, `:timestamp`
 
 ### Runtime Surface
 

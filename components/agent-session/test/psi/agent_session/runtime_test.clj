@@ -172,6 +172,8 @@
       (is (= 1 (count @extension-events)))
       (let [{:keys [name payload]} (first @extension-events)]
         (is (= "git_commit_created" name))
+        (is (= sid (:session-id payload)))
+        (is (= "/tmp/psi-runtime-event" (:workspace-dir payload)))
         (is (= "/tmp/psi-runtime-event" (:cwd payload)))
         (is (= "abcdef1234567890" (:head payload)))
         (is (= "1111111111111111" (:previous-head payload)))
