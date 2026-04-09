@@ -302,10 +302,20 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
         ;; Clear stale transcript state, then fetch canonical messages so startup
         ;; prompts are replayed in the frontend transcript.
         ;; footer/updated + session/updated events arrive before the response frame
-        ;; and correctly set projection-footer.  Capture it before reset clears it.
-        (let ((saved-footer (and psi-emacs--state
-                                 (psi-emacs-state-projection-footer psi-emacs--state))))
+        ;; and correctly set projection-footer. Capture it before reset clears it.
+        ;; Pin the selected session id locally before follow-up reads so any
+        ;; already-arrived footer/session events for the new session are accepted
+        ;; deterministically instead of being filtered as stale-session traffic.
+        (let* ((data (alist-get :data frame nil nil #'equal))
+               (target-session-id (or (alist-get :session-id data nil nil #'equal)
+                                      (alist-get 'session-id data nil nil #'equal)
+                                      (and psi-emacs--state
+                                           (psi-emacs-state-session-id psi-emacs--state))))
+               (saved-footer (and psi-emacs--state
+                                  (psi-emacs-state-projection-footer psi-emacs--state))))
           (psi-emacs--reset-transcript-state t)
+          (when (and target-session-id psi-emacs--state)
+            (setf (psi-emacs-state-session-id psi-emacs--state) target-session-id))
           (when (and saved-footer psi-emacs--state)
             (setf (psi-emacs-state-projection-footer psi-emacs--state) saved-footer)
             (when (fboundp 'psi-emacs--upsert-projection-block)

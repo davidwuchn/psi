@@ -1434,10 +1434,12 @@
       (is (some #(contains? (:data %) :messages) events))))
 
   (testing "command /new emits session/resumed and session/rehydrated canonical events"
-    (let [[ctx _]             (create-session-context)
+    (let [[ctx _]             (create-session-context {:session-defaults {:model {:provider "openai"
+                                                                                  :id "gpt-5.4"
+                                                                                  :reasoning false}}})
           state               (atom {:ready?            true
                                      :pending           {}
-                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result" "footer/updated"}})
           handler             (make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/new\"}}\n")
@@ -1445,11 +1447,17 @@
           frames              (parse-frames out-lines)
           events              (filter #(= :event (:kind %)) frames)
           event-topics        (set (map :event events))
-          command-result      (some #(when (= "command-result" (:event %)) %) events)]
+          command-result      (some #(when (= "command-result" (:event %)) %) events)
+          footer-event        (some #(when (= "footer/updated" (:event %)) %) events)
+          stats-line          (get-in footer-event [:data :stats-line] "")]
       (is (contains? event-topics "session/resumed"))
       (is (contains? event-topics "session/rehydrated"))
       (is (some? command-result))
-      (is (= "new_session" (get-in command-result [:data :type])))))
+      (is (= "new_session" (get-in command-result [:data :type])))
+      (is (some? footer-event))
+      (is (str/includes? stats-line "gpt-5.4"))
+      (is (str/includes? stats-line "(openai)"))
+      (is (not (str/includes? stats-line "(no-provider)")))))
 
   (testing "command /resume <path> emits session/resumed and session/rehydrated canonical events"
     (let [cwd                 (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))
@@ -1867,7 +1875,9 @@
 
 (deftest rpc-new-session-footer-usage-is-session-scoped-test
   (testing "new_session footer/updated does not carry usage totals from previous session"
-    (let [[ctx session-id] (create-session-context)
+    (let [[ctx session-id] (create-session-context {:session-defaults {:model {:provider "openai"
+                                                                               :id "gpt-5.4"
+                                                                               :reasoning false}}})
           state      (atom {:ready? true
                             :pending {}
                             :subscribed-topics #{"footer/updated"}})
@@ -1887,7 +1897,10 @@
       (is (some? footer-event))
       (is (string? stats-line))
       (is (not (str/includes? stats-line "↑111")))
-      (is (not (str/includes? stats-line "↓22"))))))
+      (is (not (str/includes? stats-line "↓22")))
+      (is (str/includes? stats-line "gpt-5.4"))
+      (is (str/includes? stats-line "(openai)"))
+      (is (not (str/includes? stats-line "(no-provider)"))))))
 
 (deftest footer-updated-payload-includes-model-and-thinking-when-session-reasoning-enabled-test
   (testing "footer payload includes model/thinking details from active session query"

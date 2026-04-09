@@ -104,6 +104,7 @@
                                                     :prompt-contributions
                                                     :tool-defs
                                                     :extensions
+                                                    :context-tokens
                                                     :context-window
                                                     :ui-type
                                                     :tool-output-overrides]))

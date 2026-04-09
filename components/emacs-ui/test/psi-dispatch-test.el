@@ -871,6 +871,32 @@ synchronously from the RPC event callback can make Emacs appear to do nothing."
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-new-session-response-pins-target-session-id-before-footer-filtering ()
+  "Regression: /new response must retarget local session id before stale footer restore.
+
+Without this, already-arrived footer/session events for the new session can be
+filtered against the old selected session and the stale footer survives." 
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (setf (psi-emacs-state-session-id psi-emacs--state) "s-old")
+          (setf (psi-emacs-state-projection-footer psi-emacs--state) "old footer")
+          (cl-letf (((symbol-function 'psi-emacs--request-get-messages-for-switch)
+                     (lambda (_state) t))
+                    ((symbol-function 'psi-emacs--focus-input-area)
+                     (lambda (&rest _args) t)))
+            (psi-emacs--handle-new-session-response
+             psi-emacs--state
+             '((:kind . :response)
+               (:ok . t)
+               (:data . ((:session-id . "s-new")))))
+            (should (equal "s-new" (psi-emacs-state-session-id psi-emacs--state)))
+            (should (equal "old footer" (psi-emacs-state-projection-footer psi-emacs--state)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-command-result-session-switch-requests-switch-and-replays-order ()
   (with-temp-buffer
     (psi-emacs-mode)
