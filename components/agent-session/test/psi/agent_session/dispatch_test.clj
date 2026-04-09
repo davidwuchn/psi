@@ -71,7 +71,9 @@
             result (dispatch/dispatch! ctx :test-event {:foo "bar"})]
         (is (= :result result))
         (is (= 1 (count @calls)))
-        (is (= {:ctx {:some "context"} :data {:foo "bar"}}
+        (is (= {:ctx {:some "context"}
+                :data {:foo "bar"
+                       :dispatch-id (:dispatch-id (:data (first @calls)))}}
                (first @calls))))))
 
   (testing "dispatch normalizes a canonical internal event value while preserving compat projections"
@@ -109,21 +111,23 @@
   (testing "dispatch! returns nil for unregistered event type"
     (is (nil? (dispatch/dispatch! {} :unknown-event {:x 1}))))
 
-  (testing "dispatch! with no event-data passes nil"
+  (testing "dispatch! with no event-data passes only injected dispatch metadata"
     (let [received-data (atom :not-called)]
       (dispatch/register-handler! :no-data
                                   (fn [_ctx data]
                                     (reset! received-data data)))
       (dispatch/dispatch! {} :no-data)
-      (is (nil? @received-data))))
+      (is (string? (:dispatch-id @received-data)))
+      (is (= [:dispatch-id] (keys @received-data)))))
 
-  (testing "dispatch! with 2-arity call passes nil as event-data"
+  (testing "dispatch! with 2-arity call passes only injected dispatch metadata"
     (let [received-data (atom :not-called)]
       (dispatch/register-handler! :two-arity
                                   (fn [_ctx data]
                                     (reset! received-data data)))
       (dispatch/dispatch! {} :two-arity)
-      (is (nil? @received-data)))))
+      (is (string? (:dispatch-id @received-data)))
+      (is (= [:dispatch-id] (keys @received-data))))))
 
 ;; ── Handler receives ctx ────────────────────────────────────
 

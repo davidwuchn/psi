@@ -108,7 +108,8 @@
                :key [:lsp "/repo"]
                :payload {"jsonrpc" "2.0"
                          "method" "initialized"
-                         "params" {}}}]
+                         "params" {}}
+               :dispatch-id nil}]
              (:service-notifications @state))))))
 
 (deftest init-registers-post-tool-processor-test
