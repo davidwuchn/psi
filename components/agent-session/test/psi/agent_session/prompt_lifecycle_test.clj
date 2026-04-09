@@ -1,6 +1,6 @@
 (ns psi.agent-session.prompt-lifecycle-test
   (:require
-   [clojure.test :refer [deftest testing is]]
+   [clojure.test :refer [deftest is]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.prompt-chain]
@@ -61,24 +61,24 @@
     (with-redefs [psi.agent-session.prompt-chain/run-prompt-tools! (fn [_ctx _sid _res _pq]
                                                                      {:continued? true :tool-call-count 1})
                   psi.agent-session.prompt-request/build-prepared-request (fn [_ctx sid {:keys [turn-id]}]
-                                                                           {:prepared-request/id turn-id
-                                                                            :prepared-request/session-id sid
-                                                                            :prepared-request/system-prompt "sys"
-                                                                            :prepared-request/messages []
-                                                                            :prepared-request/tools []
-                                                                            :prepared-request/session-snapshot {:cache-breakpoints #{}}
-                                                                            :prepared-request/model {:provider "stub" :id "stub"}
-                                                                            :prepared-request/ai-options {}
-                                                                            :prepared-request/provider-conversation {:system-prompt "sys"
-                                                                                                                     :messages []
-                                                                                                                     :tools []}})
+                                                                            {:prepared-request/id turn-id
+                                                                             :prepared-request/session-id sid
+                                                                             :prepared-request/system-prompt "sys"
+                                                                             :prepared-request/messages []
+                                                                             :prepared-request/tools []
+                                                                             :prepared-request/session-snapshot {:cache-breakpoints #{}}
+                                                                             :prepared-request/model {:provider "stub" :id "stub"}
+                                                                             :prepared-request/ai-options {}
+                                                                             :prepared-request/provider-conversation {:system-prompt "sys"
+                                                                                                                      :messages []
+                                                                                                                      :tools []}})
                   psi.agent-session.prompt-runtime/execute-prepared-request! (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
                                                                                {:execution-result/turn-id (:prepared-request/id prepared)
                                                                                 :execution-result/session-id sid
                                                                                 :execution-result/assistant-message {:role "assistant"
-                                                                                                                    :content [{:type :text :text "after tool"}]
-                                                                                                                    :stop-reason :stop
-                                                                                                                    :timestamp (java.time.Instant/now)}
+                                                                                                                     :content [{:type :text :text "after tool"}]
+                                                                                                                     :stop-reason :stop
+                                                                                                                     :timestamp (java.time.Instant/now)}
                                                                                 :execution-result/turn-outcome :turn.outcome/stop
                                                                                 :execution-result/tool-calls []
                                                                                 :execution-result/stop-reason :stop})]
@@ -103,9 +103,9 @@
                     {:execution-result/turn-id (:prepared-request/id prepared)
                      :execution-result/session-id sid
                      :execution-result/assistant-message {:role "assistant"
-                                                         :content [{:type :text :text "hello back"}]
-                                                         :stop-reason :stop
-                                                         :timestamp (java.time.Instant/now)}
+                                                          :content [{:type :text :text "hello back"}]
+                                                          :stop-reason :stop
+                                                          :timestamp (java.time.Instant/now)}
                      :execution-result/turn-outcome :turn.outcome/stop
                      :execution-result/tool-calls []
                      :execution-result/stop-reason :stop})]
@@ -130,3 +130,31 @@
       (is (= :idle (ss/sc-phase-in ctx session-id)))
       (is (false? (:is-streaming (ss/get-session-data-in ctx session-id))))
       (is (= ["user" "assistant"] (mapv :role msgs))))))
+
+(deftest build-prepared-request-surfaces-developer-and-contribution-layers-test
+  (let [[ctx session-id] (create-session-context {:persist? false})]
+    (dispatch/dispatch! ctx :session/bootstrap-prompt-state
+                        {:session-id session-id
+                         :system-prompt "sys"
+                         :developer-prompt "dev"
+                         :developer-prompt-source :explicit}
+                        {:origin :core})
+    (dispatch/dispatch! ctx :session/register-prompt-contribution
+                        {:session-id session-id
+                         :ext-path "/ext/a"
+                         :id "c1"
+                         :contribution {:content "Hint A" :priority 10 :enabled true}}
+                        {:origin :core})
+    (let [prepared (psi.agent-session.prompt-request/build-prepared-request
+                    ctx session-id {:turn-id "t1"
+                                    :user-message {:role "user"
+                                                   :content [{:type :text :text "hello"}]}})
+          layers   (:prepared-request/prompt-layers prepared)
+          kinds    (mapv :id layers)]
+      (is (= [:system/base :system/developer :system/contributions] kinds))
+      (is (= "sys" (get-in prepared [:prepared-request/prompt-layers 0 :content])))
+      (is (= "dev" (get-in prepared [:prepared-request/prompt-layers 1 :content])))
+      (is (= :explicit (get-in prepared [:prepared-request/prompt-layers 1 :source])))
+      (is (= "Hint A" (get-in prepared [:prepared-request/prompt-layers 2 :content])))
+      (is (= "dev" (get-in prepared [:prepared-request/session-snapshot :developer-prompt])))
+      (is (= :explicit (get-in prepared [:prepared-request/session-snapshot :developer-prompt-source]))))))

@@ -50,6 +50,24 @@
     (ss/journal-append-in! ctx session-id (persist/message-entry user-msg))
     user-msg))
 
+(defn- last-assistant-message-in-journal
+  [ctx session-id]
+  (let [journal (ss/get-state-value-in ctx (ss/state-path :journal session-id))]
+    (some (fn [entry]
+            (when (and (= :message (:kind entry))
+                       (= "assistant" (get-in entry [:data :message :role])))
+              (get-in entry [:data :message])))
+          (rseq (vec journal)))))
+
+(defn- last-user-message-entry-id-in-journal
+  [ctx session-id]
+  (let [journal (ss/get-state-value-in ctx (ss/state-path :journal session-id))]
+    (some (fn [entry]
+            (when (and (= :message (:kind entry))
+                       (= "user" (get-in entry [:data :message :role])))
+              (:id entry)))
+          (rseq (vec journal)))))
+
 (defn expand-input-in
   "Expand user input through skills (/skill:name) or prompt templates (/name).
 
@@ -228,6 +246,33 @@
     (catch Exception _
       nil)))
 
+(defn- submit-prompt-turn-in!
+  "Dispatch the shared prompt lifecycle for an already-expanded user message."
+  [ctx session-id text images {:keys [progress-queue runtime-opts sync-on-git-head-change?]}]
+  (when-not (ss/idle-in? ctx session-id)
+    (throw (ex-info "Session is not idle" {:phase (ss/sc-phase-in ctx session-id)})))
+  (let [user-msg {:role      "user"
+                  :content   (cond-> [{:type :text :text text}]
+                               images (into images))
+                  :timestamp (java.time.Instant/now)}
+        submit-r (dispatch/dispatch! ctx :session/prompt-submit
+                                     {:session-id session-id :user-msg user-msg}
+                                     {:origin :core})
+        turn-id  (:turn-id submit-r)
+        _        (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :core})
+        result   (dispatch/dispatch! ctx :session/prompt-prepare-request
+                                     (cond-> {:session-id session-id
+                                              :turn-id    turn-id
+                                              :user-msg   user-msg}
+                                       progress-queue
+                                       (assoc :progress-queue progress-queue)
+                                       runtime-opts
+                                       (assoc :runtime-opts runtime-opts))
+                                     {:origin :core})]
+    (when sync-on-git-head-change?
+      (safe-maybe-sync-on-git-head-change! ctx session-id))
+    result))
+
 (defn run-agent-loop-in!
   "Run executor loop with shared option shaping and usage updates.
 
@@ -254,25 +299,33 @@
      result)))
 
 (defn register-extension-run-fn-in!
-  "Register a background agent-loop runner for extension-initiated prompts.
+  "Register a background prompt-lifecycle runner for extension-initiated prompts.
 
    After this is called, `send-extension-prompt-in!` can always invoke the
    runner in a background thread.
 
    The runner fn is (fn [text source]) — it waits until the session is idle,
-   prepares the user message, resolves the API key, and calls `run-agent-loop-in!`.
+   expands input through the shared path, resolves runtime opts, and routes
+   through the dispatch-visible prompt lifecycle.
 
    Call this once after bootstrap, passing the live ai-ctx and ai-model."
-  ([ctx session-id ai-ctx ai-model]
+  ([ctx session-id _ai-ctx ai-model]
    (let [run-fn (fn [text _source]
                   (try
                     (loop [attempt 0]
                       (if (ss/idle-in? ctx session-id)
-                        (let [{:keys [user-message]} (prepare-user-message-in! ctx session-id text nil)
-                              api-key (resolve-api-key-in ctx session-id ai-model)]
-                          (run-agent-loop-in! ctx session-id ai-ctx ai-model [user-message]
-                                              {:api-key api-key
-                                               :sync-on-git-head-change? true}))
+                        (let [{expanded-text :text} (expand-input-in ctx session-id text)
+                              _        (safe-recover-memory! expanded-text)
+                              api-key  (resolve-api-key-in ctx session-id ai-model)]
+                          (dispatch/dispatch! ctx :session/set-model
+                                              {:session-id session-id
+                                               :model ai-model
+                                               :scope :session}
+                                              {:origin :core})
+                          (submit-prompt-turn-in! ctx session-id expanded-text nil
+                                                  {:runtime-opts (cond-> {}
+                                                                   api-key (assoc :api-key api-key))
+                                                   :sync-on-git-head-change? true}))
                         (when (< attempt 1200) ;; ~5m max wait (250ms backoff)
                           (Thread/sleep 250)
                           (recur (inc attempt)))))
@@ -313,31 +366,60 @@
                applied []
                errors []]
           (if-let [rule (first remaining)]
-            (let [text       (:text rule)
-                  user-msg   (journal-user-message-in! ctx session-id text nil)
-                  message-id (some-> (ss/get-state-value-in ctx (ss/state-path :journal session-id)) last :id)
-                  api-key    (resolve-api-key-in ctx session-id ai-model)
-                  _          (when message-id
-                               (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id message-id} {:origin :core}))
-                  outcome    (try
-                               {:status :ok
-                                :assistant-result
-                                (run-agent-loop-in! ctx session-id ai-ctx ai-model [user-msg]
-                                                    {:run-loop-fn run-loop-fn
-                                                     :api-key api-key
-                                                     :progress-queue progress-queue
-                                                     :sync-on-git-head-change? true})}
-                               (catch Exception e
-                                 {:status :error
-                                  :error {:message (ex-message e)
-                                          :data (ex-data e)}}))
-                  entry      (merge {:id (:id rule)
-                                     :user-message user-msg}
-                                    outcome)
-                  applied'   (conj applied entry)
-                  errors'    (if (= :error (:status outcome))
-                               (conj errors (:error outcome))
-                               errors)]
+            (let [text    (:text rule)
+                  outcome (try
+                            (if run-loop-fn
+                              (let [user-msg   (journal-user-message-in! ctx session-id text nil)
+                                    message-id (some-> (ss/get-state-value-in ctx (ss/state-path :journal session-id)) last :id)
+                                    api-key    (resolve-api-key-in ctx session-id ai-model)
+                                    _          (when message-id
+                                                 (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id message-id} {:origin :core}))]
+                                {:status :ok
+                                 :user-message user-msg
+                                 :assistant-result
+                                 (run-agent-loop-in! ctx session-id ai-ctx ai-model [user-msg]
+                                                     {:run-loop-fn run-loop-fn
+                                                      :api-key api-key
+                                                      :progress-queue progress-queue
+                                                      :sync-on-git-head-change? true})})
+                              (let [api-key (resolve-api-key-in ctx session-id ai-model)
+                                    _       (dispatch/dispatch! ctx :session/set-model
+                                                                {:session-id session-id
+                                                                 :model ai-model
+                                                                 :scope :session}
+                                                                {:origin :core})
+                                    _       (submit-prompt-turn-in! ctx session-id text nil
+                                                                    {:progress-queue progress-queue
+                                                                     :runtime-opts (cond-> {}
+                                                                                     api-key (assoc :api-key api-key))
+                                                                     :sync-on-git-head-change? true})
+                                    user-id (last-user-message-entry-id-in-journal ctx session-id)
+                                    _       (when user-id
+                                              (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id user-id} {:origin :core}))]
+                                {:status :ok
+                                 :user-message (some->> (persist/all-entries-in ctx session-id)
+                                                        reverse
+                                                        (filter #(= :message (:kind %)))
+                                                        (map #(get-in % [:data :message]))
+                                                        (filter #(= "user" (:role %)))
+                                                        first)
+                                 :assistant-result (last-assistant-message-in-journal ctx session-id)}))
+                            (catch Exception e
+                              {:status :error
+                               :error {:message (ex-message e)
+                                       :data (ex-data e)}}))
+                  entry    (cond-> {:id (:id rule)
+                                    :user-message (:user-message outcome)}
+                             (= :ok (:status outcome))
+                             (merge {:status :ok
+                                     :assistant-result (:assistant-result outcome)})
+                             (= :error (:status outcome))
+                             (merge {:status :error
+                                     :error (:error outcome)}))
+                  applied' (conj applied entry)
+                  errors'  (if (= :error (:status outcome))
+                             (conj errors (:error outcome))
+                             errors)]
               (if (and fail-fast? (= :error (:status outcome)))
                 {:applied applied' :errors errors'}
                 (recur (rest remaining) applied' errors')))

@@ -3,6 +3,8 @@
    [psi.agent-session.test-support :as test-support]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.prompt-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.runtime :as runtime]
@@ -149,4 +151,44 @@
         (is (= [] (:rules result)))
         (is (= [] @calls))
         (is (= [] (:startup-prompts sd)))
+        (is (true? (:startup-bootstrap-completed? sd)))))))
+
+(deftest run-startup-prompts-in-without-run-loop-fn-routes-through-prompt-lifecycle-test
+  (let [[ctx _]    (create-session-context {:persist? false})
+        sd         (session/new-session-in! ctx nil {})
+        session-id (:session-id sd)]
+    (with-redefs [psi.agent-session.startup-prompts/discover-rules
+                  (fn [_]
+                    [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
+                     {:id "s2" :phase :project-bootstrap :priority 2 :source :global :text "two"}])
+                  psi.agent-session.prompt-runtime/execute-prepared-request!
+                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                    {:execution-result/turn-id (:prepared-request/id prepared)
+                     :execution-result/session-id sid
+                     :execution-result/assistant-message {:role "assistant"
+                                                          :content [{:type :text :text "ok"}]
+                                                          :stop-reason :stop
+                                                          :timestamp (java.time.Instant/now)}
+                     :execution-result/turn-outcome :turn.outcome/stop
+                     :execution-result/tool-calls []
+                     :execution-result/stop-reason :stop})]
+      (let [result  (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx nil
+                                                                     :ai-model {:provider :anthropic :id "m"}})
+            sd      (ss/get-session-data-in ctx session-id)
+            entries (dispatch/event-log-entries)
+            msgs    (->> (persist/all-entries-in ctx session-id)
+                         (filter #(= :message (:kind %)))
+                         (map #(get-in % [:data :message]))
+                         vec)
+            roles   (mapv :role msgs)
+            texts   (mapv #(get-in % [:content 0 :text]) msgs)]
+        (is (= 2 (count (:rules result))))
+        (is (= [] (:errors result)))
+        (is (some #(= :session/prompt-submit (:event-type %)) entries))
+        (is (some #(= :session/prompt-prepare-request (:event-type %)) entries))
+        (is (some #(= :session/prompt-record-response (:event-type %)) entries))
+        (is (some #(= :session/prompt-finish (:event-type %)) entries))
+        (is (= ["user" "assistant" "user" "assistant"] roles))
+        (is (= ["one" "ok" "two" "ok"] texts))
+        (is (= 2 (count (:startup-message-ids sd))))
         (is (true? (:startup-bootstrap-completed? sd)))))))

@@ -177,6 +177,51 @@ Available: " (str/join ", " (map name (keys models/all-models))))
               model))
           models/all-models)))
 
+(defn- current-ai-model-in
+  "Resolve the effective runtime model for `session-id`, falling back to
+   `fallback-ai-model` when the session model is absent or not in the runtime
+   catalog."
+  [ctx session-id fallback-ai-model]
+  (let [{:keys [provider id]} (:model (ss/get-session-data-in ctx session-id))]
+    (or (when (and provider id)
+          (resolve-model-by-provider+id provider id))
+        fallback-ai-model)))
+
+(defn- submit-prompt-in!
+  "Submit prompt text through the shared prompt lifecycle used by app-runtime
+   callers.
+
+   Expands skills/templates before submission, runs memory recovery on the
+   expanded text, ensures the session carries the resolved runtime model for the
+   turn, then routes through `session/prompt-in!`.
+
+   Returns:
+   {:assistant-message message?
+    :expansion expansion?
+    :ai-model model?}"
+  [ctx session-id fallback-ai-model text images {:keys [progress-queue on-expansion sync-on-git-head-change?]}]
+  (let [{expanded-text :text expansion :expansion}
+        (runtime/expand-input-in ctx session-id text)
+        _        (when on-expansion
+                   (on-expansion expansion))
+        _        (runtime/safe-recover-memory! expanded-text)
+        ai-model (current-ai-model-in ctx session-id fallback-ai-model)
+        _        (when ai-model
+                   (dispatch/dispatch! ctx :session/set-model
+                                       {:session-id session-id
+                                        :model ai-model
+                                        :scope :session}
+                                       {:origin :core}))
+        _        (session/prompt-in! ctx session-id expanded-text images
+                                     (cond-> {}
+                                       progress-queue
+                                       (assoc :progress-queue progress-queue)))
+        _        (when sync-on-git-head-change?
+                   (runtime/safe-maybe-sync-on-git-head-change! ctx session-id))]
+    {:assistant-message (session/last-assistant-message-in ctx session-id)
+     :expansion expansion
+     :ai-model ai-model}))
+
 ;; ============================================================
 ;; Output helpers
 ;; ============================================================
@@ -383,15 +428,13 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 
 (defn- run-prompt!
   "Send `text` to `session-id` and block until done, printing the response.
-   Uses shared runtime prompt preparation for parity with RPC/TUI."
-  [ctx session-id ai-ctx ai-model text]
-  (let [{:keys [user-message expansion]} (runtime/prepare-user-message-in! ctx session-id text nil)
-        _       (print-expansion-banner! expansion)
-        api-key (runtime/resolve-api-key-in ctx session-id ai-model)
-        result  (runtime/run-agent-loop-in! ctx session-id ai-ctx ai-model [user-message]
-                                            {:api-key api-key
-                                             :sync-on-git-head-change? true})]
-    (print-assistant-message result)))
+   Uses the shared prompt lifecycle for parity with RPC/TUI."
+  [ctx session-id _ai-ctx ai-model text]
+  (let [{:keys [assistant-message]}
+        (submit-prompt-in! ctx session-id ai-model text nil
+                           {:sync-on-git-head-change? true
+                            :on-expansion print-expansion-banner!})]
+    (print-assistant-message assistant-message)))
 
 (defn- graph-capabilities-in
   "Best-effort read of current capability summaries from the live graph."
@@ -458,19 +501,19 @@ Available: " (str/join ", " (map name (keys models/all-models))))
         effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
         nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
         ctx                    (session/create-context
-                                  {:session-defaults {:model {:provider  (name (:provider effective-model))
-                                                             :id        (:id effective-model)
-                                                             :reasoning (:supports-reasoning effective-model)}
-                                                     :thinking-level effective-thinking-level
-                                                     :prompt-mode              effective-prompt-mode
-                                                     :nucleus-prelude-override nucleus-prelude-override
-                                                     :ui-type                  (or ui-type :console)}
-                                   :config session-config
-                                   :event-queue event-queue
-                                   :oauth-ctx oauth-ctx
-                                   :nrepl-runtime-atom nrepl-runtime
-                                   :ui-type ui-type
-                                   :mutations mutations/all-mutations})
+                                {:session-defaults {:model {:provider  (name (:provider effective-model))
+                                                            :id        (:id effective-model)
+                                                            :reasoning (:supports-reasoning effective-model)}
+                                                    :thinking-level effective-thinking-level
+                                                    :prompt-mode              effective-prompt-mode
+                                                    :nucleus-prelude-override nucleus-prelude-override
+                                                    :ui-type                  (or ui-type :console)}
+                                 :config session-config
+                                 :event-queue event-queue
+                                 :oauth-ctx oauth-ctx
+                                 :nrepl-runtime-atom nrepl-runtime
+                                 :ui-type ui-type
+                                 :mutations mutations/all-mutations})
         recursion-ctx            (recursion/create-hosted-context ctx (ss/state-path :recursion))
         ctx                      (assoc ctx :recursion-ctx recursion-ctx)
         _                        (when-not (sa/recursion-state-in ctx)
@@ -849,15 +892,12 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                              :else
                              (future
                                (try
-                                 (let [sid      @tui-focus*
-                                       {:keys [user-message]} (runtime/prepare-user-message-in! ctx sid text nil)
-                                       api-key  (runtime/resolve-api-key-in ctx sid ai-model)
-                                       result   (runtime/run-agent-loop-in!
-                                                 ctx sid ai-ctx ai-model [user-message]
-                                                 {:api-key api-key
-                                                  :progress-queue queue
-                                                  :sync-on-git-head-change? true})]
-                                   (.put queue {:kind :done :result result}))
+                                 (let [sid @tui-focus*
+                                       {:keys [assistant-message]}
+                                       (submit-prompt-in! ctx sid ai-model text nil
+                                                          {:progress-queue queue
+                                                           :sync-on-git-head-change? true})]
+                                   (.put queue {:kind :done :result assistant-message}))
                                  (catch Exception e
                                    (.put queue {:kind :error :message (ex-message e)})))))))]
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-08
+
+- λ Δ Converged more shared-session prompt entrypoints onto the dispatch-visible prompt lifecycle:
+  - app-runtime CLI and TUI prompt submission now use the shared prompt lifecycle instead of direct `run-agent-loop-in!`
+  - extension run-fn prompt submission now uses the shared prompt lifecycle
+  - startup prompts now use the shared prompt lifecycle on the default runtime path while retaining injected `:run-loop-fn` compatibility
+  - `psi.extension/run-agent-loop-in-session` now routes through `prompt-in!` instead of direct executor entry
+  - prepared-request introspection now exposes explicit prompt layers for base system prompt, developer metadata layer, and prompt contributions
+  - intentionally isolated workflow/ephemeral runtimes remain executor-owned by decision, rather than being forced into shared-session lifecycle semantics
+- ✓ Verification:
+  - changed Clojure files pass `cljfmt`
+  - changed Clojure files pass `clj-kondo`
+
 ## 2026-04-05
 
 - λ Δ Live session displays now project a derived session display name without persisting a real session rename:

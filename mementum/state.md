@@ -127,14 +127,20 @@ Bootstrapped on 2026-04-02.
 
 ## Suggested next step
 - RPC prompt flow is now migrated onto the new prompt lifecycle path.
-- The main user-visible RPC path now uses prompt lifecycle orchestration instead of direct `run-agent-loop-in!`.
+- app-runtime console and TUI prompt submission now also use prompt lifecycle orchestration instead of direct `run-agent-loop-in!`.
+- extension run-fn prompt submission now also uses prompt lifecycle orchestration instead of direct `run-agent-loop-in!`.
+- startup prompt entry now also uses prompt lifecycle orchestration on the default runtime path; `:run-loop-fn` compatibility remains in place.
 - Migration follow-on landed with compatibility fixes:
   - `prompt-in!` now accepts `:progress-queue` and `:runtime-opts`
-  - RPC resolves the effective model, stores it on the session for the turn, and uses prompt lifecycle execution
+  - RPC/app-runtime/extension-run-fn/startup-default-path resolve the effective model on the session before the turn and use prompt lifecycle execution
+  - app-runtime now expands skills/templates before `prompt-in!`, preserving expansion banners in CLI while letting prompt submission own journaling
+  - extension-run-fn now expands input + memory recovery before dispatch-visible prompt submission and still performs post-turn git sync
+  - startup prompt lifecycle path records startup message ids from the canonical journal after dispatch-visible submission
   - prepared-request API key resolution now survives continuation/tool-use turns via session-stored runtime key fallback
   - prompt recording updates context usage from execution results
-- Best next move: migrate the next real caller off old executor path, likely app-runtime/TUI prompt flow or extension/startup prompt entry points.
-- Parallel refinement slice: converge remaining prompt semantics (system prompt / profile / skill injection) into request preparation.
+- Best next move: continue reducing remaining executor-only prompt semantics for shared-session paths.
+- Decision taken: keep extension/workflow-local ephemeral sessions executor-owned when they are intentionally isolated runtimes (for example workflow step-local sessions in `extensions/mcp_tasks_run.clj`) rather than forcing them into the shared session lifecycle.
+- The next convergence target should therefore be shared-session prompt semantics such as agent profile / skill injection in request preparation, not isolated workflow runtimes.
 - Keep LSP follow-on work as a secondary thread.
 
 ## Notes for future ψ

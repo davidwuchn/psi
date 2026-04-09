@@ -10,7 +10,6 @@
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as core]
    [psi.agent-session.dispatch :as dispatch]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
@@ -712,7 +711,7 @@
                   :psi.agent-session/cwd
                   :psi.agent-session/thinking-level]}
   (let [sd                 (core/new-session-in! agent-session-ctx parent-session-id {:session-name  session-name
-                                                                                        :worktree-path worktree-path})
+                                                                                      :worktree-path worktree-path})
         new-sid            (:session-id sd)
         _       (when system-prompt
                   (dispatch/dispatch! agent-session-ctx :session/set-system-prompt {:session-id new-sid :prompt system-prompt} {:origin :mutations}))
@@ -745,9 +744,9 @@
     {:psi.agent-session/session-id child-sid}))
 
 (pco/defmutation run-agent-loop-in-session
-  "Run the agent loop for a specific child session.
-  Scopes the ctx to the target session-id and runs the executor.
-  Blocks until the agent loop completes. Returns the final result."
+  "Run the prompt lifecycle for a specific child session.
+  Scopes the ctx to the target session-id and blocks until the turn completes.
+  Returns the final assistant result summary."
   [_ {:keys [psi/agent-session-ctx session-id prompt model api-key]}]
   {::pco/op-name 'psi.extension/run-agent-loop-in-session
    ::pco/params  [:psi/agent-session-ctx :session-id :prompt]
@@ -755,27 +754,26 @@
                   :psi.agent-session/agent-run-text
                   :psi.agent-session/agent-run-elapsed-ms
                   :psi.agent-session/agent-run-error-message]}
-  (let [;; Resolve model to full schema from models/all-models
-        session-model (:model (ss/get-session-data-in agent-session-ctx session-id))
-        resolved-model (or model
-                           (when session-model
-                             (some (fn [m]
-                                     (when (and (= (:provider m) (keyword (:provider session-model)))
-                                                (= (:id m) (:id session-model)))
-                                       m))
-                                   (vals models/all-models)))
-                           (get models/all-models :sonnet-4.6))
-        user-msg      {:role      "user"
-                       :content   [{:type :text :text (or prompt "")}]
-                       :timestamp (java.time.Instant/now)}]
+  (let [session-model   (:model (ss/get-session-data-in agent-session-ctx session-id))
+        resolved-model  (or model
+                            (when session-model
+                              (some (fn [m]
+                                      (when (and (= (:provider m) (keyword (:provider session-model)))
+                                                 (= (:id m) (:id session-model)))
+                                        m))
+                                    (vals models/all-models)))
+                            (get models/all-models :sonnet-4.6))
+        started-ms      (System/currentTimeMillis)]
     (try
-      (ss/journal-append-in! agent-session-ctx session-id (persist/message-entry user-msg))
-      (let [result (executor/run-agent-loop!
-                    nil agent-session-ctx session-id (ss/agent-ctx-in agent-session-ctx session-id)
-                    resolved-model
-                    [user-msg]
-                    (cond-> {}
-                      api-key (assoc :api-key api-key)))
+      (dispatch/dispatch! agent-session-ctx :session/set-model
+                          {:session-id session-id
+                           :model resolved-model
+                           :scope :session}
+                          {:origin :mutations})
+      (core/prompt-in! agent-session-ctx session-id (or prompt "") nil
+                       {:runtime-opts (cond-> {}
+                                        api-key (assoc :api-key api-key))})
+      (let [result (core/last-assistant-message-in agent-session-ctx session-id)
             text   (->> (:content result)
                         (keep (fn [c]
                                 (case (:type c)
@@ -786,12 +784,12 @@
             ok?    (not= :error (:stop-reason result))]
         {:psi.agent-session/agent-run-ok?           ok?
          :psi.agent-session/agent-run-text          text
-         :psi.agent-session/agent-run-elapsed-ms    (or (:elapsed-ms result) 0)
+         :psi.agent-session/agent-run-elapsed-ms    (- (System/currentTimeMillis) started-ms)
          :psi.agent-session/agent-run-error-message (:error-message result)})
       (catch Throwable e
         {:psi.agent-session/agent-run-ok?           false
          :psi.agent-session/agent-run-text          (str "Error: " (or (ex-message e) (.getMessage e) (str e)))
-         :psi.agent-session/agent-run-elapsed-ms    0
+         :psi.agent-session/agent-run-elapsed-ms    (- (System/currentTimeMillis) started-ms)
          :psi.agent-session/agent-run-error-message (or (ex-message e) (.getMessage e) (str e))}))))
 
 (pco/defmutation switch-session

@@ -10,6 +10,7 @@
    [psi.agent-session.extensions :as ext]
    [psi.app-runtime :as app-runtime]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-runtime]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.project-preferences :as project-prefs]
@@ -175,6 +176,91 @@
       (finally
         (reset! app-runtime/session-state orig-state)))))
 
+(deftest run-session-routes-cli-prompt-through-prompt-lifecycle-test
+  (let [orig-state @app-runtime/session-state]
+    (try
+      (with-main-bootstrap-stubs
+        (fn []
+          (dispatch/clear-event-log!)
+          (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                        (fn [_ai-ctx _ctx sid _agent-ctx prepared _progress-queue]
+                          {:execution-result/turn-id (:prepared-request/id prepared)
+                           :execution-result/session-id sid
+                           :execution-result/prepared-request-id (:prepared-request/id prepared)
+                           :execution-result/assistant-message {:role "assistant"
+                                                                :content [{:type :text :text "hello from lifecycle"}]
+                                                                :stop-reason :stop
+                                                                :timestamp (java.time.Instant/now)}
+                           :execution-result/turn-outcome :turn.outcome/stop
+                           :execution-result/tool-calls []
+                           :execution-result/stop-reason :stop})
+                        clojure.core/read-line (let [calls (atom 0)]
+                                                 (fn []
+                                                   (case (swap! calls inc)
+                                                     1 "hello"
+                                                     2 "/quit"
+                                                     nil)))]
+            (app-runtime/run-session :ignored)
+            (let [ctx        (:ctx @app-runtime/session-state)
+                  session-id (active-session-id ctx)
+                  entries    (dispatch/event-log-entries)
+                  roles      (->> (persist/all-entries-in ctx session-id)
+                                  (filter #(= :message (:kind %)))
+                                  (map #(get-in % [:data :message :role]))
+                                  vec)]
+              (is (some #(= :session/prompt-submit (:event-type %)) entries))
+              (is (some #(= :session/prompt-prepare-request (:event-type %)) entries))
+              (is (some #(= :session/prompt-record-response (:event-type %)) entries))
+              (is (some #(= :session/prompt-finish (:event-type %)) entries))
+              (is (= ["user" "assistant" "user"] roles))))))
+      (finally
+        (reset! app-runtime/session-state orig-state)))))
+
+(deftest start-tui-runtime-routes-agent-prompts-through-prompt-lifecycle-test
+  (let [orig-state @app-runtime/session-state
+        queued     (atom nil)]
+    (try
+      (with-main-bootstrap-stubs
+        (fn []
+          (dispatch/clear-event-log!)
+          (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                        (fn [_ai-ctx _ctx sid _agent-ctx prepared progress-queue]
+                          (reset! queued progress-queue)
+                          {:execution-result/turn-id (:prepared-request/id prepared)
+                           :execution-result/session-id sid
+                           :execution-result/prepared-request-id (:prepared-request/id prepared)
+                           :execution-result/assistant-message {:role "assistant"
+                                                                :content [{:type :text :text "hello from tui lifecycle"}]
+                                                                :stop-reason :stop
+                                                                :timestamp (java.time.Instant/now)}
+                           :execution-result/turn-outcome :turn.outcome/stop
+                           :execution-result/tool-calls []
+                           :execution-result/stop-reason :stop})]
+            (let [result (app-runtime/start-tui-runtime!
+                          (fn [_model-name run-agent-fn _opts]
+                            (let [queue (java.util.concurrent.LinkedBlockingQueue.)]
+                              (run-agent-fn "hello from tui" queue)
+                              (.poll queue 2000 java.util.concurrent.TimeUnit/MILLISECONDS)))
+                          :ignored {} {})
+                  ctx     (:ctx @app-runtime/session-state)
+                  sid     (active-session-id ctx)
+                  entries (dispatch/event-log-entries)
+                  roles   (->> (persist/all-entries-in ctx sid)
+                               (filter #(= :message (:kind %)))
+                               (map #(get-in % [:data :message :role]))
+                               vec)]
+              (is (= :done (:kind result)))
+              (is (= "assistant" (get-in result [:result :role])))
+              (is (= "hello from tui lifecycle"
+                     (get-in result [:result :content 0 :text])))
+              (is (instance? java.util.concurrent.LinkedBlockingQueue @queued))
+              (is (some #(= :session/prompt-submit (:event-type %)) entries))
+              (is (some #(= :session/prompt-prepare-request (:event-type %)) entries))
+              (is (some #(= :session/prompt-record-response (:event-type %)) entries))
+              (is (some #(= :session/prompt-finish (:event-type %)) entries))
+              (is (= ["user" "assistant"] roles))))))
+      (finally
+        (reset! app-runtime/session-state orig-state)))))
 
 (deftest agent-messages->tui-resume-state-rehydrates-tool-rows-test
   (let [messages [{:role "user"
@@ -230,54 +316,54 @@
 
 ;; moved to psi.main
 #_(deftest memory-runtime-opts-from-args-test
-  (is (= {:store-provider "in-memory"
-          :auto-store-fallback? false
-          :history-commit-limit 99
-          :retention-snapshots 12
-          :retention-deltas 34}
-         (#'app-runtime/memory-runtime-opts-from-args
-          ["--memory-store" "in-memory"
-           "--memory-store-fallback" "off"
-           "--memory-history-limit" "99"
-           "--memory-retention-snapshots" "12"
-           "--memory-retention-deltas" "34"])))
-  (is (= {}
-         (#'app-runtime/memory-runtime-opts-from-args
-          ["--memory-history-limit" "not-a-number"
-           "--memory-store-fallback" "maybe"]))))
+    (is (= {:store-provider "in-memory"
+            :auto-store-fallback? false
+            :history-commit-limit 99
+            :retention-snapshots 12
+            :retention-deltas 34}
+           (#'app-runtime/memory-runtime-opts-from-args
+            ["--memory-store" "in-memory"
+             "--memory-store-fallback" "off"
+             "--memory-history-limit" "99"
+             "--memory-retention-snapshots" "12"
+             "--memory-retention-deltas" "34"])))
+    (is (= {}
+           (#'app-runtime/memory-runtime-opts-from-args
+            ["--memory-history-limit" "not-a-number"
+             "--memory-store-fallback" "maybe"]))))
 
 ;; moved to psi.main
 #_(deftest session-runtime-config-from-args-test
-  (testing "CLI flag sets timeout"
-    (is (= {:llm-stream-idle-timeout-ms 90000}
-           (#'app-runtime/session-runtime-config-from-args
-            ["--llm-idle-timeout-ms" "90000"]))))
-
-  (testing "env var is used when CLI flag is absent"
-    (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
-      (is (= {:llm-stream-idle-timeout-ms 42000}
-             (#'app-runtime/session-runtime-config-from-args [])))))
-
-  (testing "CLI flag wins over env var"
-    (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
+    (testing "CLI flag sets timeout"
       (is (= {:llm-stream-idle-timeout-ms 90000}
              (#'app-runtime/session-runtime-config-from-args
-              ["--llm-idle-timeout-ms" "90000"])))))
+              ["--llm-idle-timeout-ms" "90000"]))))
 
-  (testing "invalid CLI value does not fall back to env"
-    (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
-      (is (= {}
-             (#'app-runtime/session-runtime-config-from-args
-              ["--llm-idle-timeout-ms" "not-a-number"]))))))
+    (testing "env var is used when CLI flag is absent"
+      (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
+        (is (= {:llm-stream-idle-timeout-ms 42000}
+               (#'app-runtime/session-runtime-config-from-args [])))))
+
+    (testing "CLI flag wins over env var"
+      (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
+        (is (= {:llm-stream-idle-timeout-ms 90000}
+               (#'app-runtime/session-runtime-config-from-args
+                ["--llm-idle-timeout-ms" "90000"])))))
+
+    (testing "invalid CLI value does not fall back to env"
+      (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
+        (is (= {}
+               (#'app-runtime/session-runtime-config-from-args
+                ["--llm-idle-timeout-ms" "not-a-number"]))))))
 
 ;; moved to psi.main
 #_(deftest rpc-trace-file-from-args-test
-  (is (= "/tmp/rpc-trace.ndedn"
-         (#'app-runtime/rpc-trace-file-from-args
-          ["--rpc-trace-file" "/tmp/rpc-trace.ndedn"])))
-  (is (nil? (#'app-runtime/rpc-trace-file-from-args
-             ["--rpc-trace-file" "   "])))
-  (is (nil? (#'app-runtime/rpc-trace-file-from-args []))))
+    (is (= "/tmp/rpc-trace.ndedn"
+           (#'app-runtime/rpc-trace-file-from-args
+            ["--rpc-trace-file" "/tmp/rpc-trace.ndedn"])))
+    (is (nil? (#'app-runtime/rpc-trace-file-from-args
+               ["--rpc-trace-file" "   "])))
+    (is (nil? (#'app-runtime/rpc-trace-file-from-args []))))
 
 (deftest bootstrap-runtime-session-initial-context-index-has-single-session-test
   (with-redefs [oauth/create-context (fn [] nil)
@@ -362,8 +448,8 @@
   (let [orig @app-runtime/nrepl-runtime]
     (try
       (reset! app-runtime/nrepl-runtime {:host "localhost"
-                                  :port 8999
-                                  :endpoint "localhost:8999"})
+                                         :port 8999
+                                         :endpoint "localhost:8999"})
       (with-redefs [oauth/create-context (fn [] nil)
                     pt/discover-templates (fn [] [])
                     skills/discover-skills (fn [] {:skills [] :diagnostics []})

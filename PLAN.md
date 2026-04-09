@@ -39,14 +39,18 @@ Goals:
 
 Current status:
 - RPC prompt flow now routes through the prompt lifecycle path instead of direct `run-agent-loop-in!`.
-- Lifecycle execution now supports RPC streaming and tool-use continuations.
+- app-runtime console and TUI prompt submission now also route through the shared prompt lifecycle path.
+- extension run-fn prompt submission now also routes through the shared prompt lifecycle path.
+- startup prompt entry now also routes through the shared prompt lifecycle path when using the default runtime path; injected `:run-loop-fn` compatibility is intentionally retained for focused tests and legacy callers.
+- intentionally isolated workflow/ephemeral runtimes remain executor-owned rather than being forced into the shared session lifecycle.
+- Lifecycle execution now supports RPC/TUI streaming, extension-initiated prompts, startup prompts, and tool-use continuations.
 - Continuation turns preserve effective API key availability via prepared-request fallback.
 - Context usage is updated from prompt execution results on the lifecycle path.
 
 Next active slices:
-1. migrate the next real caller off old executor path (likely app-runtime/TUI prompt flow)
-2. converge agent profile / skill injection into request preparation
-3. reduce remaining executor-only prompt semantics until executor entrypoints can be removed
+1. reduce remaining executor-only prompt semantics until executor entrypoints can be removed, excluding intentionally isolated workflow/ephemeral runtimes
+2. converge agent profile / skill injection into request preparation for shared-session prompt paths
+3. simplify or remove remaining executor-era compatibility seams once shared-session call paths no longer depend on them
 
 Completed increments:
 1. ✓ extract a pure prepared-request projection from canonical session state
