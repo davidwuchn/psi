@@ -240,9 +240,6 @@
   [ctx]
   (first (filter :git.worktree/current? (worktree-list ctx))))
 
-(declare merge-in-progress?)
-(declare rebase-in-progress?)
-
 (defn git-dir
   "Return the canonical git dir for `ctx`, or nil when unavailable."
   [ctx]
@@ -254,31 +251,6 @@
 (defn- path-exists?
   [path]
   (.exists (File. (str path))))
-
-(defn operation-state
-  "Return best-effort transient git operation state for `ctx`."
-  [ctx]
-  (let [git-dir* (some-> (git-dir ctx) (str/trim))
-        repo-dir (:repo-dir ctx)
-        resolve-path (fn [rel]
-                       (when (seq git-dir*)
-                         (.getPath (File. (File. ^String repo-dir ^String git-dir*) ^String rel))))
-        marker? (fn [rel]
-                  (some-> rel resolve-path path-exists? boolean))
-        merge? (or (merge-in-progress? ctx)
-                   (marker? "MERGE_HEAD"))
-        rebase? (or (rebase-in-progress? ctx)
-                    (marker? "rebase-merge")
-                    (marker? "rebase-apply"))
-        cherry-pick? (marker? "CHERRY_PICK_HEAD")
-        revert? (marker? "REVERT_HEAD")
-        bisect? (marker? "BISECT_LOG")]
-    {:merge? merge?
-     :rebase? rebase?
-     :cherry-pick? cherry-pick?
-     :revert? revert?
-     :bisect? bisect?
-     :transient? (boolean (or merge? rebase? cherry-pick? revert? bisect?))}))
 
 (defn head-reflog-latest
   "Return the latest HEAD reflog entry as {:head :selector :subject}, or nil." 
@@ -340,6 +312,31 @@
 (defn- rebase-in-progress?
   [ctx]
   (zero? (:exit (run-git* ctx ["rev-parse" "-q" "--verify" "REBASE_HEAD"]))))
+
+(defn operation-state
+  "Return best-effort transient git operation state for `ctx`."
+  [ctx]
+  (let [git-dir* (some-> (git-dir ctx) (str/trim))
+        repo-dir (:repo-dir ctx)
+        resolve-path (fn [rel]
+                       (when (seq git-dir*)
+                         (.getPath (File. (File. ^String repo-dir ^String git-dir*) ^String rel))))
+        marker? (fn [rel]
+                  (some-> rel resolve-path path-exists? boolean))
+        merge? (or (merge-in-progress? ctx)
+                   (marker? "MERGE_HEAD"))
+        rebase? (or (rebase-in-progress? ctx)
+                    (marker? "rebase-merge")
+                    (marker? "rebase-apply"))
+        cherry-pick? (marker? "CHERRY_PICK_HEAD")
+        revert? (marker? "REVERT_HEAD")
+        bisect? (marker? "BISECT_LOG")]
+    {:merge? merge?
+     :rebase? rebase?
+     :cherry-pick? cherry-pick?
+     :revert? revert?
+     :bisect? bisect?
+     :transient? (boolean (or merge? rebase? cherry-pick? revert? bisect?))}))
 
 (defn- main-worktree-path
   [ctx]
