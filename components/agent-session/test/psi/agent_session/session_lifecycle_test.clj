@@ -346,6 +346,7 @@
   (let [[ctx session-id] (test-support/make-session-ctx {})
         parent-sd        (session/new-session-in! ctx nil {})
         parent-id        (:session-id parent-sd)
+        _                (dispatch/dispatch! ctx :session/update-context-usage {:session-id parent-id :tokens 22000 :window 200000} {:origin :core})
         ctx              (retarget ctx parent-sd)
         user-entry       (persist/message-entry {:role "user"
                                                  :content [{:type :text :text "branch-here"}]
@@ -363,11 +364,19 @@
         child-id         (:session-id child-sd)
         ctx              (retarget ctx child-sd)
         entries          (persist/all-entries-in ctx child-id)
+        child-state      (ss/get-session-data-in ctx child-id)
+        fork-query       (session/query-in ctx child-id [:psi.agent-session/model-provider
+                                                         :psi.agent-session/model-id
+                                                         :psi.agent-session/context-window
+                                                         :psi.agent-session/context-fraction])
         message-entries  (filterv #(= :message (:kind %)) entries)]
     (is (= ["user" "assistant"]
            (mapv #(get-in % [:data :message :role]) message-entries)))
     (is (= ["branch-here" "reply-here"]
-           (mapv #(-> % :data :message :content first :text) message-entries)))))
+           (mapv #(-> % :data :message :content first :text) message-entries)))
+    (is (= 22000 (:context-tokens child-state)))
+    (is (= 200000 (:context-window child-state)))
+    (is (= 0.11 (:psi.agent-session/context-fraction fork-query)))))
 
 (deftest resume-session-model-fallback-test
   (testing "resume-session-in! keeps current model when resumed journal has no model entry"
@@ -393,6 +402,28 @@
         (is (= "openai" (:psi.agent-session/model-provider r)))
         (is (= "gpt-5.3-codex" (:psi.agent-session/model-id r)))
         (is (= :minimal (:psi.agent-session/thinking-level r))))))
+
+  (testing "resume-session-in! preserves context usage baseline for footer/query projections"
+    (let [initial-model {:provider "openai" :id "gpt-5.4" :reasoning false}
+          [ctx session-id] (create-session-context {:session-defaults {:model initial-model}})
+          _                (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 22000 :window 200000} {:origin :core})
+          f                (File/createTempFile "psi-resume-context" ".ndedn")]
+      (.deleteOnExit f)
+      (persist/flush-journal! f "sess-resume-context" "/tmp/project" nil [])
+      (let [sd         (session/resume-session-in! ctx session-id (.getAbsolutePath f))
+            resumed-id (:session-id sd)
+            ctx        (retarget ctx sd)
+            result     (session/query-in ctx resumed-id [:psi.agent-session/model-provider
+                                                         :psi.agent-session/model-id
+                                                         :psi.agent-session/context-window
+                                                         :psi.agent-session/context-fraction])]
+        (is (= initial-model (:model (ss/get-session-data-in ctx resumed-id))))
+        (is (= 200000 (:context-window (ss/get-session-data-in ctx resumed-id))))
+        (is (= 22000 (:context-tokens (ss/get-session-data-in ctx resumed-id))))
+        (is (= "openai" (:psi.agent-session/model-provider result)))
+        (is (= "gpt-5.4" (:psi.agent-session/model-id result)))
+        (is (= 200000 (:psi.agent-session/context-window result)))
+        (is (= 0.11 (:psi.agent-session/context-fraction result))))))
 
   (testing "resume-session-in! restores persisted worktree-path and runtime prompt metadata from header"
     (let [[ctx session-id] (create-session-context {:cwd "/repo/main"
