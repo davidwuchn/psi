@@ -64,13 +64,13 @@
   (dispatch/register-handler!
    :session/create-child
    {}
-   (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs tool-schemas thinking-level]}]
+   (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs thinking-level]}]
      (let [parent-sd (session/get-session-data-in ctx session-id)]
        {:root-state-update #(ss/initialize-child-session-state % parent-sd
                                                                {:child-session-id child-session-id
                                                                 :session-name     session-name
                                                                 :system-prompt    system-prompt
-                                                                :tool-defs        (or tool-defs tool-schemas)
+                                                                :tool-defs        tool-defs
                                                                 :thinking-level   thinking-level})
         :return child-session-id})))
 

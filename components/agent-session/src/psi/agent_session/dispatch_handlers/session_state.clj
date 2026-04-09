@@ -117,8 +117,8 @@
 (defn initialize-child-session-state
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
-  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs tool-schemas thinking-level]}]
-  (let [tool-defs (or tool-defs tool-schemas (:tool-defs parent-sd) (:tool-schemas parent-sd))
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level]}]
+  (let [tool-defs (or tool-defs (:tool-defs parent-sd))
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
                         {:session-id         child-session-id
