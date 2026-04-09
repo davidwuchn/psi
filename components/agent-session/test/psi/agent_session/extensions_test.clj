@@ -354,11 +354,13 @@
   (testing "all-tools-in returns tools with extension-path"
     (let [reg (ext/create-registry)]
       (ext/register-extension-in! reg "/ext/a")
-      (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "T" :description "d"})
+      (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "T" :description "d" :parameters {:type "object"}})
       (let [tools (ext/all-tools-in reg)]
         (is (= 1 (count tools)))
         (is (= "my-tool" (:name (first tools))))
-        (is (= "/ext/a" (:extension-path (first tools)))))))
+        (is (= "/ext/a" (:extension-path (first tools))))
+        (is (= :extension (:source (first tools))))
+        (is (= {:type "object"} (:parameters (first tools)))))))
 
   (testing "first registration per name wins"
     (let [reg (ext/create-registry)]
@@ -442,7 +444,9 @@
     (let [reg (ext/create-registry)]
       (ext/register-extension-in! reg "/ext/a")
       (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "T"})
-      (is (= "my-tool" (:name (ext/get-tool-in reg "my-tool"))))))
+      (let [tool (ext/get-tool-in reg "my-tool")]
+        (is (= "my-tool" (:name tool)))
+        (is (= {:type "object"} (:parameters tool))))))
 
   (testing "returns nil for unknown tool"
     (let [reg (ext/create-registry)]

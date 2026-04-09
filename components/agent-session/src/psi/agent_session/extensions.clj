@@ -39,6 +39,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [psi.agent-session.tool-defs :as tool-defs]
    [taoensso.timbre :as timbre]))
 
 ;; ============================================================
@@ -106,6 +107,7 @@
 (defn register-tool-in!
   "Register `tool` (a map with :name key) for the extension at `ext-path`.
    Tool maps may include :lambda-description for lambda-mode prompt rendering.
+   Stores canonical normalized tool defs in the registry.
    Throws when tool name is missing or not canonical kebab-case."
   [reg ext-path tool]
   (let [tool-name (:name tool)]
@@ -115,9 +117,10 @@
                       {:ext-path  ext-path
                        :tool-name tool-name
                        :pattern   (str tool-name-pattern)})))
-    (swap! (:state reg)
-           assoc-in [:extensions ext-path :tools tool-name] tool)
-    reg))
+    (let [tool* (tool-defs/normalize-tool-def (assoc tool :source :extension :ext-path ext-path))]
+      (swap! (:state reg)
+             assoc-in [:extensions ext-path :tools tool-name] tool*)
+      reg)))
 
 (defn register-command-in!
   "Register `cmd` (a map with :name key) for the extension at `ext-path`."
