@@ -13,6 +13,7 @@
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.session-state :as ss]
+   [psi.agent-session.statechart :as sc]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-plan :as tool-plan]
    [psi.history.git :as history-git]
@@ -719,9 +720,12 @@
           run-calls (atom [])]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
-      ;; Force non-idle session phase so send-extension-prompt-in! takes deferred path.
-      (let [session-id session-id]
-        (session/prompt-in! ctx session-id "seed busy turn"))
+      ;; Force non-idle session phase deterministically so send-extension-prompt-in!
+      ;; takes the deferred path without depending on prompt runtime timing.
+      (sc/send-event! (:sc-env ctx)
+                      (ss/sc-session-id-in ctx session-id)
+                      :session/prompt
+                      {:ctx ctx :session-id session-id})
       (ext-rt/set-extension-run-fn-in! ctx session-id (fn [text source]
                                                         (swap! run-calls conj {:text text :source source})))
       (let [result (mutate 'psi.extension/send-prompt
