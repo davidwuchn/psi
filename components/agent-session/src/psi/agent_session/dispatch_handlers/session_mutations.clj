@@ -87,7 +87,8 @@
                                        (or (:cache-write-tokens usage) 0)))]
                       (when (and (number? total) (pos? total)) total)))
            sd     (when tokens (session/get-session-data-in ctx session-id))
-           window (when sd (:context-window sd))]
+           window (or (some-> execution-result :execution-result/model :context-window)
+                      (when sd (:context-window sd)))]
        (cond-> result
          next-event
          (update :effects (fnil conj []) {:effect/type :runtime/dispatch-event

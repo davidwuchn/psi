@@ -209,7 +209,9 @@ Available: " (str/join ", " (map name (keys models/all-models))))
         _        (when ai-model
                    (dispatch/dispatch! ctx :session/set-model
                                        {:session-id session-id
-                                        :model ai-model
+                                        :model {:provider  (some-> (:provider ai-model) name)
+                                                :id        (:id ai-model)
+                                                :reasoning (boolean (:supports-reasoning ai-model))}
                                         :scope :session}
                                        {:origin :core}))
         _        (session/prompt-in! ctx session-id expanded-text images

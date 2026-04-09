@@ -156,6 +156,7 @@
       {:execution-result/turn-id             turn-id
        :execution-result/session-id          session-id
        :execution-result/prepared-request-id turn-id
+       :execution-result/model               ai-model
        :execution-result/assistant-message   assistant-msg
        :execution-result/usage               (:usage assistant-msg)
        :execution-result/provider-captures   {:request-captures []

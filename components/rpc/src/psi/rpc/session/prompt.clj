@@ -84,11 +84,14 @@
                                     (emit/emit-session-snapshots! emit! ctx state session-id))
 
                                   :else
-                                  (let [_           (emit/emit-session-snapshots! emit! ctx state session-id)
+                                  (let [session-model {:provider  (some-> (:provider ai-model) name)
+                                                       :id        (:id ai-model)
+                                                       :reasoning (boolean (:supports-reasoning ai-model))}
+                                        _           (emit/emit-session-snapshots! emit! ctx state session-id)
                                         ;; Ensure session has the resolved model before prompt lifecycle
                                         _           (dispatch/dispatch! ctx :session/set-model
                                                                         {:session-id session-id
-                                                                         :model ai-model
+                                                                         :model session-model
                                                                          :scope :session}
                                                                         {:origin :core})
                                         {:keys [text]} (runtime/expand-input-in ctx session-id message)

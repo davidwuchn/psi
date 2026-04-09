@@ -323,7 +323,9 @@
                               api-key  (resolve-api-key-in ctx session-id ai-model)]
                           (dispatch/dispatch! ctx :session/set-model
                                               {:session-id session-id
-                                               :model ai-model
+                                               :model {:provider  (some-> (:provider ai-model) name)
+                                                       :id        (:id ai-model)
+                                                       :reasoning (boolean (:supports-reasoning ai-model))}
                                                :scope :session}
                                               {:origin :core})
                           (submit-prompt-turn-in! ctx session-id expanded-text nil
@@ -389,7 +391,9 @@
                               (let [api-key (resolve-api-key-in ctx session-id ai-model)
                                     _       (dispatch/dispatch! ctx :session/set-model
                                                                 {:session-id session-id
-                                                                 :model ai-model
+                                                                 :model {:provider  (some-> (:provider ai-model) name)
+                                                                         :id        (:id ai-model)
+                                                                         :reasoning (boolean (:supports-reasoning ai-model))}
                                                                  :scope :session}
                                                                 {:origin :core})
                                     _       (submit-prompt-turn-in! ctx session-id text nil
