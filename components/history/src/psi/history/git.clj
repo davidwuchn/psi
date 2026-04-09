@@ -240,9 +240,67 @@
   [ctx]
   (first (filter :git.worktree/current? (worktree-list ctx))))
 
+(defn git-dir
+  "Return the canonical git dir for `ctx`, or nil when unavailable."
+  [ctx]
+  (try
+    (not-empty (run-git ctx ["rev-parse" "--git-dir"]))
+    (catch Exception _
+      nil)))
+
 (defn- path-exists?
   [path]
   (.exists (File. (str path))))
+
+(defn operation-state
+  "Return best-effort transient git operation state for `ctx`."
+  [ctx]
+  (let [git-dir* (some-> (git-dir ctx) (str/trim))
+        repo-dir (:repo-dir ctx)
+        resolve-path (fn [rel]
+                       (when (seq git-dir*)
+                         (.getPath (File. (File. ^String repo-dir ^String git-dir*) ^String rel))))
+        marker? (fn [rel]
+                  (some-> rel resolve-path path-exists? boolean))
+        merge? (or (merge-in-progress? ctx)
+                   (marker? "MERGE_HEAD"))
+        rebase? (or (rebase-in-progress? ctx)
+                    (marker? "rebase-merge")
+                    (marker? "rebase-apply"))
+        cherry-pick? (marker? "CHERRY_PICK_HEAD")
+        revert? (marker? "REVERT_HEAD")
+        bisect? (marker? "BISECT_LOG")]
+    {:merge? merge?
+     :rebase? rebase?
+     :cherry-pick? cherry-pick?
+     :revert? revert?
+     :bisect? bisect?
+     :transient? (boolean (or merge? rebase? cherry-pick? revert? bisect?))}))
+
+(defn head-reflog-latest
+  "Return the latest HEAD reflog entry as {:head :selector :subject}, or nil." 
+  [ctx]
+  (try
+    (let [out (run-git ctx ["reflog" "-1" "--format=%H%x1f%gD%x1f%gs" "HEAD"])]
+      (when-not (str/blank? out)
+        (let [[head selector subject] (str/split out sep-re 3)]
+          {:head head
+           :selector selector
+           :subject subject})))
+    (catch Exception _
+      nil)))
+
+(defn commit-parent-count
+  "Return the parent count for `sha`, or nil when unavailable." 
+  [ctx sha]
+  (when (seq (str sha))
+    (try
+      (let [line (run-git ctx ["rev-list" "--parents" "-n" "1" (str sha)])
+            parts (remove str/blank? (str/split line #"\s+"))]
+        (when (seq parts)
+          (max 0 (dec (count parts)))))
+      (catch Exception _
+        nil))))
 
 (defn- branch-ref
   [branch]

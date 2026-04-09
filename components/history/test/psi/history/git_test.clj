@@ -179,6 +179,24 @@
       (testing "returns lowercase hexadecimal"
         (is (re-matches #"[0-9a-f]+" sha))))))
 
+(deftest head-reflog-and-parent-count-available
+  (testing "reflog + topology helpers"
+    (let [ctx    @shared-ro-ctx
+          sha    (git/current-commit ctx)
+          reflog (git/head-reflog-latest ctx)]
+      (is (map? reflog))
+      (is (= sha (:head reflog)))
+      (is (string? (:subject reflog)))
+      (is (= 1 (git/commit-parent-count ctx sha))))))
+
+(deftest operation-state-clean-on-seeded-repo
+  (testing "operation-state"
+    (let [ctx @shared-ro-ctx
+          state (git/operation-state ctx)]
+      (is (false? (:merge? state)))
+      (is (false? (:rebase? state)))
+      (is (false? (:transient? state))))))
+
 ;;; git/current-branch + git/ls-files
 
 (deftest current-branch-returns-branch-name

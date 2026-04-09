@@ -6,7 +6,7 @@
 use "./extension-system.allium" as ext
 use "./session-core.allium" as core
 
-value GitHeadChangedEvent {
+value GitCommitCreatedEvent {
     worktree_path: String
     previous_head: String?
     head: String
@@ -36,14 +36,14 @@ config {
     psl_phase2_files: Set<String> = {"LEARNING.md"}
 }
 
-rule GitHeadChangedExtensionEventEmitted {
+rule GitCommitCreatedExtensionEventEmitted {
     when: GitHeadObservedChanged(worktree_path)
 
-    ensures: ext/ExtensionEventDispatched(event_name: "git_head_changed", payload: GitHeadChangedEvent)
+    ensures: ext/ExtensionEventDispatched(event_name: "git_commit_created", payload: GitCommitCreatedEvent)
 }
 
-rule GitHeadChangedEventPayloadIsCanonical {
-    when: ext/ExtensionEventDispatched(event_name: "git_head_changed", payload)
+rule GitCommitCreatedEventPayloadIsCanonical {
+    when: ext/ExtensionEventDispatched(event_name: "git_commit_created", payload)
 
     ensures: payload.worktree_path != ""
     ensures: payload.head != ""
@@ -51,8 +51,8 @@ rule GitHeadChangedEventPayloadIsCanonical {
     ensures: payload.timestamp != null
 }
 
-rule PlanStateLearningHandlesHeadChange {
-    when: ext/ExtensionEventReceived(name: "git_head_changed", payload)
+rule PlanStateLearningHandlesCommitCreation {
+    when: ext/ExtensionEventReceived(name: "git_commit_created", payload)
     requires: config.psl_enabled = true
 
     let latest = ReadLatestCommitSummary(payload.worktree_path)
@@ -112,7 +112,7 @@ rule PlanStateLearningAgentExecutesPhase2 {
 }
 
 rule PlanStateLearningMessagesVisibleInTranscript {
-    when: ext/ExtensionEventReceived(name: "git_head_changed", payload)
+    when: ext/ExtensionEventReceived(name: "git_commit_created", payload)
 
     ensures: ext/CustomMessageSent(SessionForWorktree(payload.worktree_path), Message{
         role: "assistant",

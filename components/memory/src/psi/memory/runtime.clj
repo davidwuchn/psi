@@ -72,6 +72,43 @@
 (defonce ^:private git-head-cache
   (atom {}))
 
+(defn- classify-reflog-subject
+  [subject]
+  (let [s (some-> subject str/trim str/lower-case)]
+    (cond
+      (str/blank? s) :unknown
+      (str/starts-with? s "commit (amend):") :amend
+      (str/starts-with? s "commit:") :commit-created
+      (str/starts-with? s "merge") :merge
+      (str/starts-with? s "rebase") :rebase
+      (str/starts-with? s "reset") :reset
+      (str/starts-with? s "checkout") :checkout
+      (str/starts-with? s "cherry-pick") :cherry-pick
+      :else :unknown)))
+
+(defn- classify-head-change
+  [git-ctx head]
+  (let [op-state        (git/operation-state git-ctx)
+        reflog-entry    (git/head-reflog-latest git-ctx)
+        reflog-subject  (:subject reflog-entry)
+        reflog-kind     (classify-reflog-subject reflog-subject)
+        parent-count    (git/commit-parent-count git-ctx head)
+        kind            (cond
+                          (:transient? op-state) :transient
+                          (and (= :commit-created reflog-kind)
+                               (= 1 parent-count)) :commit-created
+                          (and (= :commit-created reflog-kind)
+                               (number? parent-count)
+                               (> parent-count 1)) :merge-commit
+                          :else reflog-kind)]
+    {:kind kind
+     :notify-extensions? (= :commit-created kind)
+     :reflog-subject reflog-subject
+     :reflog-selector (:selector reflog-entry)
+     :parent-count parent-count
+     :operation-state op-state
+     :transient? (true? (:transient? op-state))}))
+
 (defn- cached-head-for-cwd
   [cwd]
   (get @git-head-cache cwd))
@@ -431,7 +468,8 @@
             :previous-head previous-head}
 
            :else
-           (let [sync-result (sync-memory-layer! (-> opts
+           (let [classification (classify-head-change git-ctx* head)
+                 sync-result (sync-memory-layer! (-> opts
                                                      (assoc :cwd cwd*)
                                                      (assoc :git-ctx git-ctx*)
                                                      (assoc :memory-ctx memory-ctx*)))
@@ -443,6 +481,7 @@
               :reason :head-changed
               :head synced-head
               :previous-head previous-head
+              :classification classification
               :sync sync-result})))))))
 
 (defn- block->text

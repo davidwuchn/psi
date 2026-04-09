@@ -155,7 +155,7 @@ Current in-repo examples:
 
 Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
 
-- Trigger: `git_head_changed` event
+- Trigger: `git_commit_created` event
 - Behavior:
   - skips self-commits with marker `[psi:psl-auto]`
   - creates PSL workflow
@@ -204,6 +204,11 @@ The `init` function receives a map with these keys:
 | `:register-command`  | `(fn [name opts])`                        | Register a `/name` slash command     |
 | `:register-flag`     | `(fn [name opts])`                        | Register a toggleable flag           |
 | `:register-shortcut` | `(fn [key opts])`                         | Register a keyboard shortcut         |
+
+Common extension events emitted by the runtime include:
+- `git_commit_created` — emitted only for normal local commit creation
+  - suppressed for merges, rebases, amend, reset, checkout, cherry-pick, and transient git operations
+  - payload includes `:cwd`, `:head`, `:previous-head`, `:reason`, `:classification`, `:timestamp`
 
 ### Runtime Surface
 

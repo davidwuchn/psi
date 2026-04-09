@@ -18,12 +18,12 @@
   [m]
   (reset! (var-get (ns-resolve 'extensions.plan-state-learning 'state)) m))
 
-(deftest init-registers-git-head-changed-handler-test
-  (testing "extension registers git_head_changed handler and widget"
+(deftest init-registers-git-commit-created-handler-test
+  (testing "extension registers git_commit_created handler and widget"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/plan_state_learning.clj"})]
       (sut/init api)
-      (is (= 1 (count (get-in @state [:handlers "git_head_changed"]))))
+      (is (= 1 (count (get-in @state [:handlers "git_commit_created"]))))
       (is (contains? (:workflow-types @state) :psl))
       (is (contains? (:commands @state) "psl"))
       (is (contains? (:widgets @state) "psl"))
@@ -137,7 +137,7 @@
                                                     :content text
                                                     :custom-type "plan-state-learning"}))]
         (sut/init api)
-        (let [handler (first (get-in @state [:handlers "git_head_changed"]))
+        (let [handler (first (get-in @state [:handlers "git_commit_created"]))
               result  (handler {:head "abc1234" :previous-head "aaa111" :cwd "/tmp/repo"})
               texts   (map :content (:messages @state))]
           (is (true? (:skip? result)))

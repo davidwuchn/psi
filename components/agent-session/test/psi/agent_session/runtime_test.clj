@@ -48,6 +48,8 @@
                                     :reason :head-changed
                                     :head "sha-2"
                                     :previous-head "sha-1"
+                                    :classification {:kind :commit-created
+                                                     :notify-extensions? true}
                                     :sync sync-payload}]
                       (#'runtime/maybe-trigger-recursion-from-git-sync! ctx git-sync)
                       (#'runtime/maybe-dispatch-git-head-changed-event! ctx session-id git-sync)
@@ -152,6 +154,9 @@
                                     :reason :head-changed
                                     :head "abcdef1234567890"
                                     :previous-head "1111111111111111"
+                                    :classification {:kind :commit-created
+                                                     :notify-extensions? true
+                                                     :parent-count 1}
                                     :sync sync-payload}]
                       (#'runtime/maybe-trigger-recursion-from-git-sync! ctx git-sync)
                       (#'runtime/maybe-dispatch-git-head-changed-event! ctx session-id git-sync)
@@ -166,11 +171,12 @@
         :sync-on-git-head-change? true})
       (is (= 1 (count @extension-events)))
       (let [{:keys [name payload]} (first @extension-events)]
-        (is (= "git_head_changed" name))
+        (is (= "git_commit_created" name))
         (is (= "/tmp/psi-runtime-event" (:cwd payload)))
         (is (= "abcdef1234567890" (:head payload)))
         (is (= "1111111111111111" (:previous-head payload)))
         (is (= "head-changed" (:reason payload)))
+        (is (= :commit-created (get-in payload [:classification :kind])))
         (is (str/includes? (str (:timestamp payload)) "T"))))))
 
 (deftest register-extension-run-fn-routes-through-prompt-lifecycle-test

@@ -2,7 +2,7 @@
   "Automate PLAN/STATE/LEARNING maintenance after non-PSL commits.
 
    Trigger:
-   - extension event: git_head_changed
+   - extension event: git_commit_created
 
    Behavior:
    - skip when latest commit subject contains [psi:psl-auto]
@@ -12,7 +12,7 @@
    - emit visible transcript messages via psi.extension/send-message
 
    Ordering:
-   - git_head_changed fires during/after the triggering agent turn
+   - git_commit_created fires during/after the triggering agent turn
    - the workflow job runs after the session goes idle (deferred send-prompt path)
    - this ensures PSL output appears after the commit turn, not before it"
   (:require
@@ -381,7 +381,7 @@
                        :handler     (fn [_args]
                                       (list-psl-runs!))}})
     (mutate-fn 'psi.extension/register-handler
-               {:event-name "git_head_changed"
+               {:event-name "git_commit_created"
                 :handler-fn (fn [ev]
                               (try
                                 (handle-git-head-changed mutate-fn ev)

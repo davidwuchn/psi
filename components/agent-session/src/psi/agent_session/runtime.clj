@@ -217,16 +217,20 @@
 
 (defn- maybe-dispatch-git-head-changed-event!
   [ctx session-id git-sync]
-  (when (and (true? (:changed? git-sync))
-             (string? (:head git-sync))
-             (not (str/blank? (:head git-sync))))
-    (ext/dispatch-in (:extension-registry ctx)
-                     "git_head_changed"
-                     {:cwd (ss/effective-cwd-in ctx session-id)
-                      :head (:head git-sync)
-                      :previous-head (:previous-head git-sync)
-                      :reason "head-changed"
-                      :timestamp (java.time.Instant/now)})))
+  (let [classification (:classification git-sync)]
+    (when (and (true? (:changed? git-sync))
+               (string? (:head git-sync))
+               (not (str/blank? (:head git-sync)))
+               (true? (:notify-extensions? classification)))
+      (let [payload {:cwd (ss/effective-cwd-in ctx session-id)
+                     :head (:head git-sync)
+                     :previous-head (:previous-head git-sync)
+                     :reason "head-changed"
+                     :classification classification
+                     :timestamp (java.time.Instant/now)}]
+        (ext/dispatch-in (:extension-registry ctx)
+                         "git_commit_created"
+                         payload)))))
 
 (defn safe-maybe-sync-on-git-head-change!
   [ctx session-id]

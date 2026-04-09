@@ -103,6 +103,18 @@
                                        (let [head (first @heads)]
                                          (swap! heads subvec 1)
                                          head))
+                  git/operation-state (fn [_]
+                                        {:merge? false
+                                         :rebase? false
+                                         :cherry-pick? false
+                                         :revert? false
+                                         :bisect? false
+                                         :transient? false})
+                  git/head-reflog-latest (fn [_]
+                                           {:head "sha-2"
+                                            :selector "HEAD@{0}"
+                                            :subject "commit: normal commit"})
+                  git/commit-parent-count (fn [_ _] 1)
                   runtime/sync-memory-layer! (fn [opts]
                                                (swap! sync-calls conj opts)
                                                {:ok? true
@@ -120,8 +132,42 @@
         (is (true? (:changed? third-result)))
         (is (= "sha-1" (:previous-head third-result)))
         (is (= "sha-2" (:head third-result)))
+        (is (= :commit-created (get-in third-result [:classification :kind])))
+        (is (true? (get-in third-result [:classification :notify-extensions?])))
         (is (= 1 (count @sync-calls)))
         (is (= cwd (:cwd (first @sync-calls))))))))
+
+(deftest maybe-sync-on-git-head-change-classifies-rebase-without-extension-notify
+  (let [cwd     (str "/tmp/psi-runtime-test-rebase-" (random-uuid))
+        git-ctx {:repo-dir cwd}
+        heads   (atom ["sha-1" "sha-2"])]
+    (with-redefs [git/create-context (fn
+                                       ([] git-ctx)
+                                       ([_] git-ctx))
+                  git/current-commit (fn [_]
+                                       (let [head (first @heads)]
+                                         (swap! heads subvec 1)
+                                         head))
+                  git/operation-state (fn [_]
+                                        {:merge? false
+                                         :rebase? false
+                                         :cherry-pick? false
+                                         :revert? false
+                                         :bisect? false
+                                         :transient? false})
+                  git/head-reflog-latest (fn [_]
+                                           {:head "sha-2"
+                                            :selector "HEAD@{0}"
+                                            :subject "rebase (finish): returning to refs/heads/main"})
+                  git/commit-parent-count (fn [_ _] 1)
+                  runtime/sync-memory-layer! (fn [_]
+                                               {:ok? true
+                                                :git-head "sha-2"})]
+      (runtime/maybe-sync-on-git-head-change! {:cwd cwd})
+      (let [result (runtime/maybe-sync-on-git-head-change! {:cwd cwd})]
+        (is (= :head-changed (:reason result)))
+        (is (= :rebase (get-in result [:classification :kind])))
+        (is (false? (get-in result [:classification :notify-extensions?])))))))
 
 (deftest maybe-sync-on-git-head-change-reports-head-unavailable
   (let [cwd (str "/tmp/psi-runtime-test-no-head-" (random-uuid))
