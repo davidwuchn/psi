@@ -9,6 +9,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.session-state :as ss]
+   [psi.agent-session.statechart :as sc]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.test-support :as test-support])
   (:import
@@ -315,7 +316,12 @@
       (test-support/update-state! ctx :session-data assoc
                                   :interrupt-pending false
                                   :steering-messages ["queued steer"])
-      (session/prompt-in! ctx session-id "interrupt me")
+      ;; Force streaming deterministically so interrupt behavior does not depend
+      ;; on prompt runtime timing.
+      (sc/send-event! (:sc-env ctx)
+                      (ss/sc-session-id-in ctx session-id)
+                      :session/prompt
+                      {:ctx ctx :session-id session-id})
       (session/request-interrupt-in! ctx session-id)
       (let [sd    (ss/get-session-data-in ctx session-id)
             entry (last (dispatch/event-log-entries))]
