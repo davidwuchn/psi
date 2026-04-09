@@ -166,7 +166,24 @@
   (let [session-name (some #(when (= :session-info (:kind %))
                               (get-in % [:data :name]))
                            (rseq (vec entries)))
-        next-sd      (assoc current-sd
+        baseline     (merge (session-data-ns/initial-session)
+                            (select-keys current-sd [:prompt-mode
+                                                     :nucleus-prelude-override
+                                                     :cache-breakpoints
+                                                     :developer-prompt
+                                                     :developer-prompt-source
+                                                     :auto-retry-enabled
+                                                     :auto-compaction-enabled
+                                                     :scoped-models
+                                                     :skills
+                                                     :prompt-templates
+                                                     :prompt-contributions
+                                                     :tool-defs
+                                                     :extensions
+                                                     :context-window
+                                                     :ui-type
+                                                     :tool-output-overrides]))
+        next-sd      (assoc baseline
                             :session-id session-id
                             :session-file session-path
                             :session-name session-name
@@ -187,11 +204,32 @@
   [state parent-sd {:keys [new-session-id branch-entries session-file]}]
   (let [parent-session-id   (:session-id parent-sd)
         parent-session-file (:session-file parent-sd)
-        next-sd             (assoc parent-sd
+        baseline            (merge (session-data-ns/initial-session)
+                                   (select-keys parent-sd [:model
+                                                           :thinking-level
+                                                           :prompt-mode
+                                                           :nucleus-prelude-override
+                                                           :cache-breakpoints
+                                                           :developer-prompt
+                                                           :developer-prompt-source
+                                                           :auto-retry-enabled
+                                                           :auto-compaction-enabled
+                                                           :scoped-models
+                                                           :skills
+                                                           :prompt-templates
+                                                           :prompt-contributions
+                                                           :tool-defs
+                                                           :extensions
+                                                           :context-window
+                                                           :ui-type
+                                                           :tool-output-overrides]))
+        next-sd             (assoc baseline
                                    :session-id new-session-id
+                                   :worktree-path (:worktree-path parent-sd)
                                    :parent-session-id parent-session-id
                                    :parent-session-path parent-session-file
                                    :session-file session-file
+                                   :spawn-mode :fork-head
                                    :startup-prompts []
                                    :startup-bootstrap-completed? false
                                    :startup-bootstrap-started-at nil

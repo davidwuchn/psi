@@ -3,6 +3,7 @@
   (new / fork / resume / index)."
   (:require
    [clojure.test :refer [deftest testing is]]
+   [psi.agent-core.core]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
@@ -198,6 +199,30 @@
             sd         (ss/get-session-data-in ctx session-id)]
         (is (= [] (:steering-messages sd))))))
 
+  (testing "new-session-in! rebuilds a schema-safe runtime from a clean session baseline"
+    (let [[ctx session-id] (create-session-context)
+          _                (swap! (:state* ctx) update-in [:agent-session :sessions session-id :data]
+                                  assoc
+                                  :messages [{:role "assistant" :content "runtime-only"}]
+                                  :steering-mode :all
+                                  :follow-up-mode :all
+                                  :stream-message {:role "assistant" :content "partial"}
+                                  :pending-tool-calls #{"call-1"}
+                                  :error "boom")
+          sd               (session/new-session-in! ctx session-id {})
+          new-id           (:session-id sd)
+          new-agent        (ss/agent-ctx-in ctx new-id)
+          agent-data       ((resolve 'psi.agent-core.core/get-data-in) new-agent)
+          new-session      (ss/get-session-data-in ctx new-id)]
+      (is (= [] (:messages agent-data)))
+      (is (= :one-at-a-time (:steering-mode agent-data)))
+      (is (= :one-at-a-time (:follow-up-mode agent-data)))
+      (is (nil? (:stream-message agent-data)))
+      (is (= #{} (:pending-tool-calls agent-data)))
+      (is (nil? (:error agent-data)))
+      (is (= [] (:steering-messages new-session)))
+      (is (= [] (:follow-up-messages new-session)))))
+
   (testing "new-session-in! is cancelled when extension returns cancel"
     (let [[ctx session-id] (create-session-context)
           reg (:extension-registry ctx)]
@@ -217,6 +242,34 @@
                       (= "anthropic" (get-in % [:data :provider]))
                       (= "claude-3-5-sonnet" (get-in % [:data :model-id])))
                 (persist/all-entries-in ctx session-id)))))
+
+  (testing "fork-session-in! rebuilds schema-safe session data while preserving fork lineage and config"
+    (let [model            {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}
+          [ctx session-id] (create-session-context {:session-defaults {:model model
+                                                                       :thinking-level :high
+                                                                       :prompt-mode :prose}})
+          _                (swap! (:state* ctx) update-in [:agent-session :sessions session-id :data]
+                                  assoc
+                                  :messages [{:role "assistant" :content "runtime-only"}]
+                                  :stream-message {:role "assistant" :content "partial"}
+                                  :pending-tool-calls #{"call-1"}
+                                  :error "boom")
+          entry-id         (:id (first (persist/all-entries-in ctx session-id)))
+          forked           (session/fork-session-in! ctx session-id entry-id)
+          fork-id          (:session-id forked)
+          fork-agent       (ss/agent-ctx-in ctx fork-id)
+          agent-data       ((resolve 'psi.agent-core.core/get-data-in) fork-agent)
+          fork-session     (ss/get-session-data-in ctx fork-id)]
+      (is (= session-id (:parent-session-id fork-session)))
+      (is (= (:session-file (ss/get-session-data-in ctx session-id))
+             (:parent-session-path fork-session)))
+      (is (= model (:model fork-session)))
+      (is (= :high (:thinking-level fork-session)))
+      (is (= :prose (:prompt-mode fork-session)))
+      (is (= [] (:messages agent-data)))
+      (is (nil? (:stream-message agent-data)))
+      (is (= #{} (:pending-tool-calls agent-data)))
+      (is (nil? (:error agent-data)))))
 
   (testing "new-session-in! resets startup telemetry"
     (let [[ctx session-id] (test-support/make-session-ctx
