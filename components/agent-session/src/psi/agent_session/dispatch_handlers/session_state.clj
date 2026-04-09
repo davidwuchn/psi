@@ -88,7 +88,26 @@
 (defn initialize-new-session-state
   [state current-sd {:keys [new-session-id worktree-path session-name spawn-mode session-file]}]
   (let [_source-sid (:session-id current-sd)
-        next-sd     (assoc current-sd
+        baseline    (merge (session-data-ns/initial-session)
+                           (select-keys current-sd [:model
+                                                    :thinking-level
+                                                    :prompt-mode
+                                                    :nucleus-prelude-override
+                                                    :cache-breakpoints
+                                                    :developer-prompt
+                                                    :developer-prompt-source
+                                                    :auto-retry-enabled
+                                                    :auto-compaction-enabled
+                                                    :scoped-models
+                                                    :skills
+                                                    :prompt-templates
+                                                    :prompt-contributions
+                                                    :tool-defs
+                                                    :extensions
+                                                    :context-window
+                                                    :ui-type
+                                                    :tool-output-overrides]))
+        next-sd     (assoc baseline
                            :session-id new-session-id
                            :session-file session-file
                            :session-name session-name
@@ -96,6 +115,8 @@
                            :parent-session-id nil
                            :parent-session-path nil
                            :spawn-mode (or spawn-mode :new-root)
+                           :model (:model baseline)
+                           :thinking-level (or (:thinking-level baseline) :off)
                            :interrupt-pending false
                            :interrupt-requested-at nil
                            :steering-messages []
