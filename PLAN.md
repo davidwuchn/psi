@@ -21,9 +21,10 @@ Testing priorities:
 - ✓ prove tool-use turns route through `:session/prompt-continue`
 - ✓ prove continuation re-enters the shared prepare path after tool execution
 - ✓ prove terminal prompt result returns session to `:idle` with `is-streaming` false
+- ✓ prove migrated RPC prompt flow uses the lifecycle path with streaming/tool-use compatibility
 
 Goals:
-- make prompt lifecycle follow the same architectural transaction shape as tool execution:
+- ✓ make prompt lifecycle follow the same architectural transaction shape as tool execution:
   - prepare -> execute -> record
 - make request preparation the explicit home for:
   - prompt layer assembly
@@ -36,15 +37,27 @@ Goals:
   - `executor.clj`
   - extension-local string composition
 
-Planned increments:
-1. extract a pure prepared-request projection from canonical session state
-2. introduce dispatch-visible `:session/prompt-prepare-request`
-3. make execution consume the prepared artifact instead of ambient recomputation
-4. introduce deterministic `:session/prompt-record-response`
-5. move continuation / terminalization decisions onto dispatch-visible events
-6. split prompt continuation into dispatch-visible prepare / execute / record follow-on steps
-7. collapse execute -> record into an explicit runtime execute-and-record boundary callable from prepare
-8. converge agent profile / skill injection into request preparation
+Current status:
+- RPC prompt flow now routes through the prompt lifecycle path instead of direct `run-agent-loop-in!`.
+- Lifecycle execution now supports RPC streaming and tool-use continuations.
+- Continuation turns preserve effective API key availability via prepared-request fallback.
+- Context usage is updated from prompt execution results on the lifecycle path.
+
+Next active slices:
+1. migrate the next real caller off old executor path (likely app-runtime/TUI prompt flow)
+2. converge agent profile / skill injection into request preparation
+3. reduce remaining executor-only prompt semantics until executor entrypoints can be removed
+
+Completed increments:
+1. ✓ extract a pure prepared-request projection from canonical session state
+2. ✓ introduce dispatch-visible `:session/prompt-prepare-request`
+3. ✓ make execution consume the prepared artifact instead of ambient recomputation
+4. ✓ introduce deterministic `:session/prompt-record-response`
+5. ✓ move continuation / terminalization decisions onto dispatch-visible events
+6. ✓ split prompt continuation into dispatch-visible prepare / execute / record follow-on steps
+7. ✓ collapse execute -> record into an explicit runtime execute-and-record boundary callable from prepare
+8. ~ begin converging agent profile / skill injection into request preparation
+9. ✓ migrate RPC prompt flow off `run-agent-loop-in!` onto the lifecycle path
 
 Proposed handler / effect split:
 - `:session/prompt-submit`
