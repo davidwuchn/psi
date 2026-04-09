@@ -402,12 +402,10 @@
 (defn last-assistant-message-in
   "Return the last assistant message from the session journal, or nil."
   [ctx session-id]
-  (let [journal (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal])]
-    (some (fn [entry]
-            (when (and (= :message (:kind entry))
-                       (= "assistant" (:role (get-in entry [:data :message]))))
-              (get-in entry [:data :message])))
-          (rseq (vec journal)))))
+  (some (fn [message]
+          (when (= "assistant" (:role message))
+            message))
+        (rseq (vec (persist/messages-from-entries-in ctx session-id)))))
 
 (defn steer-in!
   "Inject a steering message while the agent is streaming for `session-id`.

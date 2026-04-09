@@ -13,6 +13,20 @@
    :high "high"
    :xhigh "high"})
 
+(defn- string-value
+  [x]
+  (when (string? x)
+    x))
+
+(defn- safe-count
+  [x]
+  (cond
+    (nil? x)        0
+    (map? x)        (count x)
+    (set? x)        (count x)
+    (sequential? x) (count x)
+    :else           0))
+
 (defn effective-reasoning-effort
   [model thinking-level]
   (when (:reasoning model)
@@ -20,9 +34,9 @@
 
 (defn model-label
   [{:keys [provider id reasoning thinking-level effective-reasoning-effort]}]
-  (let [model-label    (or id "")
-        provider-label (or provider "")
-        thinking-label (or effective-reasoning-effort
+  (let [model-label    (or (string-value id) "")
+        provider-label (or (string-value provider) "")
+        thinking-label (or (string-value effective-reasoning-effort)
                            (some-> thinking-level name)
                            "off")]
     (when (seq model-label)
@@ -42,8 +56,8 @@
         effective-effort         (effective-reasoning-effort model thinking-level)
         journal-messages         (persist/messages-from-entries-in ctx session-id)
         session-display-name     (message-text/session-display-name (:session-name sd) journal-messages)
-        pending-message-count    (+ (count (:steering-messages sd))
-                                    (count (:follow-up-messages sd)))
+        pending-message-count    (+ (safe-count (:steering-messages sd))
+                                    (safe-count (:follow-up-messages sd)))
         summary                  {:session-id                 (:session-id sd)
                                   :session-file               (:session-file sd)
                                   :session-name               (:session-name sd)

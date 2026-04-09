@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-09
+
+- λ Δ Hardened prompt-completion projections against keyword sentinel values:
+  - footer projection now treats non-string branch/session/provider values as absent instead of seqing them
+  - footer status projection now ignores non-collection `:psi.ui/statuses` values (for example unresolved keyword sentinels)
+  - session-summary projection now treats non-string model ids/providers as absent and ignores non-collection pending-message queues
+  - journal reads now ignore non-seq journal values so prompt completion does not crash when deriving the last assistant message
+  - added regression coverage for keyword-sentinel footer/session-summary inputs and RPC prompt completion so turns no longer fail with `Don't know how to create ISeq from: clojure.lang.Keyword`
+- ✓ Verification:
+  - targeted `psi.app-runtime.footer-test`
+  - targeted `psi.app-runtime.session-summary-test`
+  - targeted `psi.agent-session.persistence-test`
+  - targeted `psi.rpc-test` regression covering prompt completion + `footer/updated`
+
 ## 2026-04-08
 
 - λ Δ Converged more shared-session prompt entrypoints onto the dispatch-visible prompt lifecycle:

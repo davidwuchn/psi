@@ -50,14 +50,25 @@
       (< n 10000000) (format "%.1fM" (/ n 1000000.0))
       :else (str (Math/round (double (/ n 1000000.0))) "M"))))
 
+(defn- string-value
+  [x]
+  (when (string? x)
+    x))
+
+(defn- present-string
+  [x]
+  (let [s (some-> x string-value str/trim)]
+    (when (seq s)
+      s)))
+
 (defn- replace-home-with-tilde
   [path]
-  (let [home (System/getProperty "user.home")]
-    (if (and (string? path)
-             (string? home)
-             (str/starts-with? path home))
-      (str "~" (subs path (count home)))
-      (or path ""))))
+  (let [home (System/getProperty "user.home")
+        path* (or (string-value path) "")]
+    (if (and (string? home)
+             (str/starts-with? path* home))
+      (str "~" (subs path* (count home)))
+      path*)))
 
 (defn- positive-number?
   [n]
@@ -106,12 +117,12 @@
 
 (defn- model-text
   [d]
-  (let [model-provider   (:psi.agent-session/model-provider d)
-        model-id         (:psi.agent-session/model-id d)
+  (let [model-provider   (string-value (:psi.agent-session/model-provider d))
+        model-id         (string-value (:psi.agent-session/model-id d))
         model-reasoning? (boolean (:psi.agent-session/model-reasoning d))
         thinking-level   (:psi.agent-session/thinking-level d)
         thinking-label   (normalize-thinking-level thinking-level)
-        effort-label     (or (:psi.agent-session/effective-reasoning-effort d)
+        effort-label     (or (string-value (:psi.agent-session/effective-reasoning-effort d))
                              (when (not= "off" thinking-label)
                                thinking-label))
         model-label      (or model-id "no-model")
@@ -125,28 +136,39 @@
 
 (defn- path-text
   [d fallback-cwd]
-  (let [cwd                  (or (:psi.agent-session/cwd d) fallback-cwd "")
-        git-branch           (:psi.agent-session/git-branch d)
-        session-display-name (or (:psi.agent-session/session-display-name d)
-                                 (:psi.agent-session/session-name d))
+  (let [cwd                  (or (string-value (:psi.agent-session/cwd d))
+                                 (string-value fallback-cwd)
+                                 "")
+        git-branch           (present-string (:psi.agent-session/git-branch d))
+        session-display-name (or (present-string (:psi.agent-session/session-display-name d))
+                                 (present-string (:psi.agent-session/session-name d)))
         path0                (replace-home-with-tilde cwd)
-        path1                (if (seq git-branch)
+        path1                (if git-branch
                                (str path0 " (" git-branch ")")
                                path0)]
-    (if (seq session-display-name)
+    (if session-display-name
       (str path1 " • " session-display-name)
       path1)))
 
 (defn- sanitize-status-text
   [text]
-  (-> (or text "")
+  (-> (or (string-value text) "")
       (str/replace #"[\r\n\t]" " ")
       (str/replace #" +" " ")
       (str/trim)))
 
+(defn- status-seq
+  [statuses]
+  (cond
+    (map? statuses)        (vals statuses)
+    (or (vector? statuses)
+        (sequential? statuses)
+        (set? statuses))   statuses
+    :else                  []))
+
 (defn- status-items
   [statuses]
-  (->> (or statuses [])
+  (->> (status-seq statuses)
        (sort-by #(or (:extension-id %) (:extensionId %) ""))
        (mapv (fn [status]
                {:status/extension-id (or (:extension-id status) (:extensionId status))

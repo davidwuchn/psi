@@ -1089,6 +1089,67 @@
       (is (every? #(contains? % :data) (filter #(= :event (:kind %)) frames)))
       (is (contains? #{:response :event} (:kind (last frames)))))))
 
+(deftest rpc-prompt-footer-updated-tolerates-keyword-sentinel-values-test
+  (testing "prompt completion does not fail when footer query returns keyword sentinels"
+    (let [[ctx _] (create-session-context)
+          state (atom {:ready? true
+                       :pending {}
+                       :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                       :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
+                                            (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
+                                                    {:event-kind :text-delta :text "Hello" :type :agent-event})
+                                            {:role "assistant"
+                                             :content [{:type :text :text "Hello final"}]
+                                             :stop-reason :stop
+                                             :usage {:total-tokens 3}})})
+          handler (make-handler ctx state)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"p1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"assistant/message\" \"session/updated\" \"footer/updated\" \"error\"]}}\n"
+                       "{:id \"r1\" :kind :request :op \"prompt\" :params {:message \"hi\"}}\n")
+          footer-data {:psi.agent-session/cwd "/repo/project"
+                       :psi.agent-session/git-branch :pathom/unknown
+                       :psi.agent-session/session-display-name :pathom/unknown
+                       :psi.agent-session/context-window 400000
+                       :psi.agent-session/model-provider :pathom/unknown
+                       :psi.agent-session/model-id "stub"
+                       :psi.agent-session/model-reasoning false
+                       :psi.agent-session/thinking-level :off
+                       :psi.ui/statuses :pathom/unknown}
+          orig-query-in session/query-in
+          {:keys [out-lines]}
+          (with-redefs [session/query-in
+                        (fn
+                          ([ctx q]
+                           (if (= @#'rpc.events/footer-query q)
+                             footer-data
+                             (orig-query-in ctx q)))
+                          ([ctx x y]
+                           (if (or (= @#'rpc.events/footer-query x)
+                                   (= @#'rpc.events/footer-query y))
+                             footer-data
+                             (orig-query-in ctx x y)))
+                          ([ctx session-id q extra-entity]
+                           (if (= @#'rpc.events/footer-query q)
+                             footer-data
+                             (orig-query-in ctx session-id q extra-entity))))]
+            (run-loop input handler state 250))
+          frames         (parse-frames out-lines)
+          prompt-frame   (some #(when (and (= :response (:kind %))
+                                           (= "prompt" (:op %))) %) frames)
+          assistant-evt  (some #(when (= "assistant/message" (:event %)) %) frames)
+          footer-events  (filterv #(= "footer/updated" (:event %)) frames)
+          runtime-failed (filterv #(= "runtime/failed"
+                                      (or (:error-code %)
+                                          (get-in % [:data :error-code])))
+                                  frames)]
+      (is (some? prompt-frame))
+      (is (true? (get-in prompt-frame [:data :accepted])))
+      (is (some? assistant-evt))
+      (is (seq footer-events))
+      (is (= "/repo/project"
+             (get-in (last footer-events) [:data :path-line])))
+      (is (empty? runtime-failed)))))
+
 (deftest rpc-thinking-delta-after-tool-start-begins-fresh-segment-test
   (testing "post-tool thinking delta can start a fresh cumulative segment"
     (let [[ctx _] (create-session-context)
@@ -2046,7 +2107,7 @@
                             "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type :text :message "history output"})]
+                                           {:type :text :message "history output"})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line]
@@ -2165,7 +2226,7 @@
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type :text :message "<history output>"})]
+                                           {:type :text :message "<history output>"})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
@@ -2195,12 +2256,12 @@
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-cmd\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type    :extension-cmd
-                                           :name    "test-cmd"
-                                           :args    "some args"
-                                           :handler (fn [args]
-                                                      (reset! received-args args)
-                                                      (println "ext output"))})]
+                                           {:type    :extension-cmd
+                                            :name    "test-cmd"
+                                            :args    "some args"
+                                            :handler (fn [args]
+                                                       (reset! received-args args)
+                                                       (println "ext output"))})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
@@ -2229,10 +2290,10 @@
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-err\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type    :extension-cmd
-                                           :name    "err-cmd"
-                                           :args    ""
-                                           :handler (fn [_] (throw (ex-info "boom" {})))})]
+                                           {:type    :extension-cmd
+                                            :name    "err-cmd"
+                                            :args    ""
+                                            :handler (fn [_] (throw (ex-info "boom" {})))})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
@@ -2256,9 +2317,9 @@
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type     :login-start
-                                           :provider {:name "Anthropic"}
-                                           :url      "https://example.com/auth"})]
+                                           {:type     :login-start
+                                            :provider {:name "Anthropic"}
+                                            :url      "https://example.com/auth"})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
@@ -2372,7 +2433,7 @@
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/quit\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type :quit})]
+                                           {:type :quit})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
@@ -2395,7 +2456,7 @@
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/resume\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type :resume})]
+                                           {:type :resume})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
                            (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
@@ -2528,7 +2589,7 @@
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
-                                          {:type :text :message "history output"})]
+                                           {:type :text :message "history output"})]
         (run-loop input handler state 250)
         (let [journal-entries (persist/all-entries-in ctx session-id)
               msg-entries     (filterv #(= :message (:kind %)) journal-entries)

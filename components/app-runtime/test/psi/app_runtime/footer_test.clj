@@ -1,6 +1,5 @@
 (ns psi.app-runtime.footer-test
   (:require
-   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.app-runtime.footer :as footer]))
 
@@ -71,4 +70,22 @@
              (get-in model [:footer/model :text])))
       (is (= "?/400k (openai) gpt-5.3-codex • thinking off"
              (get-in model [:footer/lines :stats-line])))
+      (is (nil? (get-in model [:footer/lines :status-line]))))))
+
+(deftest footer-model-from-data-ignores-keyword-sentinels-test
+  (testing "keyword sentinel values are treated as absent instead of seqable collections/strings"
+    (let [model (footer/footer-model-from-data
+                 {:psi.agent-session/cwd "/repo/project"
+                  :psi.agent-session/git-branch :pathom/unknown
+                  :psi.agent-session/session-display-name :pathom/unknown
+                  :psi.agent-session/context-window 400000
+                  :psi.agent-session/model-provider :pathom/unknown
+                  :psi.agent-session/model-id "gpt-5.3-codex"
+                  :psi.agent-session/model-reasoning false
+                  :psi.agent-session/thinking-level :off
+                  :psi.ui/statuses :pathom/unknown})]
+      (is (= "/repo/project"
+             (get-in model [:footer/lines :path-line])))
+      (is (= "(no-provider) gpt-5.3-codex"
+             (get-in model [:footer/model :text])))
       (is (nil? (get-in model [:footer/lines :status-line]))))))

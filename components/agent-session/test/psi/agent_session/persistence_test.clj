@@ -6,8 +6,10 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
+   [psi.agent-session.core :as core]
    [psi.agent-session.persistence :as p]
-   [psi.agent-session.session :as session])
+   [psi.agent-session.session :as session]
+   [psi.agent-session.session-state :as ss])
   (:import
    (java.io File RandomAccessFile)
    (java.nio.channels FileLock)
@@ -37,6 +39,14 @@
   (testing "create-journal returns empty atom"
     (let [j (p/create-journal)]
       (is (= [] (p/all-entries j)))))
+
+  (testing "all-entries-in ignores non-seq journal values"
+    (let [ctx (core/create-context)
+          sd  (core/new-session-in! ctx nil {})
+          sid (:session-id sd)
+          _   (ss/assoc-state-value-in! ctx (ss/state-path :journal sid) :pathom/unknown)]
+      (is (= [] (p/all-entries-in ctx sid)))
+      (is (nil? (core/last-assistant-message-in ctx sid)))))
 
   (testing "append-entry! adds entry and returns it"
     (let [j (p/create-journal)

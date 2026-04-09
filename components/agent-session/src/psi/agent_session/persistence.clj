@@ -176,10 +176,19 @@
   (update-state-in! ctx (journal-path ctx session-id) conj entry)
   entry)
 
+(defn- entry-coll
+  [x]
+  (cond
+    (vector? x)     x
+    (sequential? x) x
+    :else           []))
+
 (defn all-entries-in
   "Return all canonical journal entries for `session-id` from ctx as a vector."
   [ctx session-id]
-  (vec (or (get-state-in ctx (journal-path ctx session-id)) [])))
+  (-> (get-state-in ctx (journal-path ctx session-id))
+      entry-coll
+      vec))
 
 (defn entries-of-kind-in
   "Return canonical journal entries of `kind` for `session-id` from ctx."
