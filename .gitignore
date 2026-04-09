@@ -1,7 +1,8 @@
 *.elc
 .psi/project.edn
-.clj-konde/imports.claude/
-.clj-kondo/imports
+**/.clj-konde/imports.claude/
+**/.clj-kondo/imports/
+**/.clj-kondo/.cache/
 /target/
 /target/coverage/
 /target/coverage-ai/
