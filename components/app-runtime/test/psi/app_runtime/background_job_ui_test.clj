@@ -5,10 +5,11 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session-state :as ss]
+   [psi.agent-session.test-support :as test-support]
    [psi.app-runtime.background-job-ui :as bg-ui]))
 
 (defn- make-ctx []
-  (let [ctx (session/create-context {})
+  (let [ctx (session/create-context (test-support/safe-context-opts {}))
         sd  (session/new-session-in! ctx nil {})]
     [ctx (:session-id sd)]))
 

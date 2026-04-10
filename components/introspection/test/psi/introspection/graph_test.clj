@@ -9,7 +9,10 @@
 
 (defn- operation-metadata
   []
-  (let [session-ctx       (agent-session/create-context)
+  (let [session-ctx       (agent-session/create-context {:persist? false
+                                                         :cwd (str (java.nio.file.Files/createTempDirectory
+                                                                    "psi-introspection-graph-test-"
+                                                                    (make-array java.nio.file.attribute.FileAttribute 0)))})
         _                 (agent-session/new-session-in! session-ctx nil {})
         ctx               (introspection/create-context {:agent-session-ctx session-ctx})
         qctx              (:query-ctx ctx)]

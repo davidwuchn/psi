@@ -5,13 +5,14 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
+   [psi.agent-session.test-support :as test-support]
    [psi.app-runtime.session-summary :as summary]))
 
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

@@ -7,6 +7,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.runtime :as runtime]
+   [psi.agent-session.test-support :as test-support]
    [psi.rpc :as rpc]
    [psi.rpc.events :as rpc.events]
    [psi.rpc.state :as rpc.state]))
@@ -39,7 +40,7 @@
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

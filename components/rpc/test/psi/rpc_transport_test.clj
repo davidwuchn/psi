@@ -4,6 +4,7 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.test-support :as test-support]
    [psi.rpc :as rpc]
    [psi.rpc.transport :as rpc.transport]
    [psi.rpc-test-support :as support]))
@@ -76,7 +77,7 @@
                            {:provider :anthropic :id "stub" :name "Stub" :supports-reasoning true})
           :session-ctx-factory (fn [_ai-model _session-config]
                                  (println "BOOTSTRAP BANNER")
-                                 (let [ctx (session/create-context {})
+                                 (let [ctx (session/create-context (test-support/safe-context-opts {}))
                                        sd  (session/new-session-in! ctx nil {})]
                                    {:ctx ctx :oauth-ctx nil :session-id (:session-id sd)}))
           :bootstrap-fn! (fn [_ctx _session-id _ai-model _memory-runtime-opts]

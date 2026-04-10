@@ -41,7 +41,7 @@
 
 (deftest create-context-with-agent-session-test
   (testing "create-context accepts :agent-session-ctx option"
-    (let [session-ctx      (session/create-context)
+    (let [session-ctx      (session/create-context {:cwd (temp-cwd) :persist? false})
           _               (session/new-session-in! session-ctx nil {})
           ctx              (introspection/create-context {:agent-session-ctx session-ctx})]
       (is (some? (:agent-session-ctx ctx))
@@ -62,7 +62,7 @@
 
 (deftest register-resolvers-in!-with-session-test
   (testing "register-resolvers-in! registers agent-session resolvers/mutations when ctx has session"
-    (let [session-ctx      (session/create-context)
+    (let [session-ctx      (session/create-context {:cwd (temp-cwd) :persist? false})
           _               (session/new-session-in! session-ctx nil {})
           ctx              (introspection/create-context {:agent-session-ctx session-ctx})]
       (introspection/register-resolvers-in! ctx)
@@ -165,7 +165,7 @@
 
 (deftest startup-bootstrap-introspection-test
   (testing "startup bootstrap summary is queryable via introspection graph"
-    (let [session-ctx      (session/create-context)
+    (let [session-ctx      (session/create-context {:cwd (temp-cwd) :persist? false})
           session-id       (:session-id (session/new-session-in! session-ctx nil {}))
           _               (bootstrap/bootstrap-in!
                            session-ctx session-id
