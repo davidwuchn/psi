@@ -367,11 +367,9 @@
   ([trigger-signal opts]
    (orchestrate-manual-trigger-in! (global-context) trigger-signal opts)))
 (defn- find-cycle
-  "Find a cycle by id in the cycles vector."
   [cycles cycle-id]
   (first (filter #(= cycle-id (:cycle-id %)) cycles)))
 (defn- update-cycle
-  "Update the cycle matching `cycle-id` with `f`."
   [cycles cycle-id f]
   (mapv (fn [c]
           (if (= cycle-id (:cycle-id c))
@@ -379,7 +377,6 @@
             c))
         cycles))
 (defn- extract-graph-signals
-  "Extract signal strings from graph-state map."
   [graph-state]
   (let [signals (transient #{})]
     (when-let [nc (:node-count graph-state)]
@@ -390,7 +387,6 @@
       (conj! signals (str "status=" (name s))))
     (persistent! signals)))
 (defn- extract-memory-signals
-  "Extract signal strings from memory-state map."
   [memory-state]
   (let [signals (transient #{})]
     (when-let [ec (:entry-count memory-state)]
@@ -401,7 +397,6 @@
       (conj! signals (str "recovery-count=" rc)))
     (persistent! signals)))
 (defn- extract-gaps
-  "Identify gaps from readiness and capability data."
   [readiness graph-state memory-state]
   (let [gaps (transient [])]
     (when-not (:query-ready readiness)
@@ -420,7 +415,6 @@
       (conj! gaps "no memory entries"))
     (persistent! gaps)))
 (defn- extract-opportunities
-  "Identify opportunities from system state."
   [readiness graph-state memory-state]
   (let [opps (transient [])]
     (when (and (:query-ready readiness)
@@ -469,10 +463,8 @@
   [cycle-id system-state graph-state memory-state]
   (observe-in! (global-context) cycle-id system-state graph-state memory-state))
 (def ^:private risk-order
-  "Risk level ordering for aggregation (highest wins)."
   {:low 0, :medium 1, :high 2})
 (defn- aggregate-risk
-  "Return the highest risk level among actions. Defaults to :low."
   [actions]
   (if (empty? actions)
     :low
@@ -635,7 +627,6 @@
   [cycle-id approver notes]
   (reject-proposal-in! (global-context) cycle-id approver notes))
 (defn- default-hook-executor
-  "Default no-op hook executor. Returns success with a placeholder message."
   [_action]
   {:status :success, :output-summary "hook-not-implemented"})
 (defn execute-in!
@@ -681,11 +672,9 @@
   ([cycle-id hook-executor]
    (execute-in! (global-context) cycle-id hook-executor)))
 (defn- default-check-runner
-  "Default no-op check runner. Returns passing for each check."
   [_check-name]
   {:passed true, :details "check-not-implemented"})
 (defn- failed-check-names
-  "Return set of check names that did not pass."
   [checks]
   (into #{} (comp (remove :passed) (map :name)) checks))
 (defn rollback-in!
@@ -767,7 +756,6 @@
   ([cycle-id check-runner]
    (verify-in! (global-context) cycle-id check-runner)))
 (defn- build-success-outcome
-  "Build a success outcome from the cycle's proposal actions and future-state goals."
   [cycle future-state]
   (let [action-titles (into #{} (map :title) (get-in cycle [:proposal :actions]))
         changed-goals (into #{} (map :id) (:goals future-state))]
@@ -776,7 +764,6 @@
      :evidence action-titles
      :changed-goals changed-goals}))
 (defn- build-memory-content
-  "Build the memory content string for a cycle outcome."
   [cycle-id outcome cycle]
   (let [action-titles (mapv :title (get-in cycle [:proposal :actions]))]
     (str "Remember cycle " cycle-id ": "
