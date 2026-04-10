@@ -22,11 +22,6 @@
    [org.jline.keymap KeyMap]
    [org.jline.terminal Terminal]))
 
-;; ── JLine compat patch ──────────────────────────────────────
-;; charm.clj v0.1.42: bind-from-capability! calls (String. ^chars seq)
-;; but JLine 3.30+ KeyMap/key returns String, not char[].
-;; Patch the private fn at load time, before create-keymap is called.
-
 (alter-var-root
  #'charm.input.keymap/bind-from-capability!
  (constantly
@@ -40,14 +35,6 @@
                      (= (int (.charAt seq-str 0)) 27))
             (.bind keymap event (subs seq-str 1)))))))))
 
-;; ── Alt-screen fix ───────────────────────────────────────────
-;; charm.clj v0.1.42: create-renderer stores :alt-screen from opts
-;; in the renderer atom. enter-alt-screen! checks
-;; (when-not (:alt-screen @renderer)) — which short-circuits because
-;; the flag is already true. Result: alt-screen is never entered,
-;; so the TUI runs inline in the main buffer and Display cursor
-;; tracking desyncs on content height changes.
-
 (alter-var-root
  #'charm.render.core/enter-alt-screen!
  (constantly
@@ -57,11 +44,6 @@
       (charm-term/clear-screen terminal)
       (charm-term/cursor-home terminal))
     (swap! renderer assoc :alt-screen true))))
-
-;; ── Resize repaint fix ──────────────────────────────────────
-;; On terminal height changes, JLine Display can retain stale rows from the
-;; previous frame in some terminals. Force a hard repaint + clear so shrinking
-;; and re-expanding the viewport never leaves garbage lines behind.
 
 (alter-var-root
  #'charm.render.core/update-size!
@@ -73,16 +55,10 @@
       (.resize ^org.jline.utils.Display display height width)
       (swap! renderer assoc :width width :height height)
       (when height-changed?
-        ;; Reset Display diff baseline and hard-clear terminal buffer.
         (.clear ^org.jline.utils.Display display)
         (let [terminal (:terminal @renderer)]
           (charm-term/clear-screen terminal)
           (charm-term/cursor-home terminal)))))))
-
-;; ── Extended key fallback patch ─────────────────────────────
-;; Some terminals emit modified keys as CSI-u or modifyOtherKeys
-;; sequences that charm.clj currently leaves as :unknown. Decode the
-;; subset we need for the prompt UX.
 
 (def ^:private kitty-csi-u-pattern #"^\[(\d+);(\d+)u$")
 (def ^:private modify-other-keys-pattern #"^\[27;(\d+);(\d+)~$")
@@ -91,8 +67,6 @@
   [mod-code]
   (let [c (dec mod-code)]
     {:shift (pos? (bit-and c 1))
-     ;; Treat Super/Meta as Alt so existing key bindings continue to work
-     ;; (e.g. cmd+backspace => alt+backspace delete-word-backward).
      :alt   (or (pos? (bit-and c 2))    ; alt
                 (pos? (bit-and c 8))    ; super
                 (pos? (bit-and c 32)))  ; meta
@@ -151,8 +125,6 @@
                      parsed)]
         (normalize-parsed-event parsed))))))
 
-;; ── Styles ──────────────────────────────────────────────────
-
 (def ^:private title-style   (charm/style :fg charm/magenta :bold true))
 (def ^:private user-style    (charm/style :fg charm/cyan :bold true))
 (def ^:private assist-style  (charm/style :fg charm/green :bold true))
@@ -163,8 +135,6 @@
 (def ^:private tool-ok-style (charm/style :fg charm/green))
 (def ^:private tool-err-style (charm/style :fg charm/red))
 (def ^:private tool-dim-style (charm/style :fg 245))
-
-;; ── Spinner frames (driven by poll ticks, no separate timer) ──
 
 (def ^:private spinner-frames
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
