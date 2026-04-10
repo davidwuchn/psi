@@ -52,11 +52,9 @@
         (reset! global-ctx ctx)
         ctx)))
 (defn global-context
-  "Return the global recursion context singleton, creating it when absent."
   []
   (ensure-global-ctx!))
 (defn reset-global-context!
-  "Reset the global context to nil. Useful for testing."
   []
   (reset! global-ctx nil))
 (defn create-hosted-context
@@ -70,33 +68,27 @@
      host-ctx
      host-path)))
 (defn get-state-in
-  "Return the full controller state map from `ctx`."
   [ctx]
   (if-let [state-atom (:state-atom ctx)]
     @state-atom
     (get-in @(:state* (:host-ctx ctx)) (:host-path ctx))))
 (defn swap-state-in!
-  "Apply `f` to controller state atom in `ctx`."
   [ctx f & args]
   (if-let [state-atom (:state-atom ctx)]
     (apply swap! state-atom f args)
     (apply swap! (:state* (:host-ctx ctx)) update-in (:host-path ctx) f args)))
 (defn get-state
-  "Global wrapper for `get-state-in`."
   []
   (get-state-in (global-context)))
 (defn swap-state!
-  "Global wrapper for `swap-state-in!`."
   [f & args]
   (apply swap-state-in! (global-context) f args))
 (defn register-hooks-in!
-  "Initialize (or refresh) hooks from config accepted/enabled trigger sets."
   [ctx]
   (let [hooks (hooks-from-config (:config (get-state-in ctx)))]
     (swap-state-in! ctx assoc :hooks hooks)
     hooks))
 (defn register-hooks!
-  "Global wrapper for `register-hooks-in!`."
   []
   (register-hooks-in! (global-context)))
 (def remember-manual-trigger-prompt-name
@@ -176,7 +168,6 @@
                                   (update :cycles conj cycle))))
         {:result :accepted, :cycle-id (:cycle-id cycle)}))))
 (defn handle-trigger!
-  "Global wrapper for `handle-trigger-in!`."
   [trigger-signal system-state]
   (handle-trigger-in! (global-context) trigger-signal system-state))
 
@@ -371,7 +362,6 @@
             (approval-phase-result ctx cycle-id (:gate-result base-steps) decision approver approval-notes
                                    base-steps hook-executor check-runner memory-ctx))))))
 (defn orchestrate-manual-trigger!
-  "Global wrapper for `orchestrate-manual-trigger-in!`."
   ([trigger-signal]
    (orchestrate-manual-trigger! trigger-signal {}))
   ([trigger-signal opts]
@@ -476,7 +466,6 @@
                                            (assoc :status :planning))))))
         {:ok? true, :observation observation}))))
 (defn observe!
-  "Global wrapper for `observe-in!`."
   [cycle-id system-state graph-state memory-state]
   (observe-in! (global-context) cycle-id system-state graph-state memory-state))
 (def ^:private risk-order
@@ -544,7 +533,6 @@
                                       #(assoc % :proposal proposal)))))
         {:ok? true, :proposal proposal, :future-state new-fs}))))
 (defn plan!
-  "Global wrapper for `plan-in!`."
   [cycle-id]
   (plan-in! (global-context) cycle-id))
 (defn apply-approval-gate-in!
@@ -585,7 +573,6 @@
                                                (assoc-in [:proposal :requires-approval] false))))))
             {:gate :auto-approved}))))))
 (defn apply-approval-gate!
-  "Global wrapper for `apply-approval-gate-in!`."
   [cycle-id]
   (apply-approval-gate-in! (global-context) cycle-id))
 (defn approve-proposal-in!
@@ -613,7 +600,6 @@
                                            (assoc-in [:proposal :approval-notes] notes))))))
         {:ok? true}))))
 (defn approve-proposal!
-  "Global wrapper for `approve-proposal-in!`."
   [cycle-id approver notes]
   (approve-proposal-in! (global-context) cycle-id approver notes))
 (defn reject-proposal-in!
@@ -646,7 +632,6 @@
                                            (assoc-in [:proposal :approval-notes] notes))))))
         {:ok? true}))))
 (defn reject-proposal!
-  "Global wrapper for `reject-proposal-in!`."
   [cycle-id approver notes]
   (reject-proposal-in! (global-context) cycle-id approver notes))
 (defn- default-hook-executor
@@ -691,7 +676,6 @@
                                             (update :execution-attempts into attempts))))))
          {:ok? true, :attempts attempts})))))
 (defn execute!
-  "Global wrapper for `execute-in!`."
   ([cycle-id]
    (execute-in! (global-context) cycle-id))
   ([cycle-id hook-executor]
@@ -716,7 +700,6 @@
                                       :reason "verification-failure"}))))
   {:ok? true})
 (defn rollback!
-  "Global wrapper for `rollback-in!`."
   [cycle-id]
   (rollback-in! (global-context) cycle-id))
 (defn verify-in!
@@ -779,7 +762,6 @@
                                                 (assoc :outcome outcome))))))
              {:ok? true, :report report})))))))
 (defn verify!
-  "Global wrapper for `verify-in!`."
   ([cycle-id]
    (verify-in! (global-context) cycle-id))
   ([cycle-id check-runner]
@@ -841,7 +823,6 @@
             {:ok? true, :memory-ids #{record-id}})
           {:ok? false, :error :memory-write-failed, :details mem-result})))))
 (defn learn!
-  "Global wrapper for `learn-in!`."
   [cycle-id memory-ctx]
   (learn-in! (global-context) cycle-id memory-ctx))
 (defn update-future-state-from-outcome-in!
@@ -870,7 +851,6 @@
         (swap-state-in! ctx assoc :current-future-state updated-fs)
         {:ok? true, :future-state updated-fs}))))
 (defn update-future-state-from-outcome!
-  "Global wrapper for `update-future-state-from-outcome-in!`."
   [cycle-id]
   (update-future-state-from-outcome-in! (global-context) cycle-id))
 (defn finalize-cycle-in!
@@ -901,7 +881,6 @@
                                            (assoc :ended-at (java.time.Instant/now)))))))
         {:ok? true, :final-status final-status}))))
 (defn finalize-cycle!
-  "Global wrapper for `finalize-cycle-in!`."
   [cycle-id]
   (finalize-cycle-in! (global-context) cycle-id))
 (defn- continue-cycle-precheck
@@ -993,7 +972,6 @@
                       :phase :completed}
                      results))))))
 (defn continue-cycle!
-  "Global wrapper for `continue-cycle-in!`."
   ([cycle-id]
    (continue-cycle! cycle-id {}))
   ([cycle-id opts]
