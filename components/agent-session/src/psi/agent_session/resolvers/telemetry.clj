@@ -1,6 +1,5 @@
 (ns psi.agent-session.resolvers.telemetry
-  "Pathom3 resolvers for session telemetry, tool lifecycle, provider captures,
-   API error diagnostics, background jobs, dispatch events, and turn streaming."
+  "Telemetry resolvers."
   (:require
    [clojure.set :as set]
    [com.wsscode.pathom3.connect.operation :as pco]
@@ -12,12 +11,6 @@
    [psi.agent-session.turn-statechart :as turn-sc]))
 
 (declare tool-lifecycle-summaries)
-
-;;
-;; Canonical executed-tool history lives in tool lifecycle telemetry:
-;;   - :psi.agent-session/tool-lifecycle-events      ; canonical event stream
-;;   - :psi.agent-session/tool-lifecycle-summaries   ; canonical grouped read model
-;;   - :psi.agent-session/executed-tool-count        ; canonical grouped count
 
 ;; ── Stats snapshot ──────────────────────────────────────
 
