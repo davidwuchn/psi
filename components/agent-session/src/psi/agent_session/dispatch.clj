@@ -37,8 +37,8 @@
    Interceptor context keys:
      :ctx         — session context map (opaque to interceptors)
      :event       — canonical normalized event map
-     :event-type  — keyword (compat projection from :event)
-     :event-data  — map or nil (compat projection from :event)
+     :event-type  — keyword (cached projection from :event)
+     :event-data  — map or nil (cached projection from :event)
      :result      — dispatch return value (set from pure handler result)
      :blocked?    — if true, handler is skipped
      :block-reason — why blocked (string or keyword)
@@ -51,9 +51,9 @@
    ─────────────────────────────
    Dispatch owns runtime-visible mutation/effect coordination.
    Handlers return pure result maps; dispatch applies state and executes
-   effects at the boundary. Actual tool execution itself is still
-   intentionally executor-owned and has not yet fully moved under one
-   dispatch-owned runtime effect boundary.
+   effects at the boundary. Actual tool execution itself still crosses an
+   intentionally separate runtime boundary and has not yet fully moved under
+   one dispatch-owned runtime effect boundary.
 
    Usage
    ─────
