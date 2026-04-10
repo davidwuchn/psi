@@ -90,19 +90,13 @@
 (defn register-handler!
   "Register a handler for `event-type`.
 
-   Arity 2:
-   - (register-handler! event-type handler-fn)
-
-   Arity 3 (opts currently unused, retained for call-site compatibility):
-   - (register-handler! event-type opts handler-fn)
+   Handler fn signature: (fn [ctx event-data]) -> any.
 
    Replaces any existing handler for that type."
-  ([event-type handler-fn]
-   (register-handler! event-type nil handler-fn))
-  ([event-type _opts handler-fn]
-   (swap! handler-registry assoc event-type
-          {:fn handler-fn})
-   nil))
+  [event-type handler-fn]
+  (swap! handler-registry assoc event-type
+         {:fn handler-fn})
+  nil)
 (defn registered-event-types
   "Return the set of registered event type keywords."
   []

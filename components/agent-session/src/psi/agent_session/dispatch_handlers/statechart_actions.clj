@@ -79,13 +79,11 @@
   [_ctx]
   (dispatch/register-handler!
    :on-streaming-entered
-   {}
    (fn [_ctx {:keys [session-id]}]
      {:root-state-update (session/session-update session-id #(assoc % :is-streaming true))}))
 
   (dispatch/register-handler!
    :on-agent-done
-   {}
    (fn [_ctx {:keys [session-id]}]
      {:root-state-update (session/session-update session-id #(assoc %
                                                          :is-streaming false
@@ -97,7 +95,6 @@
 
   (dispatch/register-handler!
    :on-abort
-   {}
    (fn [_ctx {:keys [session-id]}]
      {:root-state-update (session/session-update session-id #(assoc %
                                                          :is-streaming false
@@ -107,7 +104,6 @@
 
   (dispatch/register-handler!
    :on-auto-compact-triggered
-   {}
    (fn [_ctx {:keys [session-id] :as data}]
      (let [reason      (or (auto-compaction-reason session-id data) :threshold)
            will-retry? (= :overflow reason)]
@@ -118,19 +114,16 @@
 
   (dispatch/register-handler!
    :on-compacting-entered
-   {}
    (fn [_ctx {:keys [session-id]}]
      {:root-state-update (session/session-update session-id #(assoc % :is-compacting true))}))
 
   (dispatch/register-handler!
    :on-compact-done
-   {}
    (fn [_ctx {:keys [session-id]}]
      {:root-state-update (session/session-update session-id #(assoc % :is-compacting false))}))
 
   (dispatch/register-handler!
    :on-retry-triggered
-   {}
    (fn [ctx {:keys [session-id]}]
      (let [sd       (session/get-session-data-in ctx session-id)
            attempt  (:retry-attempt sd)
@@ -144,12 +137,10 @@
 
   (dispatch/register-handler!
    :on-retrying-entered
-   {}
    (fn [_ctx _data]
      nil)) ;; retry-attempt increment handled in :on-retry-triggered
 
   (dispatch/register-handler!
    :on-retry-resume
-   {}
    (fn [_ctx _data]
      {:effects [{:effect/type :runtime/agent-start-loop}]})))

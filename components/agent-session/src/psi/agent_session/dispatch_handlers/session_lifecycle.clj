@@ -13,7 +13,6 @@
   [_ctx]
   (dispatch/register-handler!
    :session/new-initialize
-   {}
    (fn [ctx {:keys [session-id new-session-id worktree-path session-name spawn-mode session-file]}]
      (let [current-sd (or (session/get-session-data-in ctx session-id)
                           (assoc (session-data/initial-session (:session-defaults ctx))
@@ -29,7 +28,6 @@
 
   (dispatch/register-handler!
    :session/resume-loaded
-   {}
    (fn [ctx {:keys [session-id source-session-id session-path header entries model thinking-level messages]}]
      (let [source-sid (or source-session-id session-id)
            current-sd (session/get-session-data-in ctx source-sid)
@@ -50,7 +48,6 @@
 
   (dispatch/register-handler!
    :session/fork-initialize
-   {}
    (fn [ctx {:keys [session-id new-session-id branch-entries session-file messages]}]
      (let [parent-sd (session/get-session-data-in ctx session-id)
            payload   {:new-session-id new-session-id
@@ -63,7 +60,6 @@
 
   (dispatch/register-handler!
    :session/create-child
-   {}
    (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs thinking-level]}]
      (let [parent-sd (session/get-session-data-in ctx session-id)]
        {:root-state-update #(ss/initialize-child-session-state % parent-sd
@@ -76,7 +72,6 @@
 
   (dispatch/register-handler!
    :session/resume-missing-initialize
-   {}
    (fn [ctx {:keys [session-id session-path]}]
      (let [current-sd (session/get-session-data-in ctx session-id)]
        {:root-state-update #(ss/initialize-resume-missing-state % current-sd session-path)

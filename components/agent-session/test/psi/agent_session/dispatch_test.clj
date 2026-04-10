@@ -43,8 +43,8 @@
     (dispatch/register-handler! :test-event (fn [_ctx _data] :second))
     (is (= :second (dispatch/dispatch! {} :test-event))))
 
-  (testing "register-handler! with opts still works (opts ignored)"
-    (dispatch/register-handler! :classified {} (fn [_ctx _data] :ok))
+  (testing "register-handler! stores handler entries"
+    (dispatch/register-handler! :classified (fn [_ctx _data] :ok))
     (is (= {:fn :present}
            (some-> (dispatch/handler-entry :classified)
                    (update :fn (constantly :present)))))))

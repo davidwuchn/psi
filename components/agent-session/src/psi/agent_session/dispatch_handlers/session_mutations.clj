@@ -17,7 +17,7 @@
   (java.time.Instant/now))
 
 (defn- register-core-handler! [event handler]
-  (dispatch/register-handler! event {} handler))
+  (dispatch/register-handler! event handler))
 
 (defn- register-prompt-handlers! []
   ;; ⚠ Impure handler exception: returns the compaction result directly rather

@@ -40,13 +40,11 @@
   [_ctx]
   (dispatch/register-handler!
    :session/set-system-prompt-build-opts
-   {}
    (fn [_ctx {:keys [session-id opts]}]
      {:root-state-update (session/session-update session-id #(assoc % :system-prompt-build-opts opts))}))
 
   (dispatch/register-handler!
    :session/refresh-system-prompt
-   {}
    (fn [ctx {:keys [session-id]}]
      (let [sd      (session/get-session-data-in ctx session-id)
            contrib (session/list-prompt-contributions-in ctx session-id)
@@ -69,7 +67,6 @@
 
   (dispatch/register-handler!
    :session/set-system-prompt
-   {}
    (fn [ctx {:keys [session-id prompt]}]
      (let [base*   (or prompt "")
            contrib (session/list-prompt-contributions-in ctx session-id)
@@ -82,7 +79,6 @@
 
   (dispatch/register-handler!
    :session/register-prompt-contribution
-   {}
    (fn [ctx {:keys [session-id ext-path id contribution]}]
      (let [ext-path* (str ext-path)
            id*       (str id)
@@ -110,7 +106,6 @@
 
   (dispatch/register-handler!
    :session/update-prompt-contribution
-   {}
    (fn [ctx {:keys [session-id ext-path id patch]}]
      (let [ext-path* (str ext-path)
            id*       (str id)
@@ -145,7 +140,6 @@
 
   (dispatch/register-handler!
    :session/unregister-prompt-contribution
-   {}
    (fn [ctx {:keys [session-id ext-path id]}]
      (let [ext-path* (str ext-path)
            id*       (str id)
@@ -170,13 +164,11 @@
 
   (dispatch/register-handler!
    :session/reset-prompt-contributions
-   {}
    (fn [_ctx {:keys [session-id]}]
      {:root-state-update (session/session-update session-id #(assoc % :prompt-contributions []))}))
 
   (dispatch/register-handler!
    :session/bootstrap-prompt-state
-   {}
    (fn [_ctx {:keys [session-id system-prompt developer-prompt developer-prompt-source]}]
      {:root-state-update (session/session-update session-id #(assoc %
                                                          :base-system-prompt system-prompt
@@ -186,7 +178,6 @@
 
   (dispatch/register-handler!
    :session/ensure-base-system-prompt
-   {}
    (fn [ctx {:keys [session-id]}]
      (let [sd (session/get-session-data-in ctx session-id)]
        (when-not (contains? sd :base-system-prompt)
@@ -194,7 +185,6 @@
 
   (dispatch/register-handler!
    :session/register-prompt-template
-   {}
    (fn [ctx {:keys [session-id template]}]
      (let [templates  (vec (:prompt-templates (session/get-session-data-in ctx session-id)))
            existing?  (some #(= (:name %) (:name template)) templates)
