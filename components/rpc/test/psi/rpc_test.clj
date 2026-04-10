@@ -341,13 +341,10 @@
     (let [[ctx _] (support/create-session-context)
           state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
+                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _prepared-request progress-queue]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :text-delta :text "Hello" :type :agent-event})
-                                            {:role "assistant"
-                                             :content [{:type :text :text "Hello final"}]
-                                             :stop-reason :stop
-                                             :usage {:total-tokens 2}})})
+                                            (support/assistant-msg->execution-result _session-id {:role "assistant" :content [{:type :text :text "Hello final"}] :stop-reason :stop :usage {:total-tokens 2}}))})
           handler (support/make-handler ctx state)
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"q1\" :kind :request :op \"query_eql\" :params {:query \"[:psi.graph/domain-coverage :psi.memory/status]\"}}\n"

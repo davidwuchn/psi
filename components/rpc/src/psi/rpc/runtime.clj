@@ -80,7 +80,6 @@
            session-ctx-factory
            bootstrap-fn!
            on-new-session!
-           run-agent-loop-fn
            sync-on-git-head-change?]
     :or {memory-runtime-opts {}
          session-config {}
@@ -103,7 +102,6 @@
                                             :ai-model ai-model
                                             :ui-type :emacs
                                             :on-new-session! on-new-session!
-                                            :run-agent-loop-fn run-agent-loop-fn
                                             :sync-on-git-head-change? sync-on-git-head-change?})
               request-handler (rpc.session/make-session-request-handler ctx (:session deps))]
           (publish-session-state! session-state* {:ctx ctx

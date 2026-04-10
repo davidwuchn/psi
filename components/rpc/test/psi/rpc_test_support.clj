@@ -26,8 +26,8 @@
    [psi.memory.store :as store]))
 
 (defn assistant-msg->execution-result
-  "Convert an old-style assistant message map (as returned by run-agent-loop-fn mocks)
-   into the shaped execution-result map expected by the new prompt lifecycle."
+  "Convert an assistant message map into the shaped execution-result map
+   expected by the new prompt lifecycle."
   [session-id assistant-msg]
   (let [tool-calls (vec (filter #(= :tool-call (:type %)) (or (:content assistant-msg) [])))]
     {:execution-result/turn-id             (str (java.util.UUID/randomUUID))
@@ -46,9 +46,7 @@
      :execution-result/stop-reason        (or (:stop-reason assistant-msg) :stop)}))
 
 (defn run-loop
-  "Run a stdio loop. When the state atom contains :run-agent-loop-fn, it is
-   automatically bridged to the new prompt lifecycle by installing an
-   execute-prepared-request-fn override on the ctx so existing mocks work."
+  "Run a stdio loop."
   ([input handler]
    (run-loop input handler (atom {}) 0))
   ([input handler state]
@@ -93,27 +91,22 @@
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 
-(defn bridge-execute-fn
-  "Build an execute-prepared-request-fn that delegates to an old-style
-   run-agent-loop-fn mock, adapting between the new execution-result shape
-   and the old assistant-message return shape."
-  [run-agent-loop-fn]
-  (fn [_ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
-    (let [result (run-agent-loop-fn nil ctx session-id agent-ctx
-                                    (:prepared-request/model prepared-request)
-                                    (:prepared-request/messages prepared-request)
-                                    {:progress-queue progress-queue})]
-      (assistant-msg->execution-result session-id result))))
+(defn- normalize-execute-prepared-request-fn
+  [f]
+  (fn [ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
+    (let [result (f ai-ctx ctx session-id agent-ctx prepared-request progress-queue)]
+      (if (contains? result :execution-result/session-id)
+        result
+        (assistant-msg->execution-result session-id result)))))
 
 (defn make-handler
-  "Build an RPC request handler. When state contains :run-agent-loop-fn, it is
-   bridged onto the ctx as :execute-prepared-request-fn so the new prompt
-   lifecycle uses the mock instead of real AI streaming."
+  "Build an RPC request handler."
   [ctx state]
-  (let [bridge-fn (:run-agent-loop-fn @state)
-        ctx*      (if bridge-fn
-                    (assoc ctx :execute-prepared-request-fn (bridge-execute-fn bridge-fn))
-                    ctx)]
+  (let [execute-fn (:execute-prepared-request-fn @state)
+        ctx*       (cond-> ctx
+                     execute-fn
+                     (assoc :execute-prepared-request-fn
+                            (normalize-execute-prepared-request-fn execute-fn)))]
     (rpc/make-session-request-handler
      ctx*
      (select-keys @state [:rpc-ai-model

@@ -38,7 +38,7 @@
    ctx
    (select-keys @state [:rpc-ai-model
                         :on-new-session!
-                        :run-agent-loop-fn
+                        :execute-prepared-request-fn
                         :sync-on-git-head-change?])))
 
 (defn- create-session-context

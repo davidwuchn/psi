@@ -26,10 +26,11 @@
                               :connection {:focus-session-id _a-sid}
                               :workers {}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                              :run-agent-loop-fn (fn [_ai-ctx _ctx sid _agent-ctx _ai-model _new-messages _opts]
-                                                   (reset! captured sid)
-                                                   {:role "assistant"
-                                                    :content [{:type :text :text "ok"}]})})
+                              :execute-prepared-request-fn (fn [_ai-ctx _ctx sid _agent-ctx _prepared-request _opts]
+                                                             (reset! captured sid)
+                                                             (support/assistant-msg->execution-result sid {:role "assistant"
+                                                                                                           :content [{:type :text :text "ok"}]
+                                                                                                           :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input    (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                         (format "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"%s\" :message \"hi\"}}\n" z-sid))]
@@ -40,14 +41,14 @@
       (is (= z-sid @captured)))))
 
 (deftest rpc-prompt-slash-dispatch-gate-test
-  (testing "when commands/dispatch-in returns non-nil, run-agent-loop-fn is NOT called"
+  (testing "when commands/dispatch-in returns non-nil, execute-prepared-request-fn is NOT called"
     (let [[ctx _]      (support/create-session-context)
           loop-called? (atom false)
           state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                              :run-agent-loop-fn (fn [& _]
+                              :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts]
                                                    (reset! loop-called? true)
-                                                   {:role "assistant" :content []})})
+                                                   (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                             "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
@@ -63,7 +64,7 @@
               events  (filter #(= :event (:kind %)) frames)
               msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
           (is (false? @loop-called?)
-              "run-agent-loop-fn must NOT be called when dispatch returns a command result")
+              "execute-prepared-request-fn must NOT be called when dispatch returns a command result")
           (is (some? msg-evt)
               "assistant/message event must be emitted for the command result")
           (is (= "assistant"
@@ -73,21 +74,21 @@
                     (get-in msg-evt [:data :content]))
               "assistant/message content must include command output text")))))
 
-  (testing "when commands/dispatch-in returns nil, run-agent-loop-fn IS called"
+  (testing "when commands/dispatch-in returns nil, execute-prepared-request-fn IS called"
     (let [[ctx _]      (support/create-session-context)
           loop-called? (atom false)
           state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                              :run-agent-loop-fn (fn [& _]
+                              :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts]
                                                    (reset! loop-called? true)
-                                                   {:role "assistant" :content [{:type :text :text "ok"}]})})
+                                                   (support/assistant-msg->execution-result session-id {:role "assistant" :content [{:type :text :text "ok"}] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)]
         (support/run-loop input handler state 250)
         (is (true? @loop-called?)
-            "run-agent-loop-fn must be called when dispatch returns nil")))))
+            "execute-prepared-request-fn must be called when dispatch returns nil")))))
 
 (deftest rpc-prompt-expands-skill-input-before-agent-loop-test
   (testing "non-command /skill prompt is expanded through shared runtime path"
@@ -162,7 +163,7 @@
     (let [[ctx _]    (support/create-session-context)
           state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                        :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
@@ -189,9 +190,9 @@
           received-args (atom nil)
           state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _]
+                        :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts]
                                              (reset! loop-called? true)
-                                             {:role "assistant" :content []})})
+                                             (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -222,9 +223,9 @@
           loop-called? (atom false)
           state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _]
+                        :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts]
                                              (reset! loop-called? true)
-                                             {:role "assistant" :content []})})
+                                             (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -250,7 +251,7 @@
     (let [[ctx _]    (support/create-session-context)
           state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                        :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -277,9 +278,9 @@
           completions  (atom [])
           state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                              :run-agent-loop-fn (fn [& _]
+                              :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts]
                                                    (reset! loop-called? true)
-                                                   {:role "assistant" :content []})})
+                                                   (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)]
       (with-redefs [commands/dispatch-in
                     (fn [_ctx _session-id text _opts]
@@ -322,9 +323,9 @@
           completions  (atom [])
           state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "openai" :id "stub" :supports-reasoning true}
-                              :run-agent-loop-fn (fn [& _]
+                              :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts]
                                                    (reset! loop-called? true)
-                                                   {:role "assistant" :content []})})
+                                                   (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)]
       (with-redefs [commands/dispatch-in
                     (fn [_ctx _session-id text _opts]
@@ -363,7 +364,7 @@
     (let [[ctx _]    (support/create-session-context)
           state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                        :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -385,7 +386,7 @@
     (let [[ctx _]    (support/create-session-context)
           state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                        :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -410,7 +411,7 @@
                          (memory/create-context {:state-overrides {:status :ready}}))
           state   (atom {:transport {:ready? true :pending {}}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                         :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           before-count (count (:records (memory/get-state-in (:memory-ctx ctx))))
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
@@ -450,7 +451,7 @@
                           {:state-overrides {:status :initializing}}))
           state   (atom {:transport {:ready? true :pending {}}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                         :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -494,7 +495,7 @@
           _ (memory/select-store-provider-in! (:memory-ctx ctx) "failing-store")
           state   (atom {:transport {:ready? true :pending {}}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                         :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -515,7 +516,7 @@
     (let [[ctx session-id] (support/create-session-context)
           state      (atom {:transport {:ready? true :pending {}}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                            :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+                            :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
@@ -538,7 +539,7 @@
     (let [[ctx session-id] (support/create-session-context)
           state      (atom {:transport {:ready? true :pending {}}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                            :run-agent-loop-fn (fn [& _] {:role "assistant" :content [{:type :text :text "ok"}]})})
+                            :execute-prepared-request-fn (fn [_ai-ctx _ctx session-id _agent-ctx _prepared-request _opts] (support/assistant-msg->execution-result session-id {:role "assistant" :content [{:type :text :text "ok"}] :stop-reason :stop}))})
           handler (support/make-handler ctx state)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"tell me a joke\"}}\n")]
