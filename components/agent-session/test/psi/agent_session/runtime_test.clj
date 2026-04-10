@@ -4,6 +4,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-runtime]
@@ -61,11 +62,11 @@
                                                      :opts opts})
                     {:ok? true
                      :phase :completed
-                     :trigger-result {:result :accepted}})]
+                     :trigger-result {:result :accepted}})
+                  executor/run-agent-loop! success-runner]
       (let [result (runtime/run-agent-loop-in!
                     ctx session-id nil {} []
-                    {:run-loop-fn success-runner
-                     :sync-on-git-head-change? true})
+                    {:sync-on-git-head-change? true})
             call   (first @orchestration-calls)]
         (testing "agent loop still returns normal assistant result"
           (is (= "assistant" (:role result))))
@@ -97,10 +98,11 @@
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
                   (fn [_ _]
                     (swap! calls inc)
-                    {:ok? true :changed? true})]
+                    {:ok? true :changed? true})
+                  executor/run-agent-loop! success-runner]
       (runtime/run-agent-loop-in!
        ctx session-id nil {} []
-       {:run-loop-fn success-runner})
+       {})
       (is (= 0 @calls)))))
 
 (deftest run-agent-loop-sync-flag-with-unchanged-head-skips-recursion-trigger-test
@@ -129,11 +131,11 @@
                   ext/dispatch-in
                   (fn [_ event-name payload]
                     (swap! extension-events conj {:name event-name :payload payload})
-                    {:cancelled? false :override nil :results []})]
+                    {:cancelled? false :override nil :results []})
+                  executor/run-agent-loop! success-runner]
       (runtime/run-agent-loop-in!
        ctx session-id nil {} []
-       {:run-loop-fn success-runner
-        :sync-on-git-head-change? true})
+       {:sync-on-git-head-change? true})
       (is (= 0 @orchestration-calls))
       (is (= [] @extension-events)))))
 
@@ -164,11 +166,11 @@
                   ext/dispatch-in
                   (fn [_ event-name payload]
                     (swap! extension-events conj {:name event-name :payload payload})
-                    {:cancelled? false :override nil :results []})]
+                    {:cancelled? false :override nil :results []})
+                  executor/run-agent-loop! success-runner]
       (runtime/run-agent-loop-in!
        ctx sid nil {} []
-       {:run-loop-fn success-runner
-        :sync-on-git-head-change? true})
+       {:sync-on-git-head-change? true})
       (is (= 1 (count @extension-events)))
       (let [{:keys [name payload]} (first @extension-events)]
         (is (= "git_commit_created" name))

@@ -282,22 +282,20 @@
   "Run executor loop with shared option shaping and usage updates.
 
    opts:
-   - :run-loop-fn   custom runner (default executor/run-agent-loop!)
    - :api-key       optional provider API key
    - :progress-queue optional LinkedBlockingQueue
    - :sync-on-git-head-change? trigger maybe-sync memory hook after loop (default false)"
   ([ctx session-id ai-ctx ai-model user-messages]
    (run-agent-loop-in! ctx session-id ai-ctx ai-model user-messages nil))
-  ([ctx session-id ai-ctx ai-model user-messages {:keys [run-loop-fn api-key progress-queue sync-on-git-head-change?]}]
+  ([ctx session-id ai-ctx ai-model user-messages {:keys [api-key progress-queue sync-on-git-head-change?]}]
    (let [_      (require-session-id! session-id)
-         runner (or run-loop-fn executor/run-agent-loop!)
          opts   (cond-> {}
                   api-key
                   (assoc :api-key api-key)
 
                   progress-queue
                   (assoc :progress-queue progress-queue))
-         result (runner ai-ctx ctx session-id (ss/agent-ctx-in ctx session-id) ai-model user-messages opts)]
+         result (executor/run-agent-loop! ai-ctx ctx session-id (ss/agent-ctx-in ctx session-id) ai-model user-messages opts)]
      (update-context-usage-from-result-in! ctx session-id ai-model result)
      (when sync-on-git-head-change?
        (safe-maybe-sync-on-git-head-change! ctx session-id))
