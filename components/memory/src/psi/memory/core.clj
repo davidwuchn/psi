@@ -11,21 +11,17 @@
    [psi.memory.resolvers :as resolvers]
    [psi.memory.store :as store]
    [psi.query.core :as query]))
-
 (defrecord MemoryContext [state-atom config store-registry-atom])
-
 (defn- graph-status-ready?
   "Step 10 gate: capability graph status is acceptable when stable or expanding."
   [graph-status]
   (contains? #{:stable :expanding} graph-status))
-
 (defn- initial-index-stats
   []
   {:entry-count 0
    :by-type {}
    :by-tag {}
    :by-source {}})
-
 (defn initial-state
   "Return initial in-memory scaffold state used by Step 10 memory context."
   []
@@ -41,14 +37,12 @@
    :retention {:snapshots graph-history/snapshot-retention-limit
                :deltas graph-history/delta-retention-limit}
    :ranking-defaults ranking/default-weights})
-
 (defn- normalize-retention-limit
   [value fallback]
   (cond
     (and (integer? value) (pos? value)) value
     (and (number? value) (pos? value)) (int value)
     :else fallback))
-
 (defn create-context
   "Create an isolated MemoryContext."
   ([]
@@ -80,61 +74,49 @@
       {:require-provenance-on-write? require-provenance-on-write?
        :auto-store-fallback? auto-store-fallback?}
       (atom store-registry)))))
-
 (defonce ^:private global-ctx (atom nil))
-
 (defn- ensure-global-ctx!
   []
   (or @global-ctx
       (let [ctx (create-context)]
         (reset! global-ctx ctx)
         ctx)))
-
 (defn global-context
   "Return the global memory context singleton, creating it when absent."
   []
   (ensure-global-ctx!))
-
 (defn get-state-in
   "Return the full memory state map from `ctx`."
   [ctx]
   @(:state-atom ctx))
-
 (defn swap-state-in!
   "Apply `f` to memory state atom in `ctx`."
   [ctx f & args]
   (apply swap! (:state-atom ctx) f args))
-
 (defn get-state
   "Global wrapper for `get-state-in`."
   []
   (get-state-in (global-context)))
-
 (defn swap-state!
   "Global wrapper for `swap-state-in!`."
   [f & args]
   (apply swap-state-in! (global-context) f args))
-
 (defn get-store-registry-in
   "Return provider registry map for isolated memory `ctx`."
   [ctx]
   (store/refresh-registry @(:store-registry-atom ctx)))
-
 (defn get-store-registry
   "Global wrapper for `get-store-registry-in`."
   []
   (get-store-registry-in (global-context)))
-
 (defn store-summary-in
   "Return EQL-friendly provider registry summary for `ctx`."
   [ctx]
   (store/registry-summary (get-store-registry-in ctx)))
-
 (defn store-summary
   "Global wrapper for `store-summary-in`."
   []
   (store-summary-in (global-context)))
-
 (defn set-retention-in!
   "Set memory retention limits for graph snapshots/deltas in isolated `ctx`.
 
@@ -155,12 +137,10 @@
                       (assoc state :retention {:snapshots snapshot-limit
                                                :deltas delta-limit}))))
   (:retention (get-state-in ctx)))
-
 (defn set-retention!
   "Global wrapper for `set-retention-in!`."
   [retention-overrides]
   (set-retention-in! (global-context) retention-overrides))
-
 (defn register-store-provider-in!
   "Register a backing store provider in isolated `ctx`.
 
@@ -173,14 +153,12 @@
           (fn [registry]
             (store/register-provider registry provider opts)))
    (store-summary-in ctx)))
-
 (defn register-store-provider!
   "Global wrapper for `register-store-provider-in!`."
   ([provider]
    (register-store-provider! provider {}))
   ([provider opts]
    (register-store-provider-in! (global-context) provider opts)))
-
 (defn select-store-provider-in!
   "Select active backing store provider for isolated `ctx`.
 
@@ -197,20 +175,17 @@
                                      (merge {:auto-fallback? auto-fallback?}
                                             opts))))
      (store-summary-in ctx))))
-
 (defn select-store-provider!
   "Global wrapper for `select-store-provider-in!`."
   ([requested-provider-id]
    (select-store-provider! requested-provider-id {}))
   ([requested-provider-id opts]
    (select-store-provider-in! (global-context) requested-provider-id opts)))
-
 (defn- active-store-provider-in
   [ctx]
   (some-> (get-store-registry-in ctx)
           store/active-provider-entry
           :instance))
-
 (defn- record-provider-operation-in!
   [ctx provider operation result]
   (when (and provider (:store-registry-atom ctx))
@@ -220,7 +195,6 @@
                                               (store/provider-id provider)
                                               operation
                                               result)))))
-
 (defn- fallback-on-store-failure-in!
   [ctx]
   (let [{:keys [active-provider-id fallback-provider-id]} (store-summary-in ctx)
@@ -230,7 +204,6 @@
                (not= active-provider-id fallback-provider-id))
       (select-store-provider-in! ctx fallback-provider-id)
       true)))
-
 (defn- persist-entity-in!
   [ctx entity-type payload]
   (if-let [provider (active-store-provider-in ctx)]
@@ -262,12 +235,10 @@
            :fallback-selected? (boolean (fallback-on-store-failure-in! ctx))})))
     {:ok? false
      :error :no-active-store-provider}))
-
 (defn- persist-capability-history-events-in!
   [ctx events]
   (when (seq events)
     (mapv #(persist-entity-in! ctx :capability-history %) events)))
-
 (defn- merge-unique-by
   [existing incoming id-fn]
   (let [seen (atom (set (map id-fn existing)))]
@@ -280,7 +251,6 @@
                     (conj acc item)))))
             (vec existing)
             (or incoming []))))
-
 (defn- hydrate-state-from-provider-in!
   [ctx]
   (if-let [provider (active-store-provider-in ctx)]
@@ -360,7 +330,6 @@
     {:ok? false
      :hydrated? false
      :error :no-active-store-provider}))
-
 (defn activation-gates-in
   "Compute Step 10 activation gates.
 
@@ -383,7 +352,6 @@
      :graph-status capability-graph-status
      :graph-status-ready? graph-ready?
      :ready? (and env-built? has-git-history graph-ready?)}))
-
 (defn activate-in!
   "Run Step 10 activation lifecycle for isolated `ctx`.
 
@@ -416,7 +384,6 @@
            :memory-status (:status (get-state-in ctx))
            :store-hydration hydration
            :options (select-keys opts [:capability-graph-status]))))
-
 (defn activate!
   "Global wrapper for `activate-in!`.
 
@@ -424,30 +391,25 @@
    and :capability-graph-status."
   [{:keys [query-ctx] :as opts}]
   (activate-in! (global-context) (assoc opts :query-ctx query-ctx)))
-
 (defn- resolve-content-type
   [remember-input]
   (or (:content-type remember-input)
       (:contentType remember-input)))
-
 (defn- resolve-timestamp
   [remember-input]
   (or (:timestamp remember-input)
       (java.time.Instant/now)))
-
 (defn- normalize-tags
   [tags]
   (->> (or tags [])
        (remove nil?)
        (distinct)
        (vec)))
-
 (defn- append-capability-history
   [state events]
   (if (seq events)
     (update state :capability-history (fnil into []) events)
     state))
-
 (defn- enrich-provenance-with-graph
   [provenance capability-graph]
   (let [graph-fingerprint (or (:fingerprint capability-graph)
@@ -462,7 +424,6 @@
     (cond-> (or provenance {})
       graph-fingerprint (assoc :graphFingerprint graph-fingerprint)
       (seq capability-ids) (assoc :capabilityIds (vec capability-ids)))))
-
 (defn- remember-validation-error
   [ctx remember-input]
   (let [content-type          (resolve-content-type remember-input)
@@ -474,7 +435,6 @@
       (nil? content) :missing-content
       (and require-provenance? (not has-provenance?)) :missing-provenance
       :else nil)))
-
 (defn- update-index-stats
   [index-stats {:keys [content-type tags provenance]}]
   (let [source (or (:source provenance)
@@ -489,7 +449,6 @@
                      (update-in acc [:by-tag tag] (fnil inc 0)))
                    stats
                    tags))))))
-
 (defn remember-in!
   "Remember a record in isolated `ctx`.
 
@@ -530,12 +489,10 @@
          :entry-count (get-in (get-state-in ctx) [:index-stats :entry-count])
          :store store-write
          :capability-history-store history-store-writes}))))
-
 (defn remember!
   "Global wrapper for `remember-in!`."
   [remember-input]
   (remember-in! (global-context) remember-input))
-
 (defn- normalize-sources
   [sources]
   (let [normalized (->> (or sources [:session :history :graph])
@@ -544,17 +501,14 @@
     (if (seq normalized)
       normalized
       [:session :history :graph])))
-
 (defn- source->record
   [record]
   (or (:source (:provenance record))
       (:source-type (:provenance record))
       :session))
-
 (defn- normalize-query-text
   [query-text]
   (some-> query-text str str/lower-case str/trim))
-
 (defn- text-relevance-score
   [query-text record]
   (let [q (normalize-query-text query-text)]
@@ -562,14 +516,12 @@
       0.0
       (let [haystack (str/lower-case (str (:content record) " " (or (:content-type record) "") " " (str/join " " (:tags record))))]
         (if (str/includes? haystack q) 1.0 0.0)))))
-
 (defn- recency-score
   [now timestamp]
   (if (instance? java.time.Instant timestamp)
     (let [hours (Math/abs (double (.toHours (java.time.Duration/between timestamp now))))]
       (/ 1.0 (+ 1.0 hours)))
     0.0))
-
 (defn- capability-proximity
   [requested-capability-ids record]
   (let [requested (set (map keyword (or requested-capability-ids [])))
@@ -578,7 +530,6 @@
       0.0
       (/ (double (count (set/intersection requested record-caps)))
          (double (count requested))))))
-
 (defn- score-record
   [{:keys [query-text now capability-ids ranking-weights]} record]
   (let [{text-weight :text-relevance
@@ -590,7 +541,6 @@
     (+ (* (/ text-weight 100.0) tr)
        (* (/ recency-weight 100.0) rs)
        (* (/ capability-weight 100.0) cp))))
-
 (defn- dedupe-records
   [records]
   (vals
@@ -604,7 +554,6 @@
                  (assoc acc k record))))
            {}
            records)))
-
 (defn- filter-record?
   [{:keys [tags capability-ids content-types since query-text]} record]
   (let [record-tags (set (:tags record))
@@ -626,7 +575,6 @@
               (not (neg? (compare timestamp since)))))
      (or (str/blank? text-q)
          (pos? (text-relevance-score text-q record))))))
-
 (defn recover-in!
   "Recover memory records using required Step 10 source composition, filters, ranking and limit.
 
@@ -723,12 +671,10 @@
                :recovery recovery
                :store store-write
                :capability-history-store history-store-writes})))))))
-
 (defn recover!
   "Global wrapper for `recover-in!`."
   [recover-input]
   (recover-in! (global-context) recover-input))
-
 (defn capture-graph-change-in!
   "Capture graph snapshot/delta into isolated `ctx` when fingerprint changes.
 
@@ -800,14 +746,12 @@
      {:ok? false
       :changed? false
       :error :missing-fingerprint})))
-
 (defn capture-graph-change!
   "Global wrapper for `capture-graph-change-in!`."
   ([capability-graph]
    (capture-graph-change-in! (global-context) capability-graph))
   ([capability-graph timestamp]
    (capture-graph-change-in! (global-context) capability-graph timestamp)))
-
 (defn register-resolvers-in!
   "Register memory resolvers into isolated query context `qctx`.
    Rebuilds query env by default."
@@ -819,7 +763,6 @@
    (when rebuild?
      (query/rebuild-env-in! qctx))
    :ok))
-
 (defn register-resolvers!
   "Register memory resolvers into global query context and rebuild env once."
   []
