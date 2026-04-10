@@ -5,14 +5,12 @@
    - input expansion (skills/templates)
    - memory recover/remember hooks
    - user message journaling
-   - API key resolution
-   - agent loop execution + context usage update"
+   - API key resolution"
   (:require
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
@@ -111,27 +109,6 @@
   [ctx _session-id ai-model]
   (when-let [oauth-ctx (:oauth-ctx ctx)]
     (oauth/get-api-key oauth-ctx (:provider ai-model))))
-
-(defn usage->context-tokens
-  "Best-effort context token count from an assistant usage map."
-  [usage]
-  (when (map? usage)
-    (let [input  (or (:input-tokens usage) 0)
-          output (or (:output-tokens usage) 0)
-          read   (or (:cache-read-tokens usage) 0)
-          write  (or (:cache-write-tokens usage) 0)
-          total  (or (:total-tokens usage)
-                     (+ input output read write))]
-      (when (and (number? total) (pos? total))
-        total))))
-
-(defn update-context-usage-from-result-in!
-  "Update session context usage from assistant result usage when available."
-  [ctx session-id ai-model result]
-  (let [tokens (usage->context-tokens (:usage result))
-        window (:context-window ai-model)]
-    (when (and (some? tokens) (number? window) (pos? window))
-      (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens tokens :window window} {:origin :core}))))
 
 (defn- sync->recursion-trigger-type
   [sync]
@@ -259,29 +236,6 @@
     (when sync-on-git-head-change?
       (safe-maybe-sync-on-git-head-change! ctx session-id))
     result))
-
-(defn run-agent-loop-in!
-  "Run executor loop with shared option shaping and usage updates.
-
-   opts:
-   - :api-key       optional provider API key
-   - :progress-queue optional LinkedBlockingQueue
-   - :sync-on-git-head-change? trigger maybe-sync memory hook after loop (default false)"
-  ([ctx session-id ai-ctx ai-model user-messages]
-   (run-agent-loop-in! ctx session-id ai-ctx ai-model user-messages nil))
-  ([ctx session-id ai-ctx ai-model user-messages {:keys [api-key progress-queue sync-on-git-head-change?]}]
-   (let [_      (require-session-id! session-id)
-         opts   (cond-> {}
-                  api-key
-                  (assoc :api-key api-key)
-
-                  progress-queue
-                  (assoc :progress-queue progress-queue))
-         result (executor/run-agent-loop! ai-ctx ctx session-id (ss/agent-ctx-in ctx session-id) ai-model user-messages opts)]
-     (update-context-usage-from-result-in! ctx session-id ai-model result)
-     (when sync-on-git-head-change?
-       (safe-maybe-sync-on-git-head-change! ctx session-id))
-     result)))
 
 (defn register-extension-run-fn-in!
   "Register a background prompt-lifecycle runner for extension-initiated prompts.
