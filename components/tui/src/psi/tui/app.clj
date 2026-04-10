@@ -1,25 +1,4 @@
 (ns psi.tui.app
-  "Psi TUI application using charm.clj's Elm Architecture.
-
-   Replaces the custom ProcessTerminal + differential renderer with
-   charm.clj's JLine3-backed terminal and Elm update/view loop.
-
-   Public API:
-     start!        — blocking entry point for --tui mode
-     make-init     — create init fn (for testing)
-     make-update   — create update fn (for testing)
-     view          — pure view fn (for testing)
-
-   Architecture:
-     init    → [initial-state nil]
-     update  → (state, msg) → [new-state, cmd]
-     view    → state → string
-
-   Agent integration:
-     When user submits text, `run-agent-fn!` is called with (text queue).
-     It starts the agent in a background thread and puts the result
-     on the queue. A polling command reads from the queue, driving
-     the spinner animation on each poll timeout."
   (:require
    [charm.core :as charm]
    [charm.input.handler :as charm-input-handler]
@@ -338,8 +317,6 @@
   (Character/isWhitespace c))
 
 (defn- token-context-at-cursor
-  "Derive token context at cursor.
-   Returns {:text :pos :before :after :token :token-start :token-end :context :prefix}"
   [state]
   (let [text        (input-value state)
         pos         (input-pos state)
@@ -711,8 +688,6 @@
     [state nil]))
 
 (defn- handle-dialog-key
-  "Route keypress to the active dialog. Returns [new-state cmd] or nil
-   if no dialog is active."
   [state m]
   (when-let [dialog (get-in state [:ui-snapshot :active-dialog])]
     (cond
@@ -792,7 +767,6 @@
                sessions))))
 
 (defn- session-selector-init
-  "Build the initial session selector state for `cwd`."
   [cwd current-session-file]
   (let [dir      (persist/session-dir-for cwd)
         sessions (persist/list-sessions dir)]
@@ -1018,34 +992,6 @@
     state))
 
 (defn make-init
-  "Create an init function for the charm program.
-   `model-name`     is displayed in the banner.
-   `query-fn`       — optional (fn [eql-query]) → result map; used to
-                       introspect the session for prompt templates, etc.
-   `ui-read-fn`     — optional (fn []) → plain ui-state map; called on each
-                       tick to refresh :ui-snapshot.
-   `ui-dispatch-fn` — optional (fn [event-type payload]) → result; used for
-                       all ui mutations (dialogs, notifications, etc.).
-   `opts` map:
-     :cwd                  — working directory string (for /resume)
-     :current-session-file — current session file path (highlighted in selector)
-     :initial-messages     — optional initial transcript messages
-     :initial-tool-calls   — optional initial tool call map
-     :initial-tool-order   — optional initial tool row order
-     :resume-fn!           — (fn [session-path]) called when user selects a session;
-                              returns {:messages [...], :tool-calls {...}, :tool-order [...]}
-     :switch-session-fn!   — (fn [session-id]) called by /tree direct-switch;
-                              returns {:messages [...], :tool-calls {...}, :tool-order [...]} | nil
-     :fork-session-fn!     — (fn [entry-id]) called by /tree fork-point selection;
-                              returns {:session-id ... :messages [...], :tool-calls {...}, :tool-order [...]} | nil
-     :session-selector-fn  — optional (fn []) -> adapter-neutral selector model from app-runtime
-     :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
-     :on-interrupt-fn!     — (fn [state]) -> {:queued-text str? :message str?} | nil
-     :on-queue-input-fn!   — (fn [text state]) -> {:message str?} | nil
-                              called when Enter is pressed while streaming
-     :double-press-window-ms — ctrl+c / escape timing window (default 500)
-     :double-escape-action — :tree | :fork | :none (default :none)
-     :event-queue          — shared LinkedBlockingQueue for agent + extension events"
   ([model-name] (make-init model-name nil nil nil {}))
   ([model-name query-fn] (make-init model-name query-fn nil nil {}))
   ([model-name query-fn ui-read-fn] (make-init model-name query-fn ui-read-fn nil {}))
@@ -1234,8 +1180,6 @@
          "\n\nPaste the authorization code below ↓")))
 
 (defn- handle-dispatch-result
-  "Translate a command dispatch result map into [new-state cmd].
-   Returns nil if the result is nil (not a command)."
   [state result]
   (when result
     (case (:type result)
@@ -1321,8 +1265,6 @@
       :else (choose-resume-session state chosen))))
 
 (defn- handle-selector-key
-  "Handle a keypress while the session selector is open.
-  Returns [new-state cmd]."
   [state m]
   (let [sel       (:session-selector state)
         key-token (when (msg/key-press? m) (:key m))]
@@ -1341,7 +1283,6 @@
 (declare clear-live-turn)
 
 (defn- submit-to-agent
-  "Start the agent with `text`, return [new-state cmd]."
   [state run-agent-fn! text]
   (let [queue (:queue state)]
     (run-agent-fn! text queue)
@@ -1355,9 +1296,6 @@
      (poll-cmd queue)]))
 
 (defn- submit-input
-  "Extract text from input, start agent, return [new-state cmd].
-   Commands are dispatched via the dispatch-fn stored in state.
-   Non-command input is forwarded to the agent."
   [state run-agent-fn!]
   (let [text (str/trim (charm/text-input-value (:input state)))]
     (cond
@@ -2077,8 +2015,6 @@
                  (cons "   " (map #(str "   " %) body-lines)))))))
 
 (defn- render-message
-  "Render a single chat message. `width` is the terminal
-   column count for word wrapping (nil = no wrap)."
   [{:keys [role text custom-type]} width]
   (case role
     :user
@@ -2833,7 +2769,6 @@
       rendered)))
 
 (defn view
-  "Render the full TUI state to a string."
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
                 prompt-templates skills extension-summary ui-snapshot
@@ -2907,27 +2842,6 @@
 ;; ── Public entry point ──────────────────────────────────────
 
 (defn start!
-  "Run the Psi TUI. Blocks until the user exits.
-
-   `model-name`     — display name for the banner
-   `run-agent-fn!`  — (fn [text queue]) starts agent in background;
-                       must put {:kind :done :result msg} or
-                       {:kind :error :message str} on queue.
-   `opts`           — optional map:
-                       :query-fn            — (fn [eql-query]) for session introspection
-                       :ui-read-fn          — (fn []) → plain ui-state map (refreshed each tick)
-                       :ui-dispatch-fn      — (fn [event-type payload]) for ui mutations
-                       :cwd                 — working directory for /resume filtering
-                       :current-session-file — current session file path for highlight
-                       :resume-fn!          — (fn [session-path]) =>
-                                              {:messages [...]
-                                               :tool-calls {...}
-                                               :tool-order [...]}
-                       :on-interrupt-fn!    — (fn [state]) -> {:queued-text str? :message str?}
-                       :on-queue-input-fn!  — (fn [text state]) -> {:message str?}
-                       :double-press-window-ms — ctrl+c / escape timing window (default 500)
-                       :double-escape-action — :tree | :fork | :none (default :none)
-                       :alt-screen          — true/false (default true)"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
