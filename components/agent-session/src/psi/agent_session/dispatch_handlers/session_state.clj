@@ -166,9 +166,12 @@
                               (get-in % [:data :name]))
                            (rseq (vec entries)))
         baseline     (merge (session-data-ns/initial-session)
-                            (select-keys current-sd [:prompt-mode
+                            (select-keys current-sd [:base-system-prompt
+                                                     :system-prompt
+                                                     :prompt-mode
                                                      :nucleus-prelude-override
                                                      :cache-breakpoints
+                                                     :system-prompt-build-opts
                                                      :developer-prompt
                                                      :developer-prompt-source
                                                      :auto-retry-enabled

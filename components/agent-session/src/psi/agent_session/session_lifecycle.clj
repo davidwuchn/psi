@@ -55,6 +55,7 @@
                    (-> state
                        (assoc-in [:agent-session :sessions new-session-id :agent-ctx] (:agent-ctx fresh))
                        (assoc-in [:agent-session :sessions new-session-id :sc-session-id] (:sc-session-id fresh))))))
+        (dispatch/dispatch! ctx :session/ensure-base-system-prompt {:session-id new-session-id} {:origin :core})
         (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id new-session-id} {:origin :core})
         (when session-name
           (session/journal-append-in! ctx new-session-id (persist/session-info-entry session-name)))

@@ -574,6 +574,7 @@
             event-types (mapv :event-type entries)]
         (is (= summary (:startup-bootstrap sd)))
         (is (= [:session/new-initialize
+                :session/ensure-base-system-prompt
                 :session/retarget-runtime-prompt-metadata
                 :session/set-startup-bootstrap-summary]
                event-types))))))
