@@ -5,7 +5,8 @@
    [psi.memory.core :as memory]
    [psi.recursion.core :as core]
    [psi.recursion.future-state :as future-state]
-   [psi.recursion.policy :as policy]))
+   [psi.recursion.policy :as policy]
+   [psi.recursion.core-learning-finalization-test :as learning-finalization]))
 
 (def ^:private all-ready
   {:query-ready true
@@ -635,46 +636,10 @@
 
 ;;; --- Learn phase + memory writeback tests ---
 
-(defn- setup-verified-cycle
-  "Helper: create a context, trigger, observe, plan, approve, execute, and verify
-   a cycle (all checks pass). Returns [ctx cycle-id memory-ctx].
-   Optionally accepts config-overrides and state-overrides."
-  ([]
-   (setup-verified-cycle {}))
-  ([{:keys [config-overrides state-overrides check-runner]
-     :or {config-overrides {}
-          state-overrides {}
-          check-runner (fn [_] {:passed true :details "ok"})}}]
-   (let [[ctx cycle-id] (setup-executed-cycle {:config-overrides config-overrides
-                                               :state-overrides state-overrides})
-         _ (core/verify-in! ctx cycle-id check-runner)
-         memory-ctx (memory/create-context
-                     {:state-overrides {:status :ready}
-                      :require-provenance-on-write? false})]
-     [ctx cycle-id memory-ctx])))
-
-(defn- setup-verified-failed-cycle
-  "Helper: create a cycle that fails verification. Returns [ctx cycle-id memory-ctx]."
-  ([]
-   (setup-verified-failed-cycle {}))
-  ([{:keys [config-overrides state-overrides]
-     :or {config-overrides {} state-overrides {}}}]
-   (let [[ctx cycle-id] (setup-executed-cycle {:config-overrides config-overrides
-                                               :state-overrides state-overrides})
-         check-runner (fn [check-name]
-                        (if (= check-name "tests")
-                          {:passed false :details "1 failure"}
-                          {:passed true :details "ok"}))
-         _ (core/verify-in! ctx cycle-id check-runner)
-         memory-ctx (memory/create-context
-                     {:state-overrides {:status :ready}
-                      :require-provenance-on-write? false})]
-     [ctx cycle-id memory-ctx])))
-
 (deftest learn-in-success-path-test
   ;; AC #11: Learn writes memory record with correct tags and provenance
   (testing "learn writes memory record on success path"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
+    (let [[ctx cycle-id memory-ctx] (learning-finalization/setup-verified-cycle)
           result (core/learn-in! ctx cycle-id memory-ctx)]
       (is (true? (:ok? result)))
       (is (set? (:memory-ids result)))
@@ -707,7 +672,7 @@
 (deftest learn-in-stores-memory-id-test
   ;; AC #11: Learn stores memory record-id in cycle's learning-memory-ids
   (testing "learn stores memory record-id in cycle"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
+    (let [[ctx cycle-id memory-ctx] (learning-finalization/setup-verified-cycle)
           result (core/learn-in! ctx cycle-id memory-ctx)
           state (core/get-state-in ctx)
           cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))]
@@ -717,8 +682,7 @@
 (deftest learn-in-sets-success-outcome-test
   ;; When cycle has no outcome (all checks passed), learn sets success outcome
   (testing "learn sets success outcome when none exists"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
-          ;; Before learn, cycle should have no outcome (all checks passed)
+    (let [[ctx cycle-id memory-ctx] (learning-finalization/setup-verified-cycle)
           state-before (core/get-state-in ctx)
           cycle-before (first (filter #(= cycle-id (:cycle-id %)) (:cycles state-before)))
           _ (is (nil? (:outcome cycle-before)) "precondition: no outcome before learn")
@@ -733,8 +697,7 @@
 (deftest learn-in-failed-outcome-test
   ;; When cycle has a failed outcome (verification failed), learn preserves it
   (testing "learn preserves existing failed outcome"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-failed-cycle)
-          ;; Before learn, cycle should have failed outcome from verify
+    (let [[ctx cycle-id memory-ctx] (learning-finalization/setup-verified-failed-cycle)
           state-before (core/get-state-in ctx)
           cycle-before (first (filter #(= cycle-id (:cycle-id %)) (:cycles state-before)))
           _ (is (= :failed (get-in cycle-before [:outcome :status])) "precondition: failed outcome")
@@ -775,154 +738,5 @@
     (let [ctx (core/create-context)
           memory-ctx (memory/create-context {:require-provenance-on-write? false})
           result (core/learn-in! ctx "nonexistent" memory-ctx)]
-      (is (false? (:ok? result)))
-      (is (= :cycle-not-found (:error result))))))
-
-;;; --- FUTURE_STATE update from outcome tests ---
-
-(deftest update-future-state-success-test
-  ;; AC #12: Success outcome advances goals in FUTURE_STATE
-  (testing "success outcome advances goals"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
-          _ (core/learn-in! ctx cycle-id memory-ctx)
-          ;; Get the current future state version before update
-          state-before (core/get-state-in ctx)
-          fs-version-before (:version (:current-future-state state-before))
-          result (core/update-future-state-from-outcome-in! ctx cycle-id)
-          state (core/get-state-in ctx)
-          fs (:current-future-state state)]
-      (is (true? (:ok? result)))
-      (is (some? (:future-state result)))
-      (is (> (:version fs) fs-version-before) "version should increment"))))
-
-(deftest update-future-state-failed-test
-  ;; AC #12: Failed outcome adds blockers to FUTURE_STATE
-  (testing "failed outcome adds blockers"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-failed-cycle)
-          _ (core/learn-in! ctx cycle-id memory-ctx)
-          state-before (core/get-state-in ctx)
-          fs-version-before (:version (:current-future-state state-before))
-          goal-count-before (count (:goals (:current-future-state state-before)))
-          result (core/update-future-state-from-outcome-in! ctx cycle-id)
-          state (core/get-state-in ctx)
-          fs (:current-future-state state)]
-      (is (true? (:ok? result)))
-      (is (> (:version fs) fs-version-before) "version should increment")
-      (is (> (count (:goals fs)) goal-count-before) "should have new blocker goals")
-      ;; The new goals should be :blocked status
-      (let [new-goals (drop goal-count-before (:goals fs))]
-        (is (every? #(= :blocked (:status %)) new-goals))))))
-
-(deftest update-future-state-no-outcome-test
-  (testing "update rejects when no outcome"
-    (let [[ctx cycle-id] (setup-executed-cycle)
-          ;; Manually set cycle to learning without outcome
-          _ (core/swap-state-in!
-             ctx
-             (fn [s]
-               (-> s
-                   (assoc :status :learning)
-                   (update :cycles
-                           (fn [cs]
-                             (mapv #(if (= cycle-id (:cycle-id %))
-                                      (assoc % :status :learning)
-                                      %)
-                                   cs))))))
-          result (core/update-future-state-from-outcome-in! ctx cycle-id)]
-      (is (false? (:ok? result)))
-      (is (= :no-outcome (:error result)))))
-
-  (testing "update rejects unknown cycle-id"
-    (let [ctx (core/create-context)
-          result (core/update-future-state-from-outcome-in! ctx "nonexistent")]
-      (is (false? (:ok? result)))
-      (is (= :cycle-not-found (:error result))))))
-
-;;; --- Cycle finalization tests ---
-
-(deftest finalize-cycle-success-test
-  ;; AC #13: Finalize sets ended-at, correct terminal status, returns controller to idle
-  (testing "finalize successful cycle"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
-          _ (core/learn-in! ctx cycle-id memory-ctx)
-          _ (core/update-future-state-from-outcome-in! ctx cycle-id)
-          result (core/finalize-cycle-in! ctx cycle-id)
-          state (core/get-state-in ctx)
-          cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))]
-      (is (true? (:ok? result)))
-      (is (= :completed (:final-status result)))
-
-      (testing "cycle has ended-at timestamp"
-        (is (inst? (:ended-at cycle))))
-
-      (testing "cycle status is completed"
-        (is (= :completed (:status cycle))))
-
-      (testing "controller returns to idle"
-        (is (= :idle (:status state))))
-
-      (testing "paused pause metadata is cleared"
-        (is (nil? (:paused-reason state)))
-        (is (nil? (:paused-checkpoint state)))))))
-
-(deftest finalize-cycle-failed-test
-  ;; AC #13: Failed cycle finalization
-  (testing "finalize failed cycle"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-failed-cycle)
-          _ (core/learn-in! ctx cycle-id memory-ctx)
-          _ (core/update-future-state-from-outcome-in! ctx cycle-id)
-          result (core/finalize-cycle-in! ctx cycle-id)
-          state (core/get-state-in ctx)
-          cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))]
-      (is (true? (:ok? result)))
-      (is (= :failed (:final-status result)))
-
-      (testing "cycle status is failed"
-        (is (= :failed (:status cycle))))
-
-      (testing "controller returns to idle"
-        (is (= :idle (:status state))))
-
-      (testing "ended-at is set"
-        (is (inst? (:ended-at cycle)))))))
-
-(deftest finalize-clears-paused-reason-test
-  ;; AC #13: Finalize clears pause metadata
-  (testing "finalize clears paused-reason and paused-checkpoint"
-    (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
-          _ (core/learn-in! ctx cycle-id memory-ctx)
-          _ (core/update-future-state-from-outcome-in! ctx cycle-id)
-          ;; Manually set pause metadata
-          _ (core/swap-state-in! ctx assoc
-                                 :paused-reason "some-reason"
-                                 :paused-checkpoint {:status :planning
-                                                     :at (java.time.Instant/now)})
-          _ (core/finalize-cycle-in! ctx cycle-id)
-          state (core/get-state-in ctx)]
-      (is (nil? (:paused-reason state)))
-      (is (nil? (:paused-checkpoint state))))))
-
-(deftest finalize-rejects-no-outcome-test
-  (testing "finalize rejects when no outcome"
-    (let [[ctx cycle-id] (setup-executed-cycle)
-          ;; Manually set cycle to learning without outcome
-          _ (core/swap-state-in!
-             ctx
-             (fn [s]
-               (-> s
-                   (assoc :status :learning)
-                   (update :cycles
-                           (fn [cs]
-                             (mapv #(if (= cycle-id (:cycle-id %))
-                                      (assoc % :status :learning)
-                                      %)
-                                   cs))))))
-          result (core/finalize-cycle-in! ctx cycle-id)]
-      (is (false? (:ok? result)))
-      (is (= :no-outcome (:error result)))))
-
-  (testing "finalize rejects unknown cycle-id"
-    (let [ctx (core/create-context)
-          result (core/finalize-cycle-in! ctx "nonexistent")]
       (is (false? (:ok? result)))
       (is (= :cycle-not-found (:error result))))))
