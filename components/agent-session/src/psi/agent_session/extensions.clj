@@ -1,50 +1,10 @@
 (ns psi.agent-session.extensions
-  "Extension system: registry, loading, event dispatch, tool wrapping, introspection.
-
-   Design
-   ──────
-   An extension is a Clojure file exporting an `init` function.
-   During factory invocation the extension calls registration fns on the
-   ExtensionAPI map to declare its handlers, tools, commands, flags, and shortcuts.
-
-   Discovery: extensions are found in:
-     1. Project-local:  .psi/extensions/
-     2. User-global:    ~/.psi/agent/extensions/
-     3. CLI-provided:   --extension paths
-
-   Loading: each .clj file is `load-file`d, then its `init` fn is called
-   with the ExtensionAPI map.
-
-   Event dispatch (broadcast model):
-     - Handlers fire in registration order (first registered, first called).
-     - All registered handlers fire for every event (broadcast semantics).
-     - A handler returning {:cancel true} signals that the associated session
-       action should be blocked.  Remaining handlers still fire; if *any*
-       handler returns {:cancel true} the action is blocked.
-     - session_before_compact handlers may return {:result CompactionResult}
-       to supply a custom compaction, bypassing the default LLM summarisation.
-
-   Tool wrapping:
-     - Extensions can hook into tool_call (before) and tool_result (after).
-     - tool_call handlers may return {:block true} to prevent execution.
-     - tool_result handlers may modify :content, :details, or :is-error.
-
-   Introspection:
-     - All registry state is queryable via EQL :psi.extension/* attributes.
-     - `extension-details-in` returns per-extension detail maps.
-
-   Nullable pattern:
-     `create-registry` returns an isolated registry map (atom inside).
-     All public fns take the registry as first arg (`-in` suffix)."
+  "Extension registry, loading, dispatch, tool wrapping, and introspection."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
    [psi.agent-session.tool-defs :as tool-defs]
    [taoensso.timbre :as timbre]))
-
-;; ============================================================
-;; Registry structure
-;; ============================================================
 
 (defrecord ExtensionRegistry [state])
 
@@ -60,10 +20,6 @@
           :registration-order []
           :flag-values        {}
           :event-bus          {}})))
-
-;; ============================================================
-;; Registration helpers (operate on isolated registry)
-;; ============================================================
 
 (defn register-extension-in!
   "Register a new extension by path into `reg`."
@@ -156,10 +112,6 @@
   (swap! (:state reg) assoc :extensions {} :registration-order [])
   reg)
 
-;; ============================================================
-;; Flag values
-;; ============================================================
-
 (defn get-flag-in
   "Get the current value of flag `name` from `reg`."
   [reg name]
@@ -216,10 +168,6 @@
     (some #(get-in state [:extensions % item-key item-name])
           (:registration-order state))))
 
-;; ============================================================
-;; Event bus (inter-extension communication)
-;; ============================================================
-
 (defn bus-emit-in!
   "Emit `data` on `channel` to all event bus subscribers in `reg`."
   [reg channel data]
@@ -238,10 +186,6 @@
   (fn []
     (swap! (:state reg) update-in [:event-bus channel]
            (fn [handlers] (vec (remove #(= % handler-fn) handlers))))))
-
-;; ============================================================
-;; Dispatch
-;; ============================================================
 
 (defn dispatch-in
   "Dispatch `event` to all handlers registered for `event-name` in `reg`.
@@ -272,10 +216,6 @@
     {:cancelled? (boolean (some :cancel results))
      :override   (last overrides)
      :results    results}))
-
-;; ============================================================
-;; Tool wrapping
-;; ============================================================
 
 (defn dispatch-tool-call-in
   "Dispatch a tool_call event. Returns {:block true :reason s} or nil."
@@ -327,10 +267,6 @@
               (contains? modified :details)  (assoc :details (:details modified))
               (contains? modified :is-error) (assoc :is-error (:is-error modified)))
             result))))))
-
-;; ============================================================
-;; Inspection
-;; ============================================================
 
 (defn extensions-in
   "Return sequence of all registered extension paths in `reg`."
@@ -532,10 +468,6 @@
          (map normalize-prompt-contribution)
          (filter #(= ext-path (:ext-path %)))
          vec)))
-
-;; ============================================================
-;; Extension API (passed to extension init functions)
-;; ============================================================
 
 (defn create-extension-api
   "Build the ExtensionAPI map for an extension at `ext-path`.
@@ -752,10 +684,6 @@
      :ui ui
      ;; Always routes to stderr — never to the RPC stdout pipe.
      :log runtime-log}))
-
-;; ============================================================
-;; Extension loading
-;; ============================================================
 
 (defn- extension-file?
   "True if `f` is a .clj file."
