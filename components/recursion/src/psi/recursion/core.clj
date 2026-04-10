@@ -2,7 +2,8 @@
   (:require
    [clojure.string :as str]
    [psi.recursion.future-state :as future-state]
-   [psi.recursion.policy :as policy]))
+   [psi.recursion.policy :as policy]
+   [psi.recursion.query-registration :as query-registration]))
 (defrecord RecursionContext [state-atom config host-ctx host-path])
 (defn initial-state
   "Return the initial controller state map."
@@ -967,36 +968,12 @@
   ([qctx]
    (register-resolvers-in! qctx true))
   ([qctx rebuild?]
-   (let [resolvers (requiring-resolve 'psi.recursion.resolvers/all-resolvers)
-         register-fn (requiring-resolve 'psi.query.core/register-resolver-in!)
-         rebuild-fn (requiring-resolve 'psi.query.core/rebuild-env-in!)]
-     (doseq [r @resolvers]
-       (register-fn qctx r))
-     (when rebuild?
-       (rebuild-fn qctx))
-     :ok)))
+   (query-registration/register-resolvers-in! qctx rebuild?)))
 (defn register-mutations-in!
   ([qctx]
    (register-mutations-in! qctx true))
   ([qctx rebuild?]
-   (let [mutations (requiring-resolve 'psi.recursion.resolvers/all-mutations)
-         register-fn (requiring-resolve 'psi.query.core/register-mutation-in!)
-         rebuild-fn (requiring-resolve 'psi.query.core/rebuild-env-in!)]
-     (doseq [m @mutations]
-       (register-fn qctx m))
-     (when rebuild?
-       (rebuild-fn qctx))
-     :ok)))
+   (query-registration/register-mutations-in! qctx rebuild?)))
 (defn register-resolvers!
   []
-  (let [resolvers (requiring-resolve 'psi.recursion.resolvers/all-resolvers)
-        mutations (requiring-resolve 'psi.recursion.resolvers/all-mutations)
-        register-resolver-fn (requiring-resolve 'psi.query.core/register-resolver!)
-        register-mutation-fn (requiring-resolve 'psi.query.core/register-mutation!)
-        rebuild-fn (requiring-resolve 'psi.query.core/rebuild-env!)]
-    (doseq [r @resolvers]
-      (register-resolver-fn r))
-    (doseq [m @mutations]
-      (register-mutation-fn m))
-    (rebuild-fn)
-    :ok))
+  (query-registration/register-resolvers!))
