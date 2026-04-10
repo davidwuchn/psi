@@ -74,30 +74,30 @@
       (is (true? (rpc.state/ready? state)))
       (is (= "1.0" (get-in @state [:transport :negotiated-protocol-version]))))))
 
-(deftest rpc-state-initialize-migrates-legacy-flat-state-invariant-test
-  (testing "transport initialization preserves legacy flat state while establishing nested state"
+(deftest rpc-state-initialize-preserves-canonical-nested-state-invariant-test
+  (testing "transport initialization preserves canonical nested state and refreshes err writer"
     (let [old-err (java.io.StringWriter.)
           new-err (java.io.StringWriter.)
           worker  (future :ok)
-          state   (atom {:ready? true
-                         :pending {"dup" "existing-op"}
-                         :max-pending-requests 7
-                         :focus-session-id "legacy-session"
-                         :subscribed-topics #{"assistant/message"}
-                         :event-seq 9
-                         :inflight-futures [worker]
-                         :rpc-run-fn-registered true
-                         :err old-err})]
+          state   (atom {:transport {:ready? true
+                                     :pending {"dup" "existing-op"}
+                                     :max-pending-requests 7
+                                     :err old-err}
+                         :connection {:focus-session-id "nested-session"
+                                      :subscribed-topics #{"assistant/message"}
+                                      :event-seq 9}
+                         :workers {:inflight-futures [worker]
+                                   :rpc-run-fn-registered? true}})]
       (rpc.state/initialize-transport-state! state new-err)
       (is (true? (rpc.state/ready? state)))
       (is (= {"dup" "existing-op"} (rpc.state/pending state)))
       (is (= 7 (rpc.state/max-pending-requests state)))
-      (is (= "legacy-session" (rpc.state/focus-session-id state)))
+      (is (= "nested-session" (rpc.state/focus-session-id state)))
       (is (= #{"assistant/message"} (rpc.state/subscribed-topics state)))
       (is (= 10 (rpc.state/next-event-seq! state)))
       (is (= new-err (rpc.state/err-writer state)))
       (is (= {"dup" "existing-op"} (get-in @state [:transport :pending])))
-      (is (= "legacy-session" (get-in @state [:connection :focus-session-id])))
+      (is (= "nested-session" (get-in @state [:connection :focus-session-id])))
       (is (= [worker] (get-in @state [:workers :inflight-futures]))))))
 
 (deftest rpc-handshake-uses-explicit-transport-deps-invariant-test
@@ -133,9 +133,8 @@
     (let [[ctx _]       (create-session-context)
           wrong-called? (atom false)
           right-called? (atom 0)
-          state         (atom {:ready? true
-                               :pending {}
-                               :subscribed-topics #{"session/rehydrated"}
+          state         (atom {:transport {:ready? true :pending {}}
+                               :connection {:subscribed-topics #{"session/rehydrated"}}
                                :on-new-session! (fn []
                                                   (reset! wrong-called? true)
                                                   {:agent-messages [{:role "assistant"
@@ -170,8 +169,7 @@
   (testing "prompt routes through dispatch-visible prompt lifecycle, not mutable executor"
     (let [[ctx _]        (create-session-context)
           lifecycle-used? (atom false)
-          state          (atom {:ready? true
-                                :pending {}
+          state          (atom {:transport {:ready? true :pending {}}
                                 :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}})
           handler        (rpc/make-session-request-handler
                           ctx

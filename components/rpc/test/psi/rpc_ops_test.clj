@@ -18,7 +18,7 @@
 (deftest session-request-handler-query-eql-and-op-mapping-test
   (testing "query_eql routes to session/query-in and returns canonical result envelope"
     (let [[ctx _] (support/create-session-context)
-          state   (atom {:ready? true :pending {}})
+          state   (atom {:transport {:ready? true :pending {}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines]}
           (support/run-loop "{:id \"q1\" :kind :request :op \"query_eql\" :params {:query \"[:psi.graph/domain-coverage :psi.memory/status]\"}}\n"
@@ -34,7 +34,7 @@
 
   (testing "query_eql invalid query EDN returns request/invalid-query"
     (let [[ctx _] (support/create-session-context)
-          state   (atom {:ready? true :pending {}})
+          state   (atom {:transport {:ready? true :pending {}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines]}
           (support/run-loop "{:id \"q2\" :kind :request :op \"query_eql\" :params {:query \"not-edn\"}}\n"
@@ -47,7 +47,7 @@
 
   (testing "query_eql non-vector query returns request/invalid-query"
     (let [[ctx _] (support/create-session-context)
-          state   (atom {:ready? true :pending {}})
+          state   (atom {:transport {:ready? true :pending {}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines]}
           (support/run-loop "{:id \"q3\" :kind :request :op \"query_eql\" :params {:query \"{:a 1}\"}}\n"
@@ -59,7 +59,7 @@
 
   (testing "unknown op returns request/op-not-supported with supported ops"
     (let [[ctx _] (support/create-session-context)
-          state   (atom {:ready? true :pending {}})
+          state   (atom {:transport {:ready? true :pending {}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines]}
           (support/run-loop "{:id \"u1\" :kind :request :op \"nope\"}\n"
@@ -79,7 +79,8 @@
 
   (testing "subscribe/unsubscribe update shared state and return subscribed topics"
     (let [[ctx _] (support/create-session-context)
-          state   (atom {:ready? true :pending {} :subscribed-topics #{}})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines state]}
           (support/run-loop (str "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"tool/start\"]}}\n"
@@ -91,7 +92,7 @@
       (is (= ["assistant/delta" "tool/start"] (get-in f1 [:data :subscribed])))
       (is (= :response (:kind f2)))
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
-      (is (= #{"assistant/delta"} (:subscribed-topics state)))))
+      (is (= #{"assistant/delta"} (get-in state [:connection :subscribed-topics])))))
 
   (testing "background job list/inspect/cancel ops route through session job store"
     (let [[ctx thread-id] (support/create-session-context)
@@ -104,7 +105,7 @@
                                                                       :tool-name "agent-chain"
                                                                       :job-id "job-rpc-1"})))}
                                               {:origin :core})
-          state           (atom {:ready? true :pending {}})
+          state           (atom {:transport {:ready? true :pending {}}})
           handler         (support/make-handler ctx state)
           {:keys [out-lines]}
           (support/run-loop (str "{:id \"jb1\" :kind :request :op \"list_background_jobs\"}\n"
@@ -135,7 +136,8 @@
                                       {:extension-id "ext.demo" :widget-id "w-1"
                                        :placement :above-editor :content ["hello widget"]}
                                       {:origin :test})
-          state   (atom {:ready? true :pending {} :subscribed-topics #{}})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines state]}
           (support/run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
@@ -148,7 +150,7 @@
       (is (some? widget-evt))
       (is (= "w-1" (get-in widget-evt [:data :widgets 0 :widget-id])))
       (is (= ["hello widget"] (get-in widget-evt [:data :widgets 0 :content])))
-      (when-let [f (:ui-watch-loop state)]
+      (when-let [f (get-in state [:workers :ui-watch-loop])]
         (future-cancel f)))))
 
 (deftest rpc-ui-snapshot-delegates-to-canonical-extension-ui-projection-test
@@ -177,7 +179,8 @@
           _       (dispatch/dispatch! ctx :session/ui-set-status
                                       {:extension-id "ext-a" :text "Alpha"}
                                       {:origin :test})
-          state   (atom {:ready? true :pending {} :subscribed-topics #{}})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{}}})
           handler (support/make-handler ctx state)
           {:keys [out-lines state]}
           (support/run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
@@ -195,13 +198,14 @@
                    (get-in widget-evt [:data :widgets]))))
       (is (= ["ext-a" "ext-z"]
              (mapv :extension-id (get-in status-evt [:data :statuses]))))
-      (when-let [f (:ui-watch-loop state)]
+      (when-let [f (get-in state [:workers :ui-watch-loop])]
         (future-cancel f)))))
 
 (deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
   (testing "after subscribe, ui widget updates stream without a prompt request"
     (let [[ctx _]     (support/create-session-context)
-          state       (atom {:ready? true :pending {} :subscribed-topics #{}})
+          state       (atom {:transport {:ready? true :pending {}}
+                             :connection {:subscribed-topics #{}}})
           handler     (support/make-handler ctx state)
           in-reader   (java.io.PipedReader.)
           in-writer   (java.io.PipedWriter. in-reader)
@@ -236,7 +240,7 @@
           (is (= "w-2" (get-in latest [:data :widgets 0 :widget-id])))
           (is (= ["live update"] (get-in latest [:data :widgets 0 :content]))))
         (finally
-          (when-let [f (:ui-watch-loop @state)]
+          (when-let [f (get-in @state [:workers :ui-watch-loop])]
             (future-cancel f))
           (future-cancel loop-future)
           (try (.close in-writer) (catch Exception _ nil))

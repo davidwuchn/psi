@@ -52,18 +52,17 @@
 (deftest rpc-new-session-rehydrates-agent-messages-not-tui-projection-test
   (testing "new_session emits canonical agent messages so the next Anthropic request preserves role/content shape"
     (let [[ctx _] (create-session-context)
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"session/rehydrated"}})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{"session/rehydrated"}}})
           handler (rpc/make-session-request-handler ctx {:on-new-session! (fn [_source-session-id]
-                                                                           {:agent-messages [{:role "assistant"
-                                                                                              :content [{:type :text :text "[New session started]"}]}
-                                                                                             {:role "user"
-                                                                                              :content [{:type :text :text "who are you?"}]}]
-                                                                            :messages [{:role :assistant :text "[New session started]"}
-                                                                                       {:role :user :text "who are you?"}]
-                                                                            :tool-calls {}
-                                                                            :tool-order []})})
+                                                                            {:agent-messages [{:role "assistant"
+                                                                                               :content [{:type :text :text "[New session started]"}]}
+                                                                                              {:role "user"
+                                                                                               :content [{:type :text :text "who are you?"}]}]
+                                                                             :messages [{:role :assistant :text "[New session started]"}
+                                                                                        {:role :user :text "who are you?"}]
+                                                                             :tool-calls {}
+                                                                             :tool-order []})})
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -93,9 +92,8 @@
                                                                               :content [{:type :text :text "[New session started]"}]})
                                                       (persist/message-entry {:role "user"
                                                                               :content [{:type :text :text "who are you?"}]})])
-          state              (atom {:ready? true
-                                    :pending {}
-                                    :subscribed-topics #{"session/rehydrated"}})
+          state              (atom {:transport {:ready? true :pending {}}
+                                    :connection {:subscribed-topics #{"session/rehydrated"}}})
           handler (make-handler ctx state)
           input              (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                   "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")

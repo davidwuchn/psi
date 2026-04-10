@@ -5,9 +5,8 @@
 
 (defn active-session-id-in-session-state
   [session-state-atom default-session-id-fn]
-  (let [{:keys [ctx focus-session-id* tui-focus*]} @session-state-atom]
-    (or (some-> focus-session-id* deref)
-        (some-> tui-focus* deref)
+  (let [{:keys [ctx tui-focus*]} @session-state-atom]
+    (or (some-> tui-focus* deref)
         (default-session-id-fn ctx))))
 
 (defn start-nrepl!

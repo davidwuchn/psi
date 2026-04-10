@@ -15,8 +15,7 @@
   (testing "prompt emits canonical events that interleave with accepted response"
     (let [[ctx _] (support/create-session-context)
           _   (dispatch/dispatch! ctx :session/ui-set-status {:extension-id "ext.demo" :text "ready"} {:origin :test})
-          state (atom {:ready? true
-                       :pending {}
+          state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                        :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
@@ -70,8 +69,7 @@
 (deftest rpc-prompt-footer-updated-tolerates-keyword-sentinel-values-test
   (testing "prompt completion does not fail when footer query returns keyword sentinels"
     (let [[ctx _] (support/create-session-context)
-          state (atom {:ready? true
-                       :pending {}
+          state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                        :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
@@ -131,8 +129,7 @@
 (deftest rpc-thinking-delta-after-tool-start-begins-fresh-segment-test
   (testing "post-tool thinking delta can start a fresh cumulative segment"
     (let [[ctx _] (support/create-session-context)
-          state (atom {:ready? true
-                       :pending {}
+          state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                        :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
@@ -174,8 +171,7 @@
   (testing "openai codex tool args from response.output_item.done flow through RPC tool events"
     (let [[ctx session-id]   (support/create-session-context)
           _                  (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
-          state              (atom {:ready? true
-                                    :pending {}
+          state              (atom {:transport {:ready? true :pending {}}
                                     :sync-on-git-head-change? false
                                     :rpc-ai-model (ai-models/get-model :gpt-5.3-codex)})
           handler            (support/make-handler ctx state)
@@ -183,38 +179,38 @@
           call-n             (atom 0)
           first-sse          (str
                               "data: " (json/generate-string
-                                         {:type "response.output_item.added"
-                                          :output_index 0
-                                          :item {:type "function_call"
-                                                 :id "fc_1"
-                                                 :call_id "call_1"
-                                                 :name "bash"
-                                                 :arguments ""}}) "\n\n"
+                                        {:type "response.output_item.added"
+                                         :output_index 0
+                                         :item {:type "function_call"
+                                                :id "fc_1"
+                                                :call_id "call_1"
+                                                :name "bash"
+                                                :arguments ""}}) "\n\n"
                               "data: " (json/generate-string
-                                         {:type "response.output_item.done"
-                                          :output_index 0
-                                          :item {:type "function_call"
-                                                 :id "fc_1"
-                                                 :call_id "call_1"
-                                                 :name "bash"
-                                                 :arguments "{\"command\":\"pwd\"}"}}) "\n\n"
+                                        {:type "response.output_item.done"
+                                         :output_index 0
+                                         :item {:type "function_call"
+                                                :id "fc_1"
+                                                :call_id "call_1"
+                                                :name "bash"
+                                                :arguments "{\"command\":\"pwd\"}"}}) "\n\n"
                               "data: " (json/generate-string
-                                         {:type "response.completed"
-                                          :response {:status "completed"}}) "\n\n")
+                                        {:type "response.completed"
+                                         :response {:status "completed"}}) "\n\n")
           second-sse         (str
                               "data: " (json/generate-string
-                                         {:type "response.output_item.added"
-                                          :item {:type "message"
-                                                 :id "msg_2"
-                                                 :role "assistant"
-                                                 :status "in_progress"
-                                                 :content []}}) "\n\n"
+                                        {:type "response.output_item.added"
+                                         :item {:type "message"
+                                                :id "msg_2"
+                                                :role "assistant"
+                                                :status "in_progress"
+                                                :content []}}) "\n\n"
                               "data: " (json/generate-string
-                                         {:type "response.output_text.delta"
-                                          :delta "Final response"}) "\n\n"
+                                        {:type "response.output_text.delta"
+                                         :delta "Final response"}) "\n\n"
                               "data: " (json/generate-string
-                                         {:type "response.completed"
-                                          :response {:status "completed"}}) "\n\n")
+                                        {:type "response.completed"
+                                         :response {:status "completed"}}) "\n\n")
           input              (str
                               "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                               "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"

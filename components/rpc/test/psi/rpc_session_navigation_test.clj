@@ -12,9 +12,8 @@
 (deftest rpc-session-resume-and-rehydrate-events-test
   (testing "new_session emits session/resumed and session/rehydrated canonical events"
     (let [[ctx session-id]    (support/create-session-context)
-          state               (atom {:ready?            true
-                                     :pending           {}
-                                     :subscribed-topics #{"session/resumed" "session/rehydrated"}})
+          state               (atom {:transport {:ready? true :pending {}}
+                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"n1\" :kind :request :op \"new_session\" :params {:session-id \"" session-id "\"}}\n")
@@ -29,11 +28,10 @@
 
   (testing "command /new emits session/resumed and session/rehydrated canonical events"
     (let [[ctx _]             (support/create-session-context {:session-defaults {:model {:provider "openai"
-                                                                                         :id "gpt-5.4"
-                                                                                         :reasoning false}}})
-          state               (atom {:ready?            true
-                                     :pending           {}
-                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result" "footer/updated"}})
+                                                                                                  :id "gpt-5.4"
+                                                                                                  :reasoning false}}})
+          state               (atom {:transport {:ready? true :pending {}}
+                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "command-result" "footer/updated"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/new\"}}\n")
@@ -67,9 +65,8 @@
                                                       nil
                                                       [(persist/message-entry {:role "user" :content "hi"})
                                                        (persist/message-entry {:role "assistant" :content [{:type :text :text "there"}]})])
-          state               (atom {:ready?            true
-                                     :pending           {}
-                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          state               (atom {:transport {:ready? true :pending {}}
+                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
@@ -100,9 +97,8 @@
                                                       nil
                                                       [(persist/message-entry {:role "assistant" :content [{:type :text :text "root"}]})])
           _                   (session/new-session-in! ctx sid1 {})
-          state               (atom {:ready?            true
-                                     :pending           {}
-                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          state               (atom {:transport {:ready? true :pending {}}
+                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree " sid1 "\"}}\n")
@@ -132,10 +128,9 @@
           entry               (persist/message-entry {:role    "user"
                                                       :content [{:type :text :text "Branch from this prompt"}]})
           _                   (ss/journal-append-in! ctx session-id entry)
-          state               (atom {:ready?            true
-                                     :pending           {}
-                                     :focus-session-id  session-id
-                                     :subscribed-topics #{"ui/frontend-action-requested"}})
+          state               (atom {:transport {:ready? true :pending {}}
+                                     :connection {:focus-session-id session-id
+                                                  :subscribed-topics #{"ui/frontend-action-requested"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree\"}}\n")
@@ -176,9 +171,8 @@
           _                   (agent/replace-messages-in! (ss/agent-ctx-in ctx sid1)
                                                           [{:role    "assistant"
                                                             :content [{:type :text :text "stale in-memory tail"}]}])
-          state               (atom {:ready?            true
-                                     :pending           {}
-                                     :subscribed-topics #{"session/resumed" "session/rehydrated"}})
+          state               (atom {:transport {:ready? true :pending {}}
+                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"s1\" :kind :request :op \"switch_session\" :params {:session-id \"" sid1 "\"}}\n"

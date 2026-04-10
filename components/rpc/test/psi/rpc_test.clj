@@ -145,9 +145,8 @@
   (testing "new_session uses on-new-session! callback when provided"
     (let [[ctx session-id] (support/create-session-context)
           called? (atom 0)
-          state (atom {:ready? true
-                       :pending {}
-                       :subscribed-topics #{"session/rehydrated"}})
+          state (atom {:transport {:ready? true :pending {}}
+                       :connection {:subscribed-topics #{"session/rehydrated"}}})
           handler (rpc/make-session-request-handler ctx {:on-new-session! (fn [_source-session-id]
                                                                             (swap! called? inc)
                                                                             {:agent-messages [{:role "assistant"
@@ -171,11 +170,10 @@
 (deftest rpc-new-session-footer-usage-is-session-scoped-test
   (testing "new_session footer/updated does not carry usage totals from previous session"
     (let [[ctx session-id] (support/create-session-context {:session-defaults {:model {:provider "openai"
-                                                                               :id "gpt-5.4"
-                                                                               :reasoning false}}})
-          state      (atom {:ready? true
-                            :pending {}
-                            :subscribed-topics #{"footer/updated"}})
+                                                                                       :id "gpt-5.4"
+                                                                                       :reasoning false}}})
+          state      (atom {:transport {:ready? true :pending {}}
+                            :connection {:subscribed-topics #{"footer/updated"}}})
           handler (support/make-handler ctx state)
           _          (ss/journal-append-in! ctx session-id
                                             {:kind :message
@@ -231,9 +229,8 @@
                                                   (persist/message-entry {:role "user"
                                                                           :content [{:type :text :text "hi"}]
                                                                           :timestamp user-ts}))
-          state            (atom {:ready? true
-                                  :pending {}
-                                  :subscribed-topics #{"context/updated"}})
+          state            (atom {:transport {:ready? true :pending {}}
+                                  :connection {:subscribed-topics #{"context/updated"}}})
           handler          (support/make-handler ctx state)
           input            (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                 "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"context/updated\"]}}\n")
@@ -265,9 +262,8 @@
           _       (ss/journal-append-in! ctx session-id entry)
           _       (ss/journal-append-in! ctx session-id (persist/message-entry {:role "assistant" :content [{:type :text :text "reply"}]}))
           entry-id (:id entry)
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"context/updated" "session/rehydrated"}})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{"context/updated" "session/rehydrated"}}})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"f1\" :kind :request :op \"fork\" :params {:entry-id \"" entry-id "\"}}\n")
@@ -299,9 +295,8 @@
           entry     (persist/message-entry {:role "user" :content "branch here"})
           _         (ss/journal-append-in! ctx sid entry)
           _         (ss/journal-append-in! ctx sid (persist/message-entry {:role "assistant" :content [{:type :text :text "reply here"}]}))
-          state     (atom {:ready? true
-                           :pending {}
-                           :subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}})
+          state     (atom {:transport {:ready? true :pending {}}
+                           :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}}})
           handler   (support/make-handler ctx state)
           input     (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                          "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-1\" :action-name \"select-session\" :status \"submitted\" :value {:action/kind :fork-session :action/entry-id \"" (:id entry) "\" :action/session-id \"" sid "\"}}}\n")
@@ -324,9 +319,8 @@
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"
     (let [[ctx session-id] (support/create-session-context)
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"context/updated"}})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{"context/updated"}}})
           handler (support/make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"n1\" :kind :request :op \"new_session\" :params {:session-id \"" session-id "\"}}\n")
@@ -345,8 +339,7 @@
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
     (let [[ctx _] (support/create-session-context)
-          state (atom {:ready? true
-                       :pending {}
+          state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                        :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue

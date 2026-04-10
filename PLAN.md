@@ -4,6 +4,63 @@ Remove completed plan sections once finished; `PLAN.md` should contain active wo
 
 # Active work
 
+## Compatibility scaffold removal
+
+Goal:
+- remove internal backward-compatibility scaffolding now that canonical runtime shapes are established
+- prioritize internal migration bridges before persisted-data or external-provider compatibility
+
+Planned sequence:
+1. remove RPC flat/nested state compatibility scaffolding
+2. remove dispatch permission compatibility allow for extensions with missing `:allowed-events`
+3. remove remaining dispatch legacy-handler scaffolding
+4. remove shared-session executor-era prompt compatibility seams
+5. remove adapter/UI fallback payload compatibility once canonical payloads are proven everywhere
+
+### Slice 1 — RPC state compat removal
+
+Target:
+- `components/rpc/src/psi/rpc/state.clj`
+
+Remove:
+- flat-key read fallbacks
+- nested-or-flat migration helpers
+- compatibility flat-key writes
+- `:focus-session-id*` fallback reads
+- duplicate `:rpc-run-fn-registered` / `:rpc-run-fn-registered?` bridging
+
+Keep:
+- canonical nested RPC state only:
+  - `:transport`
+  - `:connection`
+  - `:workers`
+
+Acceptance:
+- RPC state helpers read/write nested keys only
+- RPC tests assert nested state only
+- no production code depends on flat RPC state compatibility keys
+
+### Slice 2 — Dispatch permission compat removal
+
+Target:
+- `components/agent-session/src/psi/agent_session/dispatch.clj`
+- extension manifests / registrations that dispatch extension-origin events
+
+Remove:
+- `registered extension with no :allowed-events => compatibility allow`
+- `:permission-compat?` compatibility marker
+
+Keep:
+- extension-origin dispatch requires:
+  - known extension id
+  - explicit manifest `:allowed-events`
+  - membership of event type in that set
+
+Acceptance:
+- extension-origin dispatch without explicit `:allowed-events` is blocked
+- extension registrations/tests declare `:allowed-events` explicitly where needed
+- no production code depends on permission compatibility allow
+
 ## Prompt lifecycle architectural convergence
 
 Active prompt lifecycle shape:

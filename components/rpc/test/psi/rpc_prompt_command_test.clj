@@ -21,9 +21,10 @@
           z-sd         (session/new-session-in! ctx _a-sid {})
           z-sid        (:session-id z-sd)
           captured     (atom nil)
-          state        (atom {:ready? true
-                              :pending {}
-                              :focus-session-id* (atom _a-sid)
+          state        (atom {:transport {:ready? true
+                                          :pending {}}
+                              :connection {:focus-session-id _a-sid}
+                              :workers {}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                               :run-agent-loop-fn (fn [_ai-ctx _ctx sid _agent-ctx _ai-model _new-messages _opts]
                                                    (reset! captured sid)
@@ -42,8 +43,7 @@
   (testing "when commands/dispatch-in returns non-nil, run-agent-loop-fn is NOT called"
     (let [[ctx _]      (support/create-session-context)
           loop-called? (atom false)
-          state        (atom {:ready? true
-                              :pending {}
+          state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
@@ -76,8 +76,7 @@
   (testing "when commands/dispatch-in returns nil, run-agent-loop-fn IS called"
     (let [[ctx _]      (support/create-session-context)
           loop-called? (atom false)
-          state        (atom {:ready? true
-                              :pending {}
+          state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
@@ -115,12 +114,11 @@
                                          (vector? content) (-> content first :text))]
                           (reset! captured txt))
                         (support/assistant-msg->execution-result session-id
-                                                         {:role "assistant"
-                                                          :content [{:type :text :text "ok"}]
-                                                          :stop-reason :stop}))
+                                                                 {:role "assistant"
+                                                                  :content [{:type :text :text "ok"}]
+                                                                  :stop-reason :stop}))
           ctx*        (assoc ctx :execute-prepared-request-fn bridge)
-          state       (atom {:ready? true
-                             :pending {}
+          state       (atom {:transport {:ready? true :pending {}}
                              :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}})
           handler     (rpc/make-session-request-handler ctx* (select-keys @state [:rpc-ai-model]))
           input       (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
@@ -137,8 +135,7 @@
   (testing "non-command prompt forwards runtime-resolved api-key through prepared request"
     (let [[ctx _]    (support/create-session-context)
           captured   (atom nil)
-          state      (atom {:ready? true
-                            :pending {}
+          state      (atom {:transport {:ready? true :pending {}}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}})
           handler (support/make-handler ctx state)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
@@ -163,8 +160,7 @@
 (deftest rpc-prompt-handle-command-result-types-test
   (testing "text-command-emits-assistant-message with session/updated and footer/updated"
     (let [[ctx _]    (support/create-session-context)
-          state  (atom {:ready? true
-                        :pending {}
+          state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -191,8 +187,7 @@
     (let [[ctx _]    (support/create-session-context)
           loop-called? (atom false)
           received-args (atom nil)
-          state  (atom {:ready? true
-                        :pending {}
+          state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _]
                                              (reset! loop-called? true)
@@ -225,8 +220,7 @@
   (testing "extension-cmd-handler-error-surfaced deterministically"
     (let [[ctx _]    (support/create-session-context)
           loop-called? (atom false)
-          state  (atom {:ready? true
-                        :pending {}
+          state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _]
                                              (reset! loop-called? true)
@@ -254,8 +248,7 @@
 
   (testing "login-start-emits-url-text"
     (let [[ctx _]    (support/create-session-context)
-          state  (atom {:ready? true
-                        :pending {}
+          state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -282,8 +275,7 @@
           loop-called? (atom false)
           dispatches   (atom [])
           completions  (atom [])
-          state        (atom {:ready? true
-                              :pending {}
+          state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
@@ -305,12 +297,12 @@
                                                :login-state login-state})
                       {:type :oauth :access "tok" :refresh "ref" :expires (+ (System/currentTimeMillis) 60000)})]
         (support/run-loop "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n"
-                  handler state 250)
+                          handler state 250)
         (is (some? (:pending-login (sa/oauth-projection-in ctx)))
             "manual login-start should set canonical pending-login state")
 
         (support/run-loop "{:id \"p2\" :kind :request :op \"prompt\" :params {:message \"auth-code-123\"}}\n"
-                  handler state 250)
+                          handler state 250)
 
         (is (= [{:provider-id :anthropic
                  :input "auth-code-123"
@@ -328,8 +320,7 @@
     (let [[ctx _]      (support/create-session-context {:oauth-ctx {:mode :test}})
           loop-called? (atom false)
           completions  (atom [])
-          state        (atom {:ready? true
-                              :pending {}
+          state        (atom {:transport {:ready? true :pending {}}
                               :rpc-ai-model {:provider "openai" :id "stub" :supports-reasoning true}
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
@@ -350,7 +341,7 @@
                                                :login-state login-state})
                       {:type :oauth :access "tok" :refresh "ref" :expires (+ (System/currentTimeMillis) 60000)})]
         (let [{:keys [out-lines]} (support/run-loop "{:id \"p3\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n"
-                                            handler state 800)
+                                                    handler state 800)
               events (->> out-lines support/parse-frames (filter #(= :event (:kind %)))
                           (filter #(= "assistant/message" (:event %))))
               texts  (mapcat #(map :text (get-in % [:data :content])) events)]
@@ -370,8 +361,7 @@
 
   (testing "quit-emits-fallback-text"
     (let [[ctx _]    (support/create-session-context)
-          state  (atom {:ready? true
-                        :pending {}
+          state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -393,8 +383,7 @@
 
   (testing "resume-emits-fallback-text"
     (let [[ctx _]    (support/create-session-context)
-          state  (atom {:ready? true
-                        :pending {}
+          state  (atom {:transport {:ready? true :pending {}}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -419,8 +408,7 @@
           ctx     (assoc ctx*
                          :memory-ctx
                          (memory/create-context {:state-overrides {:status :ready}}))
-          state   (atom {:ready? true
-                         :pending {}
+          state   (atom {:transport {:ready? true :pending {}}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                          :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -460,8 +448,7 @@
                          :memory-ctx
                          (memory/create-context
                           {:state-overrides {:status :initializing}}))
-          state   (atom {:ready? true
-                         :pending {}
+          state   (atom {:transport {:ready? true :pending {}}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                          :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -505,8 +492,7 @@
                         (provider-load-state [_] {:ok? true}))
           _ (memory/register-store-provider-in! (:memory-ctx ctx) provider)
           _ (memory/select-store-provider-in! (:memory-ctx ctx) "failing-store")
-          state   (atom {:ready? true
-                         :pending {}
+          state   (atom {:transport {:ready? true :pending {}}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                          :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -527,8 +513,7 @@
 (deftest rpc-prompt-slash-command-journaled-test
   (testing "slash command user message is journaled even when dispatch matches (not only on agent-loop path)"
     (let [[ctx session-id] (support/create-session-context)
-          state      (atom {:ready? true
-                            :pending {}
+          state      (atom {:transport {:ready? true :pending {}}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                             :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
           handler (support/make-handler ctx state)
@@ -551,8 +536,7 @@
 (deftest rpc-prompt-plain-text-journaled-test
   (testing "plain text prompt user message is journaled on agent-loop path"
     (let [[ctx session-id] (support/create-session-context)
-          state      (atom {:ready? true
-                            :pending {}
+          state      (atom {:transport {:ready? true :pending {}}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                             :run-agent-loop-fn (fn [& _] {:role "assistant" :content [{:type :text :text "ok"}]})})
           handler (support/make-handler ctx state)

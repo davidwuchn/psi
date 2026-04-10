@@ -160,7 +160,7 @@
 
 (deftest run-stdio-loop-pending-lifecycle-test
   (testing "accepted request adds pending and terminal response clears it"
-    (let [state (atom {:max-pending-requests 2})]
+    (let [state (atom {:transport {:max-pending-requests 2}})]
       (support/run-loop (str "{:id \"h\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                              "{:id \"r1\" :kind :request :op \"echo\"}\n")
                         (fn [request _emit _state]
@@ -168,11 +168,13 @@
                             (rpc.transport/response-frame (:id request) "echo" true {:ok true})
                             (rpc.transport/response-frame (:id request) (:op request) true {})))
                         state)
-      (is (= {} (:pending @state)))
-      (is (= true (:ready? @state)))))
+      (is (= {} (get-in @state [:transport :pending])))
+      (is (= true (get-in @state [:transport :ready?])))))
 
   (testing "max pending guard returns canonical error"
-    (let [state (atom {:max-pending-requests 1 :ready? true :pending {"existing" "op"}})
+    (let [state (atom {:transport {:max-pending-requests 1
+                                   :ready? true
+                                   :pending {"existing" "op"}}})
           {:keys [out-lines]} (support/run-loop "{:id \"r2\" :kind :request :op \"echo\"}\n"
                                                 (fn [_ _ _] nil)
                                                 state)
@@ -182,7 +184,8 @@
       (is (= "r2" (:id frame)))))
 
   (testing "duplicate request id is rejected with request/invalid-id"
-    (let [state (atom {:ready? true :pending {"dup" "existing-op"}})
+    (let [state (atom {:transport {:ready? true
+                                   :pending {"dup" "existing-op"}}})
           {:keys [out-lines]} (support/run-loop "{:id \"dup\" :kind :request :op \"echo\"}\n"
                                                 (fn [_ _ _] nil)
                                                 state)
