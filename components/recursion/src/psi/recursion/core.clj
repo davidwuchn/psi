@@ -509,11 +509,6 @@
     (persistent! opps)))
 
 (defn observe-in!
-  "Observe phase: capture system, graph, and memory signals and attach
-   observation to the cycle. Transitions cycle and controller to :planning.
-
-   Returns {:ok? true, :observation obs} on success,
-   or {:ok? false, :error ...} if cycle not found or wrong status."
   [ctx cycle-id system-state graph-state memory-state]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -565,8 +560,6 @@
       (first (keep (fn [[k v]] (when (= v max-idx) k)) risk-order)))))
 
 (defn- goal->action
-  "Convert a FutureGoal to a ProposedAction.
-   All generated actions are atomic by design."
   [goal]
   {:id (str "action-" (:id goal))
    :title (str "Address: " (:title goal))
@@ -578,11 +571,6 @@
    :verification-hints #{"tests" "lint"}})
 
 (defn plan-in!
-  "Plan phase: synthesize FUTURE_STATE and generate a bounded PlanProposal
-   from the top goal(s). Attaches proposal and updated future-state to cycle.
-   Controller stays in :planning (approval gate is next step).
-
-   Returns {:ok? true, :proposal proposal, :future-state fs} on success."
   [ctx cycle-id]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -637,13 +625,6 @@
 ;;; --- Approval gate ---
 
 (defn apply-approval-gate-in!
-  "Apply the approval gate to the cycle's proposal.
-
-   If manual approval is required: transitions cycle+controller to :awaiting-approval.
-   If auto-approve: sets proposal.approved=true, proposal.requires-approval=false,
-   transitions cycle+controller to :executing.
-
-   Returns {:gate :manual} or {:gate :auto-approved}."
   [ctx cycle-id]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -691,11 +672,6 @@
 ;;; --- Approve / Reject proposals ---
 
 (defn approve-proposal-in!
-  "Approve a proposal that is awaiting approval.
-   Sets approved=true, approval-by, approval-notes.
-   Transitions cycle+controller to :executing.
-
-   Returns {:ok? true} on success."
   [ctx cycle-id approver notes]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -726,12 +702,6 @@
   (approve-proposal-in! (global-context) cycle-id approver notes))
 
 (defn reject-proposal-in!
-  "Reject a proposal that is awaiting approval.
-   Sets approved=false, approval-by, approval-notes, and an explicit
-   aborted outcome so learn/finalize preserve rejection semantics.
-   Transitions cycle+controller to :learning (skip execution).
-
-   Returns {:ok? true} on success."
   [ctx cycle-id approver notes]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -831,13 +801,6 @@
   (into #{} (comp (remove :passed) (map :name)) checks))
 
 (defn rollback-in!
-  "Record a rollback action on the cycle.
-
-   In Step 11 scaffold, this is a recorded action (stores rollback evidence
-   on the cycle) rather than actual git reset. Appends a rollback record to
-   the cycle's execution-attempts.
-
-   Returns {:ok? true}."
   [ctx cycle-id]
   (swap-state-in! ctx
                   (fn [s]
@@ -1000,12 +963,6 @@
 ;;; --- FUTURE_STATE updates from outcome ---
 
 (defn update-future-state-from-outcome-in!
-  "Update FUTURE_STATE based on cycle outcome.
-
-   - Success: advance goals referenced in outcome's changed-goals to :complete.
-   - Failed/blocked/aborted: add blockers from outcome evidence.
-
-   Returns {:ok? true, :future-state updated-fs}."
   [ctx cycle-id]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -1159,15 +1116,6 @@
     :else nil))
 
 (defn continue-cycle-in!
-  "Continue a non-terminal cycle from its current status through completion.
-
-   Useful when a cycle is already in :executing/:verifying/:learning (e.g. after
-   manual approval) and needs to run the remaining phases with default hooks.
-
-   opts keys:
-   - :memory-ctx    memory context (optional; defaults to memory/global-context)
-   - :hook-executor execution hook fn
-   - :check-runner  verification check fn"
   [ctx cycle-id opts]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -1188,8 +1136,6 @@
 ;;; --- EQL resolver registration ---
 
 (defn register-resolvers-in!
-  "Register recursion resolvers into isolated query context `qctx`.
-   Rebuilds query env by default."
   ([qctx]
    (register-resolvers-in! qctx true))
   ([qctx rebuild?]
@@ -1203,8 +1149,6 @@
      :ok)))
 
 (defn register-mutations-in!
-  "Register recursion mutations into isolated query context `qctx`.
-   Rebuilds query env by default."
   ([qctx]
    (register-mutations-in! qctx true))
   ([qctx rebuild?]
@@ -1218,7 +1162,6 @@
      :ok)))
 
 (defn register-resolvers!
-  "Register recursion resolvers and mutations into global query context."
   []
   (let [resolvers (requiring-resolve 'psi.recursion.resolvers/all-resolvers)
         mutations (requiring-resolve 'psi.recursion.resolvers/all-mutations)
