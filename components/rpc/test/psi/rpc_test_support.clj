@@ -45,6 +45,16 @@
      :execution-result/http-status        (:http-status assistant-msg)
      :execution-result/stop-reason        (or (:stop-reason assistant-msg) :stop)}))
 
+(defn ok-execution-result
+  ([session-id]
+   (ok-execution-result session-id []))
+  ([session-id content]
+   (assistant-msg->execution-result
+    session-id
+    {:role "assistant"
+     :content (vec content)
+     :stop-reason :stop})))
+
 (defn run-loop
   "Run a stdio loop."
   ([input handler]
