@@ -1,10 +1,4 @@
 (ns psi.recursion.core
-  "Remember recursion controller.
-
-   Establishes an isolated RecursionContext (Nullable pattern), global wrappers,
-   the initial controller state shape, trigger intake, readiness gating,
-   observation, FUTURE_STATE synthesis, plan proposal generation,
-   approval gates, execution, verification, learning, and cycle finalization."
   (:require
    [clojure.string :as str]
    [psi.recursion.future-state :as future-state]
@@ -38,11 +32,6 @@
           (sort-by name accepted))))
 
 (defn create-context
-  "Create an isolated RecursionContext.
-
-   Options:
-   - :state-overrides   map merged over initial controller state
-   - :config-overrides  map merged over default config"
   ([]
    (create-context {}))
   ([{:keys [state-overrides config-overrides]
@@ -80,11 +69,6 @@
   (reset! global-ctx nil))
 
 (defn create-hosted-context
-  "Create a recursion context hosted in an external canonical state root.
-
-   `host-ctx` must support:
-   - (:state* host-ctx) root atom
-   - `host-path` path inside that root for recursion state"
   [host-ctx host-path]
   (let [existing (get-in @(:state* host-ctx) host-path)
         state    (or existing (initial-state))]
@@ -142,13 +126,6 @@
   "Trigger a manual remember cycle. Capture operator reason and current readiness context.")
 
 (defn manual-trigger-signal
-  "Build a canonical manual TriggerSignal payload shared by runtime command
-   and EQL mutation entrypoints.
-
-   Optional opts:
-   - :actor   operator/actor identity string (default: operator)
-   - :source  invocation source keyword (e.g. :runtime-command, :eql-mutation)
-   - :extra-payload map merged into payload"
   ([reason]
    (manual-trigger-signal reason {}))
   ([reason {:keys [actor source extra-payload]
@@ -191,12 +168,6 @@
        (:memory-ready system-state)))
 
 (defn handle-trigger-in!
-  "Main trigger entry point. Takes `ctx`, a `trigger-signal` map, and a
-   `system-state` map with readiness flags. Returns a result map:
-   - `{:result :accepted, :cycle-id ...}` on success
-   - `{:result :ignored}` when trigger type is disabled
-   - `{:result :blocked, :cycle-id ...}` when readiness fails
-   - `{:result :rejected, :reason ...}` when trigger type unknown or controller busy"
   [ctx trigger-signal system-state]
   (let [state    (get-state-in ctx)
         config   (:config state)
@@ -254,8 +225,6 @@
 (declare finalize-cycle-in!)
 
 (defn- resolve-memory-ctx
-  "Resolve memory context for orchestration.
-   Prefers explicit `memory-ctx`, otherwise falls back to memory/global-context."
   [memory-ctx]
   (or memory-ctx
       (let [global-memory-context (requiring-resolve 'psi.memory.core/global-context)]
@@ -426,29 +395,6 @@
       :continue (continue-after-approval ctx cycle-id base-steps approval-result hook-executor check-runner memory-ctx))))
 
 (defn orchestrate-manual-trigger-in!
-  "Single production orchestration entrypoint for Step 11 manual cycles.
-
-   Runs explicit sequence:
-   trigger -> observe -> plan -> approval gate -> (approve/reject/await)
-   -> execute -> verify -> learn -> update FUTURE_STATE -> finalize
-
-   Approval semantics:
-   - If gate is manual and `approval-decision` is nil, orchestration stops at
-     :awaiting-approval and returns pending approval metadata.
-   - If gate is manual and `approval-decision` is :approve, it continues.
-   - If gate is manual and `approval-decision` is :reject, it executes
-     rejection path (learn/update/finalize) without execution.
-
-   opts keys:
-   - :system-state      readiness map (defaults all true)
-   - :graph-state       graph snapshot map (optional)
-   - :memory-state      memory snapshot map (optional)
-   - :memory-ctx        memory context (optional; defaults to memory/global-context)
-   - :approver          approver/reviewer id string
-   - :approval-notes    approval/rejection notes string
-   - :approval-decision nil | :approve | :reject (or string equivalents)
-   - :hook-executor     execution hook fn
-   - :check-runner      verification check fn"
   [ctx trigger-signal
    {:keys [system-state graph-state memory-state memory-ctx
            approver approval-notes approval-decision
@@ -828,15 +774,6 @@
   {:status :success, :output-summary "hook-not-implemented"})
 
 (defn execute-in!
-  "Execute approved proposal actions via hook-executor.
-
-   Takes `ctx`, `cycle-id`, and an optional `hook-executor` function
-   `(fn [action] {:status :success|:failed, :output-summary str})`.
-
-   Creates an ExecutionAttempt record per action. Appends attempts to cycle.
-   Transitions cycle+controller to :verifying.
-
-   Returns {:ok? true, :attempts [...]} on success."
   ([ctx cycle-id]
    (execute-in! ctx cycle-id default-hook-executor))
   ([ctx cycle-id hook-executor]
@@ -918,23 +855,6 @@
   (rollback-in! (global-context) cycle-id))
 
 (defn verify-in!
-  "Verification phase: run required checks and produce a VerificationReport.
-
-   Takes `ctx`, `cycle-id`, and an optional `check-runner` function
-   `(fn [check-name] {:passed bool, :details str?})`.
-
-   Requires cycle status `:verifying`. Runs each check in
-   `config.required-verification-checks`.
-
-   After verification:
-   - If all checks pass: transitions cycle+controller to `:learning`.
-   - If any check fails AND rollback-on-verification-failure=true:
-     calls `rollback-in!`, sets cycle outcome to failed with rollback evidence,
-     transitions to `:learning`.
-   - If any check fails AND rollback-on-verification-failure=false:
-     sets cycle outcome to failed, transitions to `:learning`.
-
-   Returns {:ok? true, :report report} on success."
   ([ctx cycle-id]
    (verify-in! ctx cycle-id default-check-runner))
   ([ctx cycle-id check-runner]
@@ -1027,18 +947,6 @@
          "Actions: " (pr-str action-titles) ".")))
 
 (defn learn-in!
-  "Learn phase: write cycle outcome to memory and store resulting memory IDs.
-
-   Takes `ctx`, `cycle-id`, and `memory-ctx` (a `psi.memory.core/MemoryContext`).
-   Requires cycle status `:learning`.
-
-   If cycle has no outcome yet (successful verification path), sets outcome to
-   success with action titles and changed goal IDs.
-
-   Calls `psi.memory.core/remember-in!` with tags #{\"remember\" \"cycle\" \"step-11\"}
-   and provenance linking to this cycle.
-
-   Returns {:ok? true, :memory-ids #{record-id}} on success."
   [ctx cycle-id memory-ctx]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
@@ -1132,13 +1040,6 @@
 ;;; --- Cycle finalization ---
 
 (defn finalize-cycle-in!
-  "Finalize a cycle: set ended-at, terminal status, return controller to idle.
-
-   If outcome status is :success, cycle status becomes :completed.
-   Otherwise cycle status becomes :failed.
-   Controller status returns to :idle, paused-reason is cleared.
-
-   Returns {:ok? true, :final-status :completed|:failed}."
   [ctx cycle-id]
   (let [state (get-state-in ctx)
         cycle (find-cycle (:cycles state) cycle-id)]
