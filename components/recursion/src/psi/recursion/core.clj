@@ -171,20 +171,16 @@
         accepted (:accepted-trigger-types config)
         enabled  (:enabled-trigger-hooks config)]
     (cond
-      ;; 1. Unknown trigger type
       (not (contains? accepted ttype))
       {:result :rejected, :reason :unknown-trigger-type}
 
-      ;; 2. Disabled trigger — no state change, no cycle
       (not (contains? enabled ttype))
       {:result :ignored}
 
-      ;; 3. Controller busy (not idle or has active cycles)
       (or (not= :idle (:status state))
           (some active-cycle? (:cycles state)))
       {:result :rejected, :reason :controller-busy}
 
-      ;; 4. Readiness prerequisites fail
       (not (readiness-ok? system-state))
       (let [cycle (new-cycle trigger-signal :blocked)]
         (swap-state-in! ctx (fn [s]
@@ -194,7 +190,6 @@
                                   (update :cycles conj cycle))))
         {:result :blocked, :cycle-id (:cycle-id cycle)})
 
-      ;; 5. All checks pass — create observing cycle
       :else
       (let [cycle (new-cycle trigger-signal :observing)]
         (swap-state-in! ctx (fn [s]
@@ -581,7 +576,6 @@
             max-actions (:max-actions-per-cycle policy)
             current-fs (:current-future-state state)
             new-fs (future-state/synthesize-future-state current-fs (:observation cycle))
-            ;; Sort goals: high priority first, then medium
             sorted-goals (sort-by (fn [g]
                                     (case (:priority g)
                                       :high 0
@@ -589,7 +583,6 @@
                                       :low 2
                                       3))
                                   (:goals new-fs))
-            ;; Generate actions bounded by max-actions-per-cycle
             actions (->> sorted-goals
                          (map goal->action)
                          (take max-actions)
@@ -632,7 +625,6 @@
       (let [config (:config state)
             proposal (:proposal cycle)]
         (if (policy/requires-manual-approval? proposal config)
-          ;; Manual approval required
           (do
             (swap-state-in! ctx
                             (fn [s]
@@ -641,7 +633,6 @@
                                   (update :cycles update-cycle cycle-id
                                           #(assoc % :status :awaiting-approval)))))
             {:gate :manual})
-          ;; Auto-approve
           (do
             (swap-state-in! ctx
                             (fn [s]
@@ -829,7 +820,6 @@
                      :passed-all passed-all
                      :completed-at (java.time.Instant/now)}]
          (if passed-all
-           ;; All checks pass — transition to learning, no outcome set yet
            (do
              (swap-state-in! ctx
                              (fn [s]
@@ -840,7 +830,6 @@
                                                 (assoc :status :learning)
                                                 (assoc :verification report))))))
              {:ok? true, :report report})
-           ;; Some checks failed
            (let [failed (failed-check-names checks)
                  rollback? (:rollback-on-verification-failure policy)
                  summary (if rollback?
@@ -850,10 +839,8 @@
                           :summary summary
                           :evidence failed
                           :changed-goals #{}}]
-             ;; Record rollback if policy says so
              (when rollback?
                (rollback-in! ctx cycle-id))
-             ;; Set outcome and transition to learning
              (swap-state-in! ctx
                              (fn [s]
                                (-> s
@@ -903,20 +890,15 @@
       {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
 
       :else
-      (let [;; If no outcome yet, this is the success path
-            outcome (or (:outcome cycle)
+      (let [outcome (or (:outcome cycle)
                         (build-success-outcome cycle (:current-future-state state)))
-            ;; Set the outcome on the cycle if it wasn't already set
             _ (when (nil? (:outcome cycle))
                 (swap-state-in! ctx
                                 (fn [s]
                                   (update s :cycles update-cycle cycle-id
                                           #(assoc % :outcome outcome)))))
-            ;; Build memory content
             content (build-memory-content cycle-id outcome cycle)
             trigger-type (get-in cycle [:trigger :type])
-            ;; Write to memory using remember-in!
-            ;; We need to call the memory module's remember-in!
             remember-fn (requiring-resolve 'psi.memory.core/remember-in!)
             mem-result (remember-fn memory-ctx
                                     {:content-type :discovery
@@ -929,7 +911,6 @@
             record-id (get-in mem-result [:record :record-id])]
         (if (:ok? mem-result)
           (do
-            ;; Store memory record ID on the cycle
             (swap-state-in! ctx
                             (fn [s]
                               (update s :cycles update-cycle cycle-id
@@ -964,7 +945,6 @@
                          (:failed :blocked :aborted)
                          (future-state/add-blockers current-fs (:evidence outcome))
 
-                         ;; Fallback: no change, just increment version
                          (future-state/next-version current-fs))]
         (swap-state-in! ctx assoc :current-future-state updated-fs)
         {:ok? true, :future-state updated-fs}))))
