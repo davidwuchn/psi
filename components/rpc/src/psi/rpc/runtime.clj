@@ -40,7 +40,7 @@
           nil)))))
 
 (defn make-rpc-deps
-  [{:keys [ctx ai-model ui-type on-new-session! run-agent-loop-fn sync-on-git-head-change?]
+  [{:keys [ctx ai-model ui-type on-new-session! sync-on-git-head-change?]
     :or   {ui-type :emacs
            sync-on-git-head-change? ::default}}]
   {:transport
@@ -52,7 +52,6 @@
    :session
    {:rpc-ai-model ai-model
     :on-new-session! on-new-session!
-    :run-agent-loop-fn run-agent-loop-fn
     :sync-on-git-head-change? sync-on-git-head-change?}})
 
 (defn- publish-session-state!

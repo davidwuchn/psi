@@ -4,6 +4,8 @@
    [clojure.edn :as edn]
    [clojure.string :as str]
    [psi.agent-session.background-job-runtime :as bg-rt]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.app-runtime.background-jobs :as app-bg-jobs]
    [psi.agent-session.runtime :as runtime]
@@ -226,9 +228,9 @@
    (current-ai-model ctx session-deps session-id)))
 
 (defn- effective-sync-on-git-head-change?
-  [{:keys [run-agent-loop-fn sync-on-git-head-change?]}]
+  [{:keys [sync-on-git-head-change?]}]
   (if (= ::default sync-on-git-head-change?)
-    (not (some? run-agent-loop-fn))
+    true
     (boolean sync-on-git-head-change?)))
 
 (defn- exception->error-frame
@@ -266,10 +268,12 @@
                         (try
                           (loop [attempt 0]
                             (if (ss/idle-in? ctx session-id)
-                              (let [{:keys [user-message]} (runtime/prepare-user-message-in! ctx session-id text nil)
-                                    ai-model  (ai-model-fn session-id)
-                                    api-key   (runtime/resolve-api-key-in ctx session-id ai-model)
-                                    emit!     (emit/make-request-emitter emit-frame! state nil)
+                              (let [ai-model   (ai-model-fn session-id)
+                                    session-model {:provider  (some-> (:provider ai-model) name)
+                                                   :id        (:id ai-model)
+                                                   :reasoning (boolean (:supports-reasoning ai-model))}
+                                    api-key    (runtime/resolve-api-key-in ctx session-id ai-model)
+                                    emit!      (emit/make-request-emitter emit-frame! state nil)
                                     progress-q (java.util.concurrent.LinkedBlockingQueue.)
                                     {:keys [stop? thread]}
                                     (streams/start-progress-loop!
@@ -279,18 +283,23 @@
                                       :session-id session-id
                                       :emit! emit!
                                       :progress-q progress-q
-                                      :thread-name "rpc-poll-loop"})
-                                    result    (runtime/run-agent-loop-in!
-                                               ctx session-id nil ai-model [user-message]
-                                               {:api-key        api-key
-                                                :progress-queue progress-q
-                                                :sync-on-git-head-change? true})]
+                                      :thread-name "rpc-poll-loop"})]
+                                (dispatch/dispatch! ctx :session/set-model
+                                                    {:session-id session-id
+                                                     :model session-model
+                                                     :scope :session}
+                                                    {:origin :core})
+                                (session/prompt-in! ctx session-id text nil
+                                                    {:progress-queue progress-q
+                                                     :runtime-opts (cond-> {}
+                                                                     api-key (assoc :api-key api-key))})
                                 (streams/stop-progress-loop! {:stop? stop?
                                                               :thread thread
                                                               :progress-q progress-q
                                                               :emit! emit!
                                                               :session-id session-id})
-                                (emit/emit-assistant-message! emit! session-id result)
+                                (when-let [assistant (session/last-assistant-message-in ctx session-id)]
+                                  (emit/emit-assistant-message! emit! session-id assistant))
                                 (emit/emit-session-snapshots! emit! ctx state session-id))
                               (when (< attempt 1200)
                                 (Thread/sleep 250)
@@ -507,8 +516,7 @@
    opts:
    - :rpc-ai-model fallback model when session model is absent
    - :on-new-session! optional callback used by /new command and new_session op
-   - :run-agent-loop-fn optional executor override for prompt tests/runtime
-   - :sync-on-git-head-change? optional policy flag; ::default => infer from custom run loop presence"
+   - :sync-on-git-head-change? optional policy flag; ::default => enabled"
   ([ctx] (make-session-request-handler ctx {}))
   ([ctx session-deps]
    (let [session-deps (if (contains? session-deps :sync-on-git-head-change?)
