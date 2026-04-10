@@ -2,10 +2,7 @@
   "Pure prompt/request projection helpers.
 
    This namespace is the architectural home for request preparation:
-   canonical session state + journal + prompt layers -> prepared request.
-
-   Initial scaffold only. Behavior is intentionally minimal and compatible with
-   the current executor-owned runtime path."
+   canonical session state + journal + prompt layers -> prepared request."
   (:require
    [clojure.string :as str]
    [psi.ai.models :as ai-models]

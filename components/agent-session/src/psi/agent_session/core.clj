@@ -23,8 +23,8 @@
 
    ⑤ Dispatch is the main mutation/effect boundary for runtime-visible session
       behavior, but actual tool execution still remains an intentional
-      executor-owned boundary. Tool lifecycle side effects around execution now
-      route through dispatch-owned runtime effects.
+      runtime boundary outside full dispatch replay. Tool lifecycle side effects
+      around execution now route through dispatch-owned runtime effects.
 
    ⑥ Compatibility adapters may expose atom-like views (for UI/background jobs)
       but they are backed by the canonical root state, not separate sources of truth.
@@ -69,7 +69,6 @@
    [psi.agent-session.dispatch-handlers :as dispatch-handlers]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-chain :as prompt-chain]
    [psi.agent-session.prompt-recording :as prompt-recording]
