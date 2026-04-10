@@ -12,7 +12,8 @@
    [psi.app-runtime.ui-actions :as ui-actions]
    [psi.tui.ansi :as ansi]
    [psi.tui.markdown :as md]
-   [psi.tui.patches :as patches])
+   [psi.tui.patches :as patches]
+   [psi.tui.session-selector :as session-selector])
   (:import
    [java.time Instant]
    [java.util.concurrent LinkedBlockingQueue TimeUnit]))
@@ -577,219 +578,6 @@
 
       :else [state nil])))
 
-;; ── Session selector ────────────────────────────────────────
-;;
-;; State lives under :session-selector in the app state map:
-;;   {:sessions     [SessionInfo ...]   — loaded for current scope
-;;    :all-sessions [SessionInfo ...]   — loaded for "all" scope (lazy)
-;;    :scope        :current | :all
-;;    :search       ""                  — current search string
-;;    :selected     0                   — cursor index into filtered list
-;;    :loading?     false}
-;;
-;; Sessions are displayed as a filtered list. In :tree mode, context sessions are
-;; arranged into parent/child order with connector prefixes.
-;; Tab toggles scope (resume mode only). Type to search. ↑/↓ navigate.
-;; Enter selects. Esc cancels.
-
-(defn- format-age
-  "Human-readable age string from a timestamp (Instant or Date)."
-  [ts]
-  (when ts
-    (let [epoch-ms (cond
-                     (instance? Instant ts) (.toEpochMilli ^Instant ts)
-                     (instance? java.util.Date ts) (.getTime ^java.util.Date ts)
-                     :else nil)]
-      (when epoch-ms
-        (let [diff-ms   (- (System/currentTimeMillis) epoch-ms)
-              diff-mins (quot diff-ms 60000)
-              diff-hrs  (quot diff-ms 3600000)
-              diff-days (quot diff-ms 86400000)]
-          (cond
-            (< diff-mins 1)   "now"
-            (< diff-mins 60)  (str diff-mins "m")
-            (< diff-hrs 24)   (str diff-hrs "h")
-            (< diff-days 7)   (str diff-days "d")
-            (< diff-days 30)  (str (quot diff-days 7) "w")
-            (< diff-days 365) (str (quot diff-days 30) "mo")
-            :else             (str (quot diff-days 365) "y")))))))
-
-(defn- filter-sessions
-  "Return sessions matching `query` (case-insensitive substring on summary fields)."
-  [sessions query]
-  (if (str/blank? query)
-    sessions
-    (let [q (str/lower-case (str/trim query))]
-      (filterv (fn [s]
-                 (or (str/includes? (str/lower-case (or (:first-message s) "")) q)
-                     (str/includes? (str/lower-case (or (:display-name s) "")) q)
-                     (str/includes? (str/lower-case (or (:prompt-text s) "")) q)
-                     (str/includes? (str/lower-case (or (:name s) "")) q)
-                     (str/includes? (str/lower-case (or (:cwd s) "")) q)
-                     (str/includes? (str/lower-case (or (:session-id s) "")) q)
-                     (str/includes? (str/lower-case (or (:path s) "")) q)))
-               sessions))))
-
-(defn- session-selector-init
-  [cwd current-session-file]
-  (let [dir      (persist/session-dir-for cwd)
-        sessions (persist/list-sessions dir)]
-    {:sessions              sessions
-     :all-sessions          nil       ;; loaded lazily on Tab
-     :scope                 :current
-     :search                ""
-     :selected              0
-     :loading?              false
-     :current-session-file  current-session-file
-     :active-session-id     nil}))
-
-(defn- selected-index-for-session-id
-  [sessions sid]
-  (or (first (keep-indexed (fn [i s]
-                             (when (and (= :session (:item-kind s :session))
-                                        (= sid (:session-id s)))
-                               i))
-                           sessions))
-      0))
-
-(defn- selector-item->tui-session
-  [cwd item]
-  (let [meta          (or (:ui.item/meta item) item)
-        worktree-path (or (:item/worktree-path meta) cwd)
-        parent-id     (some-> (:item/parent-id meta) second)]
-    {:item-kind         (:item/kind meta)
-     :session-id        (:item/session-id meta)
-     :entry-id          (:item/entry-id meta)
-     :action-value      (:ui.item/value item)
-     :path              nil
-     :name              (or (:ui.item/label item) (:item/display-name meta))
-     :display-name      (or (:ui.item/label item) (:item/display-name meta))
-     :parent-session-id parent-id
-     :is-streaming      (boolean (:item/is-streaming meta))
-     :first-message     ""
-     :message-count     0
-     :modified          (:item/updated-at meta)
-     :created-at        (:item/created-at meta)
-     :updated-at        (:item/updated-at meta)
-     :cwd               worktree-path
-     :worktree-path     worktree-path
-     :tree-depth        0
-     :tree-prefix       ""}))
-
-(defn- selector-items->tui-sessions
-  [cwd items]
-  (let [sessions         (mapv #(selector-item->tui-session cwd %) items)
-        session-items    (filterv #(= :session (:item-kind % :session)) sessions)
-        by-id            (into {} (map (juxt :session-id identity) session-items))
-        children-by-parent
-        (reduce (fn [acc s]
-                  (let [parent-id      (:parent-session-id s)
-                        parent-exists? (and parent-id (contains? by-id parent-id))
-                        parent-key     (if parent-exists? parent-id ::root)]
-                    (update acc parent-key (fnil conj []) s)))
-                {}
-                session-items)
-        prefix-by-id
-        (letfn [(tree-prefix [ancestor-has-next last-sibling?]
-                  (str (apply str (map #(if % "│ " "  ") ancestor-has-next))
-                       (if last-sibling? "└─ " "├─ ")))
-                (walk [node depth ancestor-has-next last-sibling? acc]
-                  (let [sid        (:session-id node)
-                        node*      (assoc node
-                                          :tree-depth depth
-                                          :tree-prefix (if (zero? depth)
-                                                         ""
-                                                         (tree-prefix ancestor-has-next last-sibling?)))
-                        children   (get children-by-parent sid [])
-                        child-path (if (zero? depth)
-                                     ancestor-has-next
-                                     (conj ancestor-has-next (not last-sibling?)))
-                        child-count (count children)
-                        acc*       (assoc acc sid node*)]
-                    (reduce (fn [acc2 [idx child]]
-                              (walk child (inc depth) child-path (= idx (dec child-count)) acc2))
-                            acc*
-                            (map-indexed vector children))))]
-          (let [roots (get children-by-parent ::root [])]
-            (reduce (fn [acc [idx root]]
-                      (walk root 0 [] (= idx (dec (count roots))) acc))
-                    {}
-                    (map-indexed vector roots))))]
-    (mapv (fn [item]
-            (if (= :session (:item-kind item :session))
-              (get prefix-by-id (:session-id item) item)
-              (let [parent-depth (or (some-> (get prefix-by-id (:parent-session-id item)) :tree-depth) 0)
-                    spaces       (apply str (repeat parent-depth "  "))]
-                (assoc item
-                       :tree-depth (inc parent-depth)
-                       :tree-prefix (str spaces "↳ ")))))
-          sessions)))
-
-(defn- session-selector-init-from-context
-  "Build selector state from the shared app-runtime selector model.
-   Falls back to persisted /resume-style listing when no selector function is supplied.
-   Uses TUI-local :focus-session-id as the active session highlight."
-  [state]
-  (let [cwd                  (:cwd state)
-        current-session-file (:current-session-file state)
-        active-id            (:focus-session-id state)
-        selector-fn          (:session-selector-fn state)]
-    (if-not selector-fn
-      (session-selector-init cwd current-session-file)
-      (try
-        (let [action   (selector-fn)
-              items    (selector-items->tui-sessions cwd (:ui/items action))
-              selected (selected-index-for-session-id items active-id)]
-          {:sessions              items
-           :all-sessions          nil
-           :scope                 :current
-           :search                ""
-           :selected              selected
-           :loading?              false
-           :current-session-file  current-session-file
-           :active-session-id     active-id
-           :ui/action             action})
-        (catch Exception _
-          (session-selector-init cwd current-session-file))))))
-
-(defn- selector-sessions
-  "Return the active sessions list for the current scope."
-  [{:keys [scope sessions all-sessions]}]
-  (if (= :current scope) sessions (or all-sessions [])))
-
-(defn- selector-filtered
-  "Return filtered + bounded sessions."
-  [sel-state]
-  (filter-sessions (selector-sessions sel-state) (:search sel-state)))
-
-(defn- selector-clamp
-  "Clamp :selected to valid range after list changes."
-  [sel-state]
-  (let [n (count (selector-filtered sel-state))]
-    (update sel-state :selected #(max 0 (min % (dec (max 1 n)))))))
-
-(defn- selector-move
-  "Move cursor by `delta`, clamped."
-  [sel-state delta]
-  (let [n (count (selector-filtered sel-state))]
-    (selector-clamp
-     (update sel-state :selected #(max 0 (min (dec (max 1 n)) (+ % delta)))))))
-
-(defn- selector-type
-  "Append/delete character from search string."
-  [sel-state key-token]
-  (let [key-str    (key-token->string key-token)
-        new-search (cond
-                     (= "backspace" key-str)
-                     (let [s (:search sel-state)]
-                       (if (pos? (count s)) (subs s 0 (dec (count s))) s))
-
-                     :else
-                     (if-let [ch (printable-key key-token)]
-                       (str (:search sel-state) ch)
-                       (:search sel-state)))]
-    (selector-clamp (assoc sel-state :search new-search))))
-
 ;; ── Commands ────────────────────────────────────────────────
 
 (defn poll-cmd
@@ -933,8 +721,12 @@
   ([state] (open-session-selector state :resume))
   ([state mode]
    (let [sel (case mode
-               :tree (session-selector-init-from-context state)
-               (session-selector-init (:cwd state) (:current-session-file state)))]
+               :tree (session-selector/session-selector-init-from-context
+                      (:session-selector-fn state)
+                      (:cwd state)
+                      (:current-session-file state)
+                      (:focus-session-id state))
+               (session-selector/session-selector-init (:cwd state) (:current-session-file state)))]
      [(-> state
           (assoc :phase :selecting-session
                  :session-selector sel
@@ -1073,10 +865,10 @@
     (if (and (= :all new-scope) (nil? (:all-sessions sel)))
       (-> sel
           (assoc :scope :all :all-sessions (persist/list-all-sessions))
-          selector-clamp)
+          session-selector/selector-clamp)
       (-> sel
           (assoc :scope new-scope)
-          selector-clamp))))
+          session-selector/selector-clamp))))
 
 (defn- choose-tree-session
   [state chosen]
@@ -1121,7 +913,7 @@
 
 (defn- handle-selector-enter
   [state sel]
-  (let [chosen (nth (selector-filtered sel) (:selected sel) nil)
+  (let [chosen (nth (session-selector/selector-filtered sel) (:selected sel) nil)
         mode   (:session-selector-mode state :resume)]
     (cond
       (nil? chosen) (close-session-selector state)
@@ -1138,10 +930,10 @@
       (and (msg/key-match? m "tab")
            (not= :tree (:session-selector-mode state)))
       [(assoc state :session-selector (toggle-selector-scope sel)) nil]
-      (msg/key-match? m "up") [(update state :session-selector selector-move -1) nil]
-      (msg/key-match? m "down") [(update state :session-selector selector-move 1) nil]
+      (msg/key-match? m "up") [(update state :session-selector session-selector/selector-move -1) nil]
+      (msg/key-match? m "down") [(update state :session-selector session-selector/selector-move 1) nil]
       (msg/key-match? m "enter") (handle-selector-enter state sel)
-      (msg/key-press? m) [(update state :session-selector selector-type key-token) nil]
+      (msg/key-press? m) [(update state :session-selector session-selector/selector-type key-token->string printable-key key-token) nil]
       :else [state nil])))
 
 (declare clear-live-turn)
@@ -2279,7 +2071,7 @@
                (when sid-str
                  (charm/render dim-style
                                (str "  " (subs sid-str 0 (min 8 (count sid-str)))))))))
-      (str (charm/render dim-style (str (:message-count info) " " (format-age (:modified info))))
+      (str (charm/render dim-style (str (:message-count info) " " (session-selector/format-age (:modified info))))
            (when (= :all scope)
              (str " " (charm/render dim-style worktree)))))))
 
@@ -2314,7 +2106,7 @@
   "Render the /resume or /tree session picker."
   [sel-state current-session-file width mode]
   (let [{:keys [scope search selected]} sel-state
-        filtered   (selector-filtered sel-state)
+        filtered   (session-selector/selector-filtered sel-state)
         n          (count filtered)
         tree-mode? (= :tree mode)]
     (str (selector-title scope tree-mode?) "\n"
