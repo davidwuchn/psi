@@ -192,15 +192,15 @@
                @session-data))
         (is (= [] @seen-effects)))))
 
-  (testing "legacy handler result is not applied as pure"
+  (testing "return-only pure handler result is not applied as state"
     (let [applied? (atom false)
           apply-fn (fn [_ctx _f] (reset! applied? true))
           ctx {:apply-root-state-update-fn apply-fn}]
       (dispatch/register-handler!
-       :legacy
-       (fn [_ctx _data] :legacy-result))
-      (let [result (dispatch/dispatch! ctx :legacy)]
-        (is (= :legacy-result result))
+       :return-only
+       (fn [_ctx _data] {:return :return-only-result}))
+      (let [result (dispatch/dispatch! ctx :return-only)]
+        (is (= :return-only-result result))
         (is (false? @applied?)))))
 
   (testing "pure handler without apply-fn on ctx does not crash"
@@ -325,10 +325,12 @@
     (dispatch/register-handler! :throws
                                 (fn [_ _] (throw (ex-info "boom" {}))))
     (is (nil? (dispatch/dispatch! {} :throws)))
-    (is (= 1 (count (dispatch/event-log-entries))))))
+    (is (= 1 (count (dispatch/event-log-entries))))
+    (is (= :pure
+           (:pure-result-kind (first (dispatch/event-log-entries)))))))
 
 (deftest canonical-dispatch-trace-failure-paths-test
-  (testing "dispatch handler exception records handler-result and completes with nil legacy result"
+  (testing "dispatch handler exception records handler-result and completes with nil return"
     (dispatch/register-handler! :handler-throws
                                 (fn [_ _] (throw (ex-info "boom" {}))))
     (is (nil? (dispatch/dispatch! {} :handler-throws {:x 1})))
@@ -339,7 +341,13 @@
                       (= :handler-throws (:event-type %)))
                 by-id))
       (is (some #(and (= :dispatch/handler-result (:trace/kind %))
-                      (= {:kind :legacy-return :value nil} (:result %)))
+                      (= {:kind :pure-result
+                           :effect-count 0
+                           :has-root-state-update false
+                           :has-return true
+                           :return-key nil
+                           :return-effect-result? false}
+                         (:result %)))
                 by-id))
       (is (some #(and (= :dispatch/completed (:trace/kind %))
                       (= nil (:result %)))
@@ -460,9 +468,9 @@
           (is (= :schema-validation-failed
                  (get-in entry [:block-reason :type]))))))
 
-    (testing "passes when handler returns non-pure result"
+    (testing "passes when handler returns return-only pure result"
       (let [ctx {:validate-dispatch-result-fn dispatch/validate-dispatch-schemas}]
         (dispatch/register-handler!
-         :schema-non-pure
-         (fn [_ctx _data] "plain-value"))
-        (is (= "plain-value" (dispatch/dispatch! ctx :schema-non-pure)))))))
+         :schema-return-only
+         (fn [_ctx _data] {:return "plain-value"}))
+        (is (= "plain-value" (dispatch/dispatch! ctx :schema-return-only)))))))

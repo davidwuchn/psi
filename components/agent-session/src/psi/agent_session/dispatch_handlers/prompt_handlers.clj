@@ -180,7 +180,8 @@
    :session/ensure-base-system-prompt
    (fn [ctx {:keys [session-id]}]
      (let [sd (session/get-session-data-in ctx session-id)]
-       (when-not (contains? sd :base-system-prompt)
+       (if (contains? sd :base-system-prompt)
+         {:effects []}
          {:root-state-update (session/session-update session-id #(assoc % :base-system-prompt (or (:system-prompt sd) "")))}))))
 
   (dispatch/register-handler!

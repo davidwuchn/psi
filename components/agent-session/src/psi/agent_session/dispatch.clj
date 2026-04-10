@@ -39,7 +39,7 @@
      :event       — canonical normalized event map
      :event-type  — keyword (compat projection from :event)
      :event-data  — map or nil (compat projection from :event)
-     :result      — handler return value (set by handler-interceptor)
+     :result      — dispatch return value (set from pure handler result)
      :blocked?    — if true, handler is skipped
      :block-reason — why blocked (string or keyword)
      :validation-error — validation failure data when validation blocks dispatch
@@ -47,18 +47,13 @@
      :replaying?  — when true, effect execution is suppressed
      :log         — event log entries (populated by log-interceptor)
 
-   Migration model
-   ───────────────
-   During migration, handlers may still perform side effects directly.
-   As handlers become pure (returning {:db new-state :effects [...]}),
-   the dispatch fn will apply state and execute effects at the boundary.
-
    Current architectural boundary
    ─────────────────────────────
-   Dispatch now owns most runtime-visible mutation/effect coordination,
-   including tool lifecycle side effects around execution. Actual tool
-   execution itself is still intentionally executor-owned and has not yet
-   fully moved under one dispatch-owned runtime effect boundary.
+   Dispatch owns runtime-visible mutation/effect coordination.
+   Handlers return pure result maps; dispatch applies state and executes
+   effects at the boundary. Actual tool execution itself is still
+   intentionally executor-owned and has not yet fully moved under one
+   dispatch-owned runtime effect boundary.
 
    Usage
    ─────
@@ -193,15 +188,12 @@
                         :interceptor-id (:id interceptor)}))
 (defn- summarize-handler-result
   [result]
-  (if (pure-result? result)
-    {:kind                  :pure-result
-     :effect-count          (count (:effects result))
-     :has-root-state-update (boolean (:root-state-update result))
-     :has-return            (contains? result :return)
-     :return-key            (:return-key result)
-     :return-effect-result? (boolean (:return-effect-result? result))}
-    {:kind  :legacy-return
-     :value result}))
+  {:kind                  :pure-result
+   :effect-count          (count (:effects result))
+   :has-root-state-update (boolean (:root-state-update result))
+   :has-return            (contains? result :return)
+   :return-key            (:return-key result)
+   :return-effect-result? (boolean (:return-effect-result? result))})
 
 ;; ============================================================
 ;; Built-in interceptors
@@ -441,17 +433,18 @@
            (contains? x :return)
            (contains? x :return-key)
            (contains? x :return-effect-result?))))
+(defn- normalize-handler-result
+  [result]
+  (if (pure-result? result)
+    result
+    {:return result}))
 (def handler-interceptor
   "Looks up and invokes the registered handler for the event type.
-   Sets :result on the interceptor context.
+   Sets :pure-result on the interceptor context.
 
    Ensures handlers always receive :session-id when the event carries one.
    The session-id is sourced from event-data (via the interceptor context),
-   never from ctx.
-
-   If the handler returns a pure result map ({:session-update fn :effects [...]}),
-   it is stored as :pure-result for the apply interceptor.
-   Otherwise, the handler is legacy and its return value is stored as :result."
+   never from ctx."
   (->interceptor
    {:id :handler
     :before
@@ -478,15 +471,14 @@
                            (timbre/warn "Dispatch handler error"
                                         (event-type-of ictx)
                                         (ex-message e))
-                           nil))]
+                           nil))
+                pure-result (normalize-handler-result result)]
             (append-trace-entry! {:trace/kind  :dispatch/handler-result
                                   :dispatch-id (dispatch-id-of ictx)
                                   :session-id  (event-session-id-of ictx)
                                   :event-type  (event-type-of ictx)
-                                  :result      (summarize-handler-result result)})
-            (if (pure-result? result)
-              (assoc ictx :pure-result result)
-              (assoc ictx :result result)))
+                                  :result      (summarize-handler-result pure-result)})
+            (assoc ictx :pure-result pure-result))
           ictx)))}))
 
 ;; ── Apply interceptor ────────────────────────────────────────
@@ -499,9 +491,7 @@
    Additional behavior:
    - supports `:return-key` via `(:read-session-state-fn ctx)`
    - may request the first effect result as dispatch return via `:return-effect-result?`
-   - stores declared effects on :applied-effects for the effect interceptor
-
-   Skipped when no :pure-result is present (legacy handler)."
+   - stores declared effects on :applied-effects for the effect interceptor"
   (->interceptor
    {:id :apply
     :after
@@ -536,8 +526,6 @@
 
    Looks for :applied-effects on the interceptor context and calls
    (execute-dispatch-effect-fn ctx effect) for each effect when available.
-   Pure handlers can now return {:effects [...]} while legacy handlers keep
-   performing side effects inline.
 
    When `:return-effect-result?` is true on the interceptor context, the first
    executed effect result becomes dispatch return value unless a prior explicit

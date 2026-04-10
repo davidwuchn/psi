@@ -88,7 +88,7 @@
                                           :ext-id (:ext-id ictx)
                                           :replaying? (:replaying? ictx)})
                             ictx)})]
-      (dispatch/set-interceptors! [probe dispatch/handler-interceptor])
+      (dispatch/set-interceptors! [probe dispatch/handler-interceptor dispatch/apply-interceptor])
       (dispatch/register-handler! :normalized (fn [_ _] :ok))
       (is (= :ok (dispatch/dispatch! {} :normalized {:x 1}
                                      {:origin :extension

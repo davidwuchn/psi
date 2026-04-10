@@ -20,16 +20,15 @@
   (dispatch/register-handler! event handler))
 
 (defn- register-prompt-handlers! []
-  ;; ⚠ Impure handler exception: returns the compaction result directly rather
-  ;; than a {:root-state-update ... :effects [...]} pure-result map.
   ;; Intentional narrow synchronous boundary — callers require a direct return
   ;; value and the surrounding statechart transitions already own the state
   ;; transition. execute-compaction-fn is injected by core.clj to avoid a
-  ;; circular dependency. Do not generalise this pattern.
+  ;; circular dependency. Keep the boundary explicit via :return; do not
+  ;; generalise this pattern.
   (register-core-handler!
    :session/manual-compaction-execute
    (fn [ctx {:keys [session-id custom-instructions]}]
-     ((:execute-compaction-fn ctx) ctx session-id custom-instructions)))
+     {:return ((:execute-compaction-fn ctx) ctx session-id custom-instructions)}))
 
   (register-core-handler!
    :session/prompt-submit
@@ -411,27 +410,27 @@
   (register-core-handler!
    :session/tool-execute-prepared
    (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
-     (tool-exec/execute-tool-call-prepared! ctx session-id tool-call parsed-args progress-queue)))
+     {:return (tool-exec/execute-tool-call-prepared! ctx session-id tool-call parsed-args progress-queue)}))
 
   (register-core-handler!
    :session/tool-record-result
    (fn [ctx {:keys [session-id shaped-result progress-queue]}]
-     (tool-exec/record-tool-call-prepared-result! ctx session-id shaped-result progress-queue)))
+     {:return (tool-exec/record-tool-call-prepared-result! ctx session-id shaped-result progress-queue)}))
 
   (register-core-handler!
    :session/tool-run
    (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
-     (let [shaped-result (dispatch/dispatch! ctx :session/tool-execute-prepared
-                                             {:session-id     session-id
-                                              :tool-call      tool-call
-                                              :parsed-args    parsed-args
-                                              :progress-queue progress-queue}
-                                             {:origin :core})]
-       (dispatch/dispatch! ctx :session/tool-record-result
-                           {:session-id     session-id
-                            :shaped-result  shaped-result
-                            :progress-queue progress-queue}
-                           {:origin :core})))))
+     {:return (let [shaped-result (dispatch/dispatch! ctx :session/tool-execute-prepared
+                                                      {:session-id     session-id
+                                                       :tool-call      tool-call
+                                                       :parsed-args    parsed-args
+                                                       :progress-queue progress-queue}
+                                                      {:origin :core})]
+                (dispatch/dispatch! ctx :session/tool-record-result
+                                    {:session-id     session-id
+                                     :shaped-result  shaped-result
+                                     :progress-queue progress-queue}
+                                    {:origin :core}))})))
 
 (defn- register-message-and-skill-handlers! []
   (register-core-handler!
