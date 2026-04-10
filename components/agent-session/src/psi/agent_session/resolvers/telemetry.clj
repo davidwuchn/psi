@@ -1,5 +1,4 @@
 (ns psi.agent-session.resolvers.telemetry
-  "Telemetry resolvers."
   (:require
    [clojure.set :as set]
    [com.wsscode.pathom3.connect.operation :as pco]
@@ -9,17 +8,9 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as accessors]
    [psi.agent-session.turn-statechart :as turn-sc]))
-
 (declare tool-lifecycle-summaries)
-
-;; ── Stats snapshot ──────────────────────────────────────
 (defn- stats-snapshot
-  "Build canonical session telemetry stats from current session/journal state.
-
-   Count semantics:
-   - :tool-calls counts committed `toolResult` messages in the journal/transcript
-   - this may differ from tool lifecycle summary count, which is derived from
-     canonical lifecycle telemetry in `:tool-lifecycle-events`"
+  "Build canonical session telemetry stats from current session/journal state."
   [agent-session-ctx]
   (let [sd      (support/session-data agent-session-ctx)
         journal (accessors/journal-state-in agent-session-ctx (:session-id sd))
@@ -45,15 +36,8 @@
     (or (:timestamp startup)
         first-ts
         (java.time.Instant/now))))
-
 (pco/defresolver agent-session-canonical-telemetry
-  "Resolve canonical top-level telemetry attrs from the same source as :psi.agent-session/stats.
-   Time attrs intentionally return java.time.Instant for stable in-process representation.
-
-   Count semantics:
-   - :psi.agent-session/tool-call-count is journal/transcript-based
-   - :psi.agent-session/executed-tool-count is canonical lifecycle-summary-based
-   - :psi.agent-session/tool-lifecycle-summary-count is canonical lifecycle-telemetry-based"
+  "Resolve canonical top-level telemetry attrs."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/messages-count
@@ -70,7 +54,6 @@
      :psi.agent-session/executed-tool-count executed-tool-count
      :psi.agent-session/start-time          (canonical-start-time agent-session-ctx)
      :psi.agent-session/current-time        (java.time.Instant/now)}))
-
 (pco/defresolver agent-session-stats
   "Resolve a SessionStats snapshot."
   [{:keys [psi/agent-session-ctx]}]
@@ -117,7 +100,6 @@
                                 (assoc :psi.tool-call-attempt/turn-id turn-id)
                                 (assoc :psi.tool-call-attempt/started-at
                                        (or (:psi.tool-call-attempt/started-at cur) timestamp))))
-
                      :toolcall-delta
                      (assoc acc k
                             (-> cur
@@ -126,7 +108,6 @@
                                 (update :psi.tool-call-attempt/delta-count (fnil inc 0))
                                 (update :psi.tool-call-attempt/argument-bytes (fnil + 0)
                                         (utf8-byte-count delta))))
-
                      :toolcall-end
                      (assoc acc k
                             (-> cur
@@ -136,7 +117,6 @@
                                 (assoc :psi.tool-call-attempt/turn-id turn-id)
                                 (assoc :psi.tool-call-attempt/ended-at
                                        (or (:psi.tool-call-attempt/ended-at cur) timestamp))))
-
                      acc)))
                {})
        vals
@@ -164,10 +144,8 @@
   [events result-ids]
   (mapv (partial enrich-attempt-status result-ids)
         (reduce-attempt-events events)))
-
 (pco/defresolver agent-session-tool-call-attempts
   "Resolve streamed provider tool-call attempts.
-
    Attempts are captured during provider streaming (:toolcall-start/:delta/:end),
    then correlated with committed toolResult messages to identify unmatched calls."
   [{:keys [psi/agent-session-ctx]}]
@@ -250,7 +228,6 @@
        (sort-by (juxt :psi.tool-lifecycle.summary/started-at
                       :psi.tool-lifecycle.summary/tool-id))
        vec))
-
 (pco/defresolver agent-session-tool-lifecycle-events
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input
@@ -288,7 +265,6 @@
      :psi.agent-session/tool-lifecycle-events        events
      :psi.agent-session/tool-lifecycle-summary-count (count summaries)
      :psi.agent-session/tool-lifecycle-summaries     summaries}))
-
 (pco/defresolver tool-lifecycle-summary-by-tool-id
   [{:keys [psi.agent-session/lookup-tool-id psi/agent-session-ctx]}]
   {::pco/input
@@ -352,7 +328,6 @@
    :psi.provider-reply/turn-id   (:turn-id capture)
    :psi.provider-reply/timestamp (:timestamp capture)
    :psi.provider-reply/event     (:event capture)})
-
 (pco/defresolver provider-request-by-turn-id
   "Resolve a single captured provider request by turn-id."
   [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx]}]
@@ -370,7 +345,6 @@
             (some (fn [capture]
                     (when (= lookup-turn-id (:turn-id capture))
                       (provider-request->eql capture)))))})
-
 (pco/defresolver provider-reply-by-turn-id
   "Resolve a single captured provider reply by turn-id."
   [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx]}]
@@ -388,7 +362,6 @@
             (some (fn [capture]
                     (when (= lookup-turn-id (:turn-id capture))
                       (provider-reply->eql capture)))))})
-
 (pco/defresolver agent-session-provider-captures
   "Resolve captured outbound provider requests and inbound provider reply events."
   [{:keys [psi/agent-session-ctx]}]
@@ -452,8 +425,6 @@
      :psi.agent-session/provider-requests        requests*
      :psi.agent-session/provider-replies         replies*
      :psi.agent-session/provider-error-replies   error-replies*}))
-
-;; ── API error diagnostics (helpers) ─────────────────────
 (defn- error-message-text
   "Extract the first :error block text from an assistant message."
   [msg]
@@ -560,11 +531,9 @@
                           (cond
                             (nil? existing)
                             error
-
                             (and (nil? (:psi.api-error/provider-event existing))
                                  (:psi.api-error/provider-event error))
                             (merge existing error)
-
                             :else
                             existing))))
                {})
@@ -614,8 +583,6 @@
   [system-prompt messages tools context-window max-output-tokens]
   (let [;; Role counts
         role-counts   (frequencies (map :role messages))
-
-        ;; Tool pairing
         tool-use-ids  (into #{}
                             (comp (filter #(= "assistant" (:role %)))
                                   (mapcat :content)
@@ -626,16 +593,12 @@
                               (comp (filter #(= "toolResult" (:role %)))
                                     (map :tool-call-id))
                               messages)
-
-        ;; Size estimates (pr-str approximates wire format)
         sys-chars  (count (str system-prompt))
         msg-chars  (transduce (map #(count (pr-str %))) + 0 messages)
         tool-chars (transduce (map #(count (pr-str %))) + 0 tools)
         total      (+ sys-chars msg-chars tool-chars)
         est-tokens (quot total 4)
         headroom   (- context-window est-tokens max-output-tokens)
-
-        ;; Alternation: map toolResult→user, deduplicate consecutive same roles
         api-roles  (->> messages
                         (keep #(case (:role %)
                                  "user"       "user"
@@ -647,10 +610,7 @@
                            [] api-roles)
         violations (count (filter (fn [[a b]] (= a b))
                                   (partition 2 1 merged)))
-
-        ;; Empty content
         empty-ct   (count (filter #(empty? (:content %)) messages))]
-
     {:psi.request-shape/message-count          (count messages)
      :psi.request-shape/system-prompt-chars    sys-chars
      :psi.request-shape/message-chars          msg-chars
@@ -680,9 +640,6 @@
   [agent-session-ctx]
   (or (some-> (:model-config-atom agent-session-ctx) deref :max-tokens)
       16384))
-
-;; ── Level 1: API error list (cheap) ────────────────────
-
 (pco/defresolver api-error-list
   "Extract API errors from assistant messages and provider reply captures.
    Message-derived errors preserve conversation position.
@@ -710,9 +667,6 @@
         errors          (dedupe-api-errors (vec (concat message-errors provider-errors)))]
     {:psi.agent-session/api-error-count (count errors)
      :psi.agent-session/api-errors      errors}))
-
-;; ── Level 2: API error detail (moderate) ────────────────
-
 (pco/defresolver api-error-detail
   "Resolve full error text, request-id, provider metadata, and surrounding message context.
    Seeded by :psi.api-error/message-index from the list resolver."
@@ -751,9 +705,6 @@
      :psi.api-error/turn-id              (:psi.api-error/turn-id entity)
      :psi.api-error/provider-event       (:psi.api-error/provider-event entity)
      :psi.api-error/surrounding-messages surr}))
-
-;; ── Level 3: API error request shape (expensive) ────────
-
 (pco/defresolver api-error-request-shape
   "Reconstruct the request shape at the point of an API error.
    Uses messages[0..message-index) — what was sent when the error occurred.
@@ -770,9 +721,6 @@
                             (:tools data)
                             (resolve-context-window agent-session-ctx)
                             (resolve-max-output-tokens agent-session-ctx))}))
-
-;; ── Current request shape (live diagnostics) ────────────
-
 (pco/defresolver current-request-shape
   "Request shape for the current conversation state.
    Answers: 'if I send a prompt now, what does the context look like?'
@@ -787,9 +735,6 @@
                             (:tools data)
                             (resolve-context-window agent-session-ctx)
                             (resolve-max-output-tokens agent-session-ctx))}))
-
-;; ── Turn streaming state ────────────────────────────────
-
 (pco/defresolver agent-session-turn
   "Resolve per-turn streaming statechart state.
    Returns nil/empty values when no turn is active."
@@ -838,8 +783,6 @@
        :psi.turn/is-tool-accumulating false
        :psi.turn/is-done              false
        :psi.turn/is-error             false})))
-
-;; ── Resolver collection ─────────────────────────────────
 (def resolvers
   (into basics/resolvers
         [agent-session-canonical-telemetry
