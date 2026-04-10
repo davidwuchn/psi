@@ -5,7 +5,8 @@
    [clj-http.client :as http]
    [psi.ai.conversation :as conv]
    [psi.ai.models :as models]
-   [psi.ai.providers.anthropic :as anthropic])
+   [psi.ai.providers.anthropic :as anthropic]
+   [psi.ai.providers.anthropic.request-schema :as request-schema])
   (:import [java.io ByteArrayInputStream]))
 
 (defn- sse-line [event-type data-map]
@@ -55,7 +56,7 @@
                                  :description "Bad schema"
                                  :input_schema "not-a-map"}]}]
       (try
-        (#'anthropic/validate-request-body! invalid-body)
+        (request-schema/validate-request-body! invalid-body)
         (is false "expected validate-request-body! to throw")
         (catch clojure.lang.ExceptionInfo e
           (is (= "provider/anthropic-invalid-request-shape"
