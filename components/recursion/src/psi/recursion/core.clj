@@ -3,9 +3,7 @@
    [clojure.string :as str]
    [psi.recursion.future-state :as future-state]
    [psi.recursion.policy :as policy]))
-
 (defrecord RecursionContext [state-atom config host-ctx host-path])
-
 (defn initial-state
   "Return the initial controller state map."
   []
@@ -18,7 +16,6 @@
    :paused-reason nil
    :paused-checkpoint nil
    :last-error nil})
-
 (defn- hooks-from-config
   "Derive hook list from recursion config accepted/enabled trigger sets."
   [config]
@@ -30,7 +27,6 @@
              :enabled      (contains? enabled t)
              :timeout-ms   nil})
           (sort-by name accepted))))
-
 (defn create-context
   ([]
    (create-context {}))
@@ -48,26 +44,21 @@
       merged-config
       nil
       nil))))
-
 (defonce ^:private global-ctx (atom nil))
-
 (defn- ensure-global-ctx!
   []
   (or @global-ctx
       (let [ctx (create-context)]
         (reset! global-ctx ctx)
         ctx)))
-
 (defn global-context
   "Return the global recursion context singleton, creating it when absent."
   []
   (ensure-global-ctx!))
-
 (defn reset-global-context!
   "Reset the global context to nil. Useful for testing."
   []
   (reset! global-ctx nil))
-
 (defn create-hosted-context
   [host-ctx host-path]
   (let [existing (get-in @(:state* host-ctx) host-path)
@@ -78,49 +69,40 @@
      (:config state)
      host-ctx
      host-path)))
-
 (defn get-state-in
   "Return the full controller state map from `ctx`."
   [ctx]
   (if-let [state-atom (:state-atom ctx)]
     @state-atom
     (get-in @(:state* (:host-ctx ctx)) (:host-path ctx))))
-
 (defn swap-state-in!
   "Apply `f` to controller state atom in `ctx`."
   [ctx f & args]
   (if-let [state-atom (:state-atom ctx)]
     (apply swap! state-atom f args)
     (apply swap! (:state* (:host-ctx ctx)) update-in (:host-path ctx) f args)))
-
 (defn get-state
   "Global wrapper for `get-state-in`."
   []
   (get-state-in (global-context)))
-
 (defn swap-state!
   "Global wrapper for `swap-state-in!`."
   [f & args]
   (apply swap-state-in! (global-context) f args))
-
 (defn register-hooks-in!
   "Initialize (or refresh) hooks from config accepted/enabled trigger sets."
   [ctx]
   (let [hooks (hooks-from-config (:config (get-state-in ctx)))]
     (swap-state-in! ctx assoc :hooks hooks)
     hooks))
-
 (defn register-hooks!
   "Global wrapper for `register-hooks-in!`."
   []
   (register-hooks-in! (global-context)))
-
 (def remember-manual-trigger-prompt-name
   "remember-manual-trigger")
-
 (def remember-manual-trigger-prompt
   "Trigger a manual remember cycle. Capture operator reason and current readiness context.")
-
 (defn manual-trigger-signal
   ([reason]
    (manual-trigger-signal reason {}))
@@ -134,7 +116,6 @@
                      :source source}
                     extra-payload)
     :timestamp (java.time.Instant/now)}))
-
 (defn- new-cycle
   "Create a new cycle record for `trigger-signal` with the given initial `status`."
   [trigger-signal status]
@@ -149,12 +130,10 @@
    :verification       nil
    :outcome            nil
    :learning-memory-ids #{}})
-
 (defn- active-cycle?
   "True if cycle is in a non-terminal status."
   [cycle]
   (not (contains? #{:completed :failed :aborted :blocked} (:status cycle))))
-
 (defn- readiness-ok?
   "Check all four readiness flags in `system-state`. Returns true when all ready."
   [system-state]
@@ -162,7 +141,6 @@
        (:graph-ready system-state)
        (:introspection-ready system-state)
        (:memory-ready system-state)))
-
 (defn handle-trigger-in!
   [ctx trigger-signal system-state]
   (let [state    (get-state-in ctx)
@@ -197,7 +175,6 @@
                                   (assoc :status :observing)
                                   (update :cycles conj cycle))))
         {:result :accepted, :cycle-id (:cycle-id cycle)}))))
-
 (defn handle-trigger!
   "Global wrapper for `handle-trigger-in!`."
   [trigger-signal system-state]
@@ -214,13 +191,11 @@
 (declare learn-in!)
 (declare update-future-state-from-outcome-in!)
 (declare finalize-cycle-in!)
-
 (defn- resolve-memory-ctx
   [memory-ctx]
   (or memory-ctx
       (let [global-memory-context (requiring-resolve 'psi.memory.core/global-context)]
         (global-memory-context))))
-
 (defn- normalize-approval-decision
   [approval-decision]
   (cond
@@ -229,14 +204,12 @@
     (string? approval-decision)
     (keyword (str/lower-case approval-decision))
     :else ::invalid))
-
 (defn- orchestration-result
   [ok? phase cycle-id steps]
   (merge {:ok? ok?
           :phase phase
           :cycle-id cycle-id}
          steps))
-
 (defn- approval-step-result
   [ctx cycle-id gate-result decision approver approval-notes]
   (cond
@@ -262,30 +235,25 @@
     :else
     {:status :continue
      :approval-result nil}))
-
 (defn- cycle-status-in
   [ctx cycle-id]
   (some-> (get-state-in ctx) :cycles (find-cycle cycle-id) :status))
-
 (defn- run-execute-step
   [ctx cycle-id hook-executor]
   (when (= :executing (cycle-status-in ctx cycle-id))
     (if hook-executor
       (execute-in! ctx cycle-id hook-executor)
       (execute-in! ctx cycle-id))))
-
 (defn- run-verify-step
   [ctx cycle-id check-runner]
   (when (= :verifying (cycle-status-in ctx cycle-id))
     (if check-runner
       (verify-in! ctx cycle-id check-runner)
       (verify-in! ctx cycle-id))))
-
 (defn- run-learn-step
   [ctx cycle-id memory-ctx]
   (when (= :learning (cycle-status-in ctx cycle-id))
     (learn-in! ctx cycle-id (resolve-memory-ctx memory-ctx))))
-
 (defn- run-orchestration-steps
   [ctx cycle-id {:keys [hook-executor check-runner memory-ctx]}]
   (let [execute-result      (run-execute-step ctx cycle-id hook-executor)
@@ -300,31 +268,24 @@
      :learn-result learn-result
      :future-state-result future-state-result
      :finalize-result finalize-result}))
-
 (defn- failed-approval-step [steps]
   (when (and (:approval-result steps) (not (:ok? (:approval-result steps))))
     [:approval (:approval-result steps)]))
-
 (defn- failed-execute-step [steps]
   (when (and (:execute-result steps) (not (:ok? (:execute-result steps))))
     [:execute (:execute-result steps)]))
-
 (defn- failed-verify-step [steps]
   (when (and (:verify-result steps) (not (:ok? (:verify-result steps))))
     [:verify (:verify-result steps)]))
-
 (defn- failed-learn-step [steps]
   (when (and (:learn-result steps) (not (:ok? (:learn-result steps))))
     [:learn (:learn-result steps)]))
-
 (defn- failed-future-state-step [steps]
   (when (and (:future-state-result steps) (not (:ok? (:future-state-result steps))))
     [:future-state (:future-state-result steps)]))
-
 (defn- failed-finalize-step [steps]
   (when (and (:finalize-result steps) (not (:ok? (:finalize-result steps))))
     [:finalize (:finalize-result steps)]))
-
 (defn- failed-step
   [steps]
   (or (failed-approval-step steps)
@@ -333,7 +294,6 @@
       (failed-learn-step steps)
       (failed-future-state-step steps)
       (failed-finalize-step steps)))
-
 (defn- invalid-approval-result
   [trigger-result approval-decision]
   {:ok? false
@@ -341,7 +301,6 @@
    :approval-decision approval-decision
    :expected #{:approve :reject nil}
    :trigger-result trigger-result})
-
 (defn- pre-approval-steps
   [ctx cycle-id system-state graph-state memory-state trigger-result]
   (let [observe-result (observe-in! ctx cycle-id system-state graph-state memory-state)
@@ -353,7 +312,6 @@
      :observe-result observe-result
      :plan-result plan-result
      :gate-result gate-result}))
-
 (defn- pre-approval-failure
   [cycle-id {:keys [observe-result plan-result] :as base-steps}]
   (cond
@@ -364,7 +322,6 @@
     (orchestration-result false :plan cycle-id base-steps)
 
     :else nil))
-
 (defn- continue-after-approval
   [ctx cycle-id base-steps approval-result hook-executor check-runner memory-ctx]
   (let [step-results (merge base-steps
@@ -375,7 +332,6 @@
     (if-let [[phase _failed-result] (failed-step step-results)]
       (orchestration-result false phase cycle-id step-results)
       (orchestration-result true :completed cycle-id step-results))))
-
 (defn- approval-phase-result
   [ctx cycle-id gate-result decision approver approval-notes base-steps hook-executor check-runner memory-ctx]
   (let [{:keys [status result approval-result]}
@@ -384,7 +340,6 @@
       :error (merge base-steps result)
       :awaiting (merge base-steps result)
       :continue (continue-after-approval ctx cycle-id base-steps approval-result hook-executor check-runner memory-ctx))))
-
 (defn orchestrate-manual-trigger-in!
   [ctx trigger-signal
    {:keys [system-state graph-state memory-state memory-ctx
@@ -415,19 +370,16 @@
         (or (pre-approval-failure cycle-id base-steps)
             (approval-phase-result ctx cycle-id (:gate-result base-steps) decision approver approval-notes
                                    base-steps hook-executor check-runner memory-ctx))))))
-
 (defn orchestrate-manual-trigger!
   "Global wrapper for `orchestrate-manual-trigger-in!`."
   ([trigger-signal]
    (orchestrate-manual-trigger! trigger-signal {}))
   ([trigger-signal opts]
    (orchestrate-manual-trigger-in! (global-context) trigger-signal opts)))
-
 (defn- find-cycle
   "Find a cycle by id in the cycles vector."
   [cycles cycle-id]
   (first (filter #(= cycle-id (:cycle-id %)) cycles)))
-
 (defn- update-cycle
   "Update the cycle matching `cycle-id` with `f`."
   [cycles cycle-id f]
@@ -436,7 +388,6 @@
             (f c)
             c))
         cycles))
-
 (defn- extract-graph-signals
   "Extract signal strings from graph-state map."
   [graph-state]
@@ -448,7 +399,6 @@
     (when-let [s (:status graph-state)]
       (conj! signals (str "status=" (name s))))
     (persistent! signals)))
-
 (defn- extract-memory-signals
   "Extract signal strings from memory-state map."
   [memory-state]
@@ -460,7 +410,6 @@
     (when-let [rc (:recovery-count memory-state)]
       (conj! signals (str "recovery-count=" rc)))
     (persistent! signals)))
-
 (defn- extract-gaps
   "Identify gaps from readiness and capability data."
   [readiness graph-state memory-state]
@@ -480,7 +429,6 @@
                (zero? (:entry-count memory-state)))
       (conj! gaps "no memory entries"))
     (persistent! gaps)))
-
 (defn- extract-opportunities
   "Identify opportunities from system state."
   [readiness graph-state memory-state]
@@ -496,7 +444,6 @@
                (pos? (:entry-count memory-state)))
       (conj! opps "memory entries available for learning"))
     (persistent! opps)))
-
 (defn observe-in!
   [ctx cycle-id system-state graph-state memory-state]
   (let [state (get-state-in ctx)
@@ -528,16 +475,13 @@
                                            (assoc :observation observation)
                                            (assoc :status :planning))))))
         {:ok? true, :observation observation}))))
-
 (defn observe!
   "Global wrapper for `observe-in!`."
   [cycle-id system-state graph-state memory-state]
   (observe-in! (global-context) cycle-id system-state graph-state memory-state))
-
 (def ^:private risk-order
   "Risk level ordering for aggregation (highest wins)."
   {:low 0, :medium 1, :high 2})
-
 (defn- aggregate-risk
   "Return the highest risk level among actions. Defaults to :low."
   [actions]
@@ -545,7 +489,6 @@
     :low
     (let [max-idx (apply max (map #(get risk-order (:risk %) 0) actions))]
       (first (keep (fn [[k v]] (when (= v max-idx) k)) risk-order)))))
-
 (defn- goal->action
   [goal]
   {:id (str "action-" (:id goal))
@@ -556,7 +499,6 @@
    :atomic true
    :expected-impact #{(:title goal)}
    :verification-hints #{"tests" "lint"}})
-
 (defn plan-in!
   [ctx cycle-id]
   (let [state (get-state-in ctx)
@@ -601,12 +543,10 @@
                               (update :cycles update-cycle cycle-id
                                       #(assoc % :proposal proposal)))))
         {:ok? true, :proposal proposal, :future-state new-fs}))))
-
 (defn plan!
   "Global wrapper for `plan-in!`."
   [cycle-id]
   (plan-in! (global-context) cycle-id))
-
 (defn apply-approval-gate-in!
   [ctx cycle-id]
   (let [state (get-state-in ctx)
@@ -644,12 +584,10 @@
                                                (assoc-in [:proposal :approved] true)
                                                (assoc-in [:proposal :requires-approval] false))))))
             {:gate :auto-approved}))))))
-
 (defn apply-approval-gate!
   "Global wrapper for `apply-approval-gate-in!`."
   [cycle-id]
   (apply-approval-gate-in! (global-context) cycle-id))
-
 (defn approve-proposal-in!
   [ctx cycle-id approver notes]
   (let [state (get-state-in ctx)
@@ -674,12 +612,10 @@
                                            (assoc-in [:proposal :approval-by] approver)
                                            (assoc-in [:proposal :approval-notes] notes))))))
         {:ok? true}))))
-
 (defn approve-proposal!
   "Global wrapper for `approve-proposal-in!`."
   [cycle-id approver notes]
   (approve-proposal-in! (global-context) cycle-id approver notes))
-
 (defn reject-proposal-in!
   [ctx cycle-id approver notes]
   (let [state (get-state-in ctx)
@@ -709,17 +645,14 @@
                                            (assoc-in [:proposal :approval-by] approver)
                                            (assoc-in [:proposal :approval-notes] notes))))))
         {:ok? true}))))
-
 (defn reject-proposal!
   "Global wrapper for `reject-proposal-in!`."
   [cycle-id approver notes]
   (reject-proposal-in! (global-context) cycle-id approver notes))
-
 (defn- default-hook-executor
   "Default no-op hook executor. Returns success with a placeholder message."
   [_action]
   {:status :success, :output-summary "hook-not-implemented"})
-
 (defn execute-in!
   ([ctx cycle-id]
    (execute-in! ctx cycle-id default-hook-executor))
@@ -757,24 +690,20 @@
                                             (assoc :status :verifying)
                                             (update :execution-attempts into attempts))))))
          {:ok? true, :attempts attempts})))))
-
 (defn execute!
   "Global wrapper for `execute-in!`."
   ([cycle-id]
    (execute-in! (global-context) cycle-id))
   ([cycle-id hook-executor]
    (execute-in! (global-context) cycle-id hook-executor)))
-
 (defn- default-check-runner
   "Default no-op check runner. Returns passing for each check."
   [_check-name]
   {:passed true, :details "check-not-implemented"})
-
 (defn- failed-check-names
   "Return set of check names that did not pass."
   [checks]
   (into #{} (comp (remove :passed) (map :name)) checks))
-
 (defn rollback-in!
   [ctx cycle-id]
   (swap-state-in! ctx
@@ -786,12 +715,10 @@
                                       :timestamp (java.time.Instant/now)
                                       :reason "verification-failure"}))))
   {:ok? true})
-
 (defn rollback!
   "Global wrapper for `rollback-in!`."
   [cycle-id]
   (rollback-in! (global-context) cycle-id))
-
 (defn verify-in!
   ([ctx cycle-id]
    (verify-in! ctx cycle-id default-check-runner))
@@ -851,14 +778,12 @@
                                                 (assoc :verification report)
                                                 (assoc :outcome outcome))))))
              {:ok? true, :report report})))))))
-
 (defn verify!
   "Global wrapper for `verify-in!`."
   ([cycle-id]
    (verify-in! (global-context) cycle-id))
   ([cycle-id check-runner]
    (verify-in! (global-context) cycle-id check-runner)))
-
 (defn- build-success-outcome
   "Build a success outcome from the cycle's proposal actions and future-state goals."
   [cycle future-state]
@@ -868,7 +793,6 @@
      :summary "cycle_completed_successfully"
      :evidence action-titles
      :changed-goals changed-goals}))
-
 (defn- build-memory-content
   "Build the memory content string for a cycle outcome."
   [cycle-id outcome cycle]
@@ -877,7 +801,6 @@
          (name (:status outcome)) ". "
          (:summary outcome) ". "
          "Actions: " (pr-str action-titles) ".")))
-
 (defn learn-in!
   [ctx cycle-id memory-ctx]
   (let [state (get-state-in ctx)
@@ -917,12 +840,10 @@
                                       #(update % :learning-memory-ids conj record-id))))
             {:ok? true, :memory-ids #{record-id}})
           {:ok? false, :error :memory-write-failed, :details mem-result})))))
-
 (defn learn!
   "Global wrapper for `learn-in!`."
   [cycle-id memory-ctx]
   (learn-in! (global-context) cycle-id memory-ctx))
-
 (defn update-future-state-from-outcome-in!
   [ctx cycle-id]
   (let [state (get-state-in ctx)
@@ -948,12 +869,10 @@
                          (future-state/next-version current-fs))]
         (swap-state-in! ctx assoc :current-future-state updated-fs)
         {:ok? true, :future-state updated-fs}))))
-
 (defn update-future-state-from-outcome!
   "Global wrapper for `update-future-state-from-outcome-in!`."
   [cycle-id]
   (update-future-state-from-outcome-in! (global-context) cycle-id))
-
 (defn finalize-cycle-in!
   [ctx cycle-id]
   (let [state (get-state-in ctx)
@@ -981,12 +900,10 @@
                                            (assoc :status final-status)
                                            (assoc :ended-at (java.time.Instant/now)))))))
         {:ok? true, :final-status final-status}))))
-
 (defn finalize-cycle!
   "Global wrapper for `finalize-cycle-in!`."
   [cycle-id]
   (finalize-cycle-in! (global-context) cycle-id))
-
 (defn- continue-cycle-precheck
   [cycle]
   (cond
@@ -1000,14 +917,12 @@
     {:ok? true :phase :terminal :status (:status cycle)}
 
     :else nil))
-
 (defn- continue-cycle-execute-step
   [ctx cycle-id cycle hook-executor]
   (when (= :executing (:status cycle))
     (if hook-executor
       (execute-in! ctx cycle-id hook-executor)
       (execute-in! ctx cycle-id))))
-
 (defn- continue-cycle-verify-step
   [ctx cycle-id check-runner]
   (let [cycle-after-exec (find-cycle (:cycles (get-state-in ctx)) cycle-id)]
@@ -1015,13 +930,11 @@
       (if check-runner
         (verify-in! ctx cycle-id check-runner)
         (verify-in! ctx cycle-id)))))
-
 (defn- continue-cycle-learn-step
   [ctx cycle-id memory-ctx]
   (let [cycle-after-verify (find-cycle (:cycles (get-state-in ctx)) cycle-id)]
     (when (= :learning (:status cycle-after-verify))
       (learn-in! ctx cycle-id (resolve-memory-ctx memory-ctx)))))
-
 (defn- continue-cycle-results
   [ctx cycle-id cycle {:keys [memory-ctx hook-executor check-runner]}]
   (let [execute-result      (continue-cycle-execute-step ctx cycle-id cycle hook-executor)
@@ -1036,7 +949,6 @@
      :learn-result learn-result
      :future-state-result future-state-result
      :finalize-result finalize-result}))
-
 (defn- continue-cycle-failure
   [{:keys [execute-result verify-result learn-result future-state-result finalize-result]}]
   (cond
@@ -1070,7 +982,6 @@
      :finalize-result finalize-result}
 
     :else nil))
-
 (defn continue-cycle-in!
   [ctx cycle-id opts]
   (let [state (get-state-in ctx)
@@ -1081,14 +992,12 @@
               (merge {:ok? true
                       :phase :completed}
                      results))))))
-
 (defn continue-cycle!
   "Global wrapper for `continue-cycle-in!`."
   ([cycle-id]
    (continue-cycle! cycle-id {}))
   ([cycle-id opts]
    (continue-cycle-in! (global-context) cycle-id opts)))
-
 (defn register-resolvers-in!
   ([qctx]
    (register-resolvers-in! qctx true))
@@ -1101,7 +1010,6 @@
      (when rebuild?
        (rebuild-fn qctx))
      :ok)))
-
 (defn register-mutations-in!
   ([qctx]
    (register-mutations-in! qctx true))
@@ -1114,7 +1022,6 @@
      (when rebuild?
        (rebuild-fn qctx))
      :ok)))
-
 (defn register-resolvers!
   []
   (let [resolvers (requiring-resolve 'psi.recursion.resolvers/all-resolvers)
