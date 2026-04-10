@@ -103,8 +103,6 @@
   [f & args]
   (apply swap-state-in! (global-context) f args))
 
-;;; --- Hooks ---
-
 (defn register-hooks-in!
   "Initialize (or refresh) hooks from config accepted/enabled trigger sets."
   [ctx]
@@ -116,8 +114,6 @@
   "Global wrapper for `register-hooks-in!`."
   []
   (register-hooks-in! (global-context)))
-
-;;; --- Trigger intake and readiness gating ---
 
 (def remember-manual-trigger-prompt-name
   "remember-manual-trigger")
@@ -432,8 +428,6 @@
   ([trigger-signal opts]
    (orchestrate-manual-trigger-in! (global-context) trigger-signal opts)))
 
-;;; --- Observation ---
-
 (defn- find-cycle
   "Find a cycle by id in the cycles vector."
   [cycles cycle-id]
@@ -545,8 +539,6 @@
   [cycle-id system-state graph-state memory-state]
   (observe-in! (global-context) cycle-id system-state graph-state memory-state))
 
-;;; --- Plan proposal generation ---
-
 (def ^:private risk-order
   "Risk level ordering for aggregation (highest wins)."
   {:low 0, :medium 1, :high 2})
@@ -622,8 +614,6 @@
   [cycle-id]
   (plan-in! (global-context) cycle-id))
 
-;;; --- Approval gate ---
-
 (defn apply-approval-gate-in!
   [ctx cycle-id]
   (let [state (get-state-in ctx)
@@ -668,8 +658,6 @@
   "Global wrapper for `apply-approval-gate-in!`."
   [cycle-id]
   (apply-approval-gate-in! (global-context) cycle-id))
-
-;;; --- Approve / Reject proposals ---
 
 (defn approve-proposal-in!
   [ctx cycle-id approver notes]
@@ -736,8 +724,6 @@
   [cycle-id approver notes]
   (reject-proposal-in! (global-context) cycle-id approver notes))
 
-;;; --- Execution ---
-
 (defn- default-hook-executor
   "Default no-op hook executor. Returns success with a placeholder message."
   [_action]
@@ -787,8 +773,6 @@
    (execute-in! (global-context) cycle-id))
   ([cycle-id hook-executor]
    (execute-in! (global-context) cycle-id hook-executor)))
-
-;;; --- Verification and rollback ---
 
 (defn- default-check-runner
   "Default no-op check runner. Returns passing for each check."
@@ -888,8 +872,6 @@
   ([cycle-id check-runner]
    (verify-in! (global-context) cycle-id check-runner)))
 
-;;; --- Learn phase + memory writeback ---
-
 (defn- build-success-outcome
   "Build a success outcome from the cycle's proposal actions and future-state goals."
   [cycle future-state]
@@ -960,8 +942,6 @@
   [cycle-id memory-ctx]
   (learn-in! (global-context) cycle-id memory-ctx))
 
-;;; --- FUTURE_STATE updates from outcome ---
-
 (defn update-future-state-from-outcome-in!
   [ctx cycle-id]
   (let [state (get-state-in ctx)
@@ -993,8 +973,6 @@
   "Global wrapper for `update-future-state-from-outcome-in!`."
   [cycle-id]
   (update-future-state-from-outcome-in! (global-context) cycle-id))
-
-;;; --- Cycle finalization ---
 
 (defn finalize-cycle-in!
   [ctx cycle-id]
@@ -1028,8 +1006,6 @@
   "Global wrapper for `finalize-cycle-in!`."
   [cycle-id]
   (finalize-cycle-in! (global-context) cycle-id))
-
-;;; --- Continue / resume an approved cycle ---
 
 (defn- continue-cycle-precheck
   [cycle]
@@ -1132,8 +1108,6 @@
    (continue-cycle! cycle-id {}))
   ([cycle-id opts]
    (continue-cycle-in! (global-context) cycle-id opts)))
-
-;;; --- EQL resolver registration ---
 
 (defn register-resolvers-in!
   ([qctx]
