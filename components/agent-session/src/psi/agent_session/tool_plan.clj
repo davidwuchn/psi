@@ -8,8 +8,10 @@
    [clojure.walk :as walk]
    [psi.agent-core.core :as agent]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.resolvers.support :as resolver-support]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.tools :as tools]))
+   [psi.agent-session.tools :as tools]
+   [psi.query.core :as query]))
 
 ;;; Runtime tool invocation boundary
 
@@ -29,6 +31,30 @@
                              (ext/all-tools-in reg))))]
     (or from-agent from-ext)))
 
+(defn- execute-app-query-tool-in!
+  "Execute a session-bound app-query-tool instance.
+
+   app-query-tool cannot use the generic built-in dispatcher because it needs
+   access to the live query graph scoped to the current session-id. Build a
+   fresh query context at call time so the resolver/mutation graph matches the
+   current runtime state, and bind resolver session targeting explicitly."
+  [ctx session-id args opts]
+  (let [register-resolvers! (:register-resolvers-fn ctx)
+        register-mutations! (:register-mutations-fn ctx)
+        qctx                (query/create-query-context)
+        _                   (register-resolvers! qctx false)
+        _                   (register-mutations! qctx (:all-mutations ctx) true)
+        tool                (tools/make-app-query-tool
+                             (fn [eql-query]
+                               (binding [resolver-support/*session-id* session-id]
+                                 (query/query-in qctx
+                                                 {:psi/agent-session-ctx        ctx
+                                                  :psi.agent-session/session-id session-id}
+                                                 eql-query)))
+                             {:overrides   (:overrides opts)
+                              :tool-call-id (:tool-call-id opts)})]
+    ((:execute tool) args)))
+
 (defn default-execute-runtime-tool-in!
   "Default runtime tool invocation implementation.
 
@@ -36,16 +62,26 @@
    child sessions without an agent-ctx) and falls back to built-in tool
    dispatch. Supports both 1-arity and 2-arity execute fn contracts.
 
+   app-query-tool is special: its schema is session-persistable, but its
+   executable implementation must be synthesized per session because it closes
+   over the live query graph and current session-id.
+
    This is the default concrete runtime invocation behind the higher-level
    ctx-provided runtime tool executor boundary."
   [ctx session-id tool-name args opts]
   (let [tool-def   (find-tool-def ctx session-id tool-name)
         execute-fn (:execute tool-def)]
-    (if (fn? execute-fn)
+    (cond
+      (= tool-name "app-query-tool")
+      (execute-app-query-tool-in! ctx session-id args opts)
+
+      (fn? execute-fn)
       (try
         (execute-fn args opts)
         (catch clojure.lang.ArityException _
           (execute-fn args)))
+
+      :else
       (tools/execute-tool tool-name args opts))))
 
 (defn execute-tool-runtime-in!
