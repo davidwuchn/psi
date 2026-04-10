@@ -7,7 +7,6 @@
    [psi.recursion.query-registration :as query-registration]))
 (defrecord RecursionContext [state-atom config host-ctx host-path])
 (defn initial-state
-  "Return the initial controller state map."
   []
   {:status :idle
    :current-future-state nil
@@ -19,7 +18,6 @@
    :paused-checkpoint nil
    :last-error nil})
 (defn- hooks-from-config
-  "Derive hook list from recursion config accepted/enabled trigger sets."
   [config]
   (let [accepted (:accepted-trigger-types config)
         enabled  (:enabled-trigger-hooks config)]
@@ -96,7 +94,7 @@
 (def remember-manual-trigger-prompt-name
   "remember-manual-trigger")
 (def remember-manual-trigger-prompt
-  "Trigger a manual remember cycle. Capture operator reason and current readiness context.")
+  "Trigger a manual remember cycle.")
 (defn manual-trigger-signal
   ([reason]
    (manual-trigger-signal reason {}))
@@ -111,7 +109,6 @@
                     extra-payload)
     :timestamp (java.time.Instant/now)}))
 (defn- new-cycle
-  "Create a new cycle record for `trigger-signal` with the given initial `status`."
   [trigger-signal status]
   {:cycle-id           (str "cycle-" (random-uuid))
    :trigger            trigger-signal
@@ -125,11 +122,9 @@
    :outcome            nil
    :learning-memory-ids #{}})
 (defn- active-cycle?
-  "True if cycle is in a non-terminal status."
   [cycle]
   (not (contains? #{:completed :failed :aborted :blocked} (:status cycle))))
 (defn- readiness-ok?
-  "Check all four readiness flags in `system-state`. Returns true when all ready."
   [system-state]
   (and (:query-ready system-state)
        (:graph-ready system-state)
@@ -145,14 +140,11 @@
     (cond
       (not (contains? accepted ttype))
       {:result :rejected, :reason :unknown-trigger-type}
-
       (not (contains? enabled ttype))
       {:result :ignored}
-
       (or (not= :idle (:status state))
           (some active-cycle? (:cycles state)))
       {:result :rejected, :reason :controller-busy}
-
       (not (readiness-ok? system-state))
       (let [cycle (new-cycle trigger-signal :blocked)]
         (swap-state-in! ctx (fn [s]
@@ -161,7 +153,6 @@
                                   (assoc :paused-reason "recursion_prerequisites_not_ready")
                                   (update :cycles conj cycle))))
         {:result :blocked, :cycle-id (:cycle-id cycle)})
-
       :else
       (let [cycle (new-cycle trigger-signal :observing)]
         (swap-state-in! ctx (fn [s]
@@ -172,7 +163,6 @@
 (defn handle-trigger!
   [trigger-signal system-state]
   (handle-trigger-in! (global-context) trigger-signal system-state))
-
 (declare find-cycle)
 (declare observe-in!)
 (declare plan-in!)
@@ -209,7 +199,6 @@
     (not (contains? #{:manual :auto-approved} (:gate gate-result)))
     {:status :error
      :result (orchestration-result false :approval-gate cycle-id {:gate-result gate-result})}
-
     (and (= :manual (:gate gate-result)) (nil? decision))
     {:status :awaiting
      :result (orchestration-result true :awaiting-approval cycle-id
@@ -217,14 +206,12 @@
                                     :approval {:required? true
                                                :pending? true
                                                :decision nil}})}
-
     (= :manual (:gate gate-result))
     {:status :continue
      :approval-result (case decision
                         :approve (approve-proposal-in! ctx cycle-id approver approval-notes)
                         :reject (reject-proposal-in! ctx cycle-id approver approval-notes)
                         {:ok? false :error :approval-decision-required})}
-
     :else
     {:status :continue
      :approval-result nil}))
@@ -310,10 +297,8 @@
   (cond
     (not (:ok? observe-result))
     (orchestration-result false :observe cycle-id base-steps)
-
     (not (:ok? plan-result))
     (orchestration-result false :plan cycle-id base-steps)
-
     :else nil))
 (defn- continue-after-approval
   [ctx cycle-id base-steps approval-result hook-executor check-runner memory-ctx]
@@ -353,10 +338,8 @@
       {:ok? true
        :trigger-result trigger-result
        :phase :trigger}
-
       (= ::invalid decision)
       (invalid-approval-result trigger-result approval-decision)
-
       :else
       (let [cycle-id   (:cycle-id trigger-result)
             base-steps (pre-approval-steps ctx cycle-id system-state graph-state memory-state trigger-result)]
@@ -393,13 +376,10 @@
     (cond
       (nil? cycle)
       {:ok? false, :error :cycle-not-found}
-
       (not= :planning (:status cycle))
       {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
-
       (nil? (:proposal cycle))
       {:ok? false, :error :no-proposal}
-
       :else
       (let [config (:config state)
             proposal (:proposal cycle)]
@@ -433,10 +413,8 @@
     (cond
       (nil? cycle)
       {:ok? false, :error :cycle-not-found}
-
       (not= :awaiting-approval (:status cycle))
       {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
-
       :else
       (do
         (swap-state-in! ctx
@@ -460,10 +438,8 @@
     (cond
       (nil? cycle)
       {:ok? false, :error :cycle-not-found}
-
       (not= :awaiting-approval (:status cycle))
       {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
-
       :else
       (let [rejection-reason (if (seq notes) notes "proposal_rejected")
             outcome {:status :aborted
@@ -497,13 +473,10 @@
      (cond
        (nil? cycle)
        {:ok? false, :error :cycle-not-found}
-
        (not= :executing (:status cycle))
        {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
-
        (not (get-in cycle [:proposal :approved]))
        {:ok? false, :error :proposal-not-approved}
-
        :else
        (let [actions (get-in cycle [:proposal :actions])
              attempts (mapv (fn [action]
@@ -559,10 +532,8 @@
      (cond
        (nil? cycle)
        {:ok? false, :error :cycle-not-found}
-
        (not= :verifying (:status cycle))
        {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
-
        :else
        (let [config (:config state)
              policy (:policy state)
@@ -636,10 +607,8 @@
     (cond
       (nil? cycle)
       {:ok? false, :error :cycle-not-found}
-
       (not= :learning (:status cycle))
       {:ok? false, :error :wrong-cycle-status, :status (:status cycle)}
-
       :else
       (let [outcome (or (:outcome cycle)
                         (build-success-outcome cycle (:current-future-state state)))
@@ -678,10 +647,8 @@
     (cond
       (nil? cycle)
       {:ok? false, :error :cycle-not-found}
-
       (nil? (:outcome cycle))
       {:ok? false, :error :no-outcome}
-
       :else
       (let [outcome (:outcome cycle)
             current-fs (or (:current-future-state state)
@@ -689,10 +656,8 @@
             updated-fs (case (:status outcome)
                          :success
                          (future-state/advance-goals current-fs (:changed-goals outcome))
-
                          (:failed :blocked :aborted)
                          (future-state/add-blockers current-fs (:evidence outcome))
-
                          (future-state/next-version current-fs))]
         (swap-state-in! ctx assoc :current-future-state updated-fs)
         {:ok? true, :future-state updated-fs}))))
@@ -706,10 +671,8 @@
     (cond
       (nil? cycle)
       {:ok? false, :error :cycle-not-found}
-
       (nil? (:outcome cycle))
       {:ok? false, :error :no-outcome}
-
       :else
       (let [outcome (:outcome cycle)
             final-status (if (= :success (:status outcome))
@@ -734,13 +697,10 @@
   (cond
     (nil? cycle)
     {:ok? false :error :cycle-not-found}
-
     (= :awaiting-approval (:status cycle))
     {:ok? false :error :awaiting-approval}
-
     (contains? #{:completed :failed :aborted :blocked} (:status cycle))
     {:ok? true :phase :terminal :status (:status cycle)}
-
     :else nil))
 (defn- continue-cycle-execute-step
   [ctx cycle-id cycle hook-executor]
@@ -779,25 +739,21 @@
   (cond
     (and execute-result (not (:ok? execute-result)))
     {:ok? false :phase :execute :execute-result execute-result}
-
     (and verify-result (not (:ok? verify-result)))
     {:ok? false :phase :verify
      :execute-result execute-result
      :verify-result verify-result}
-
     (and learn-result (not (:ok? learn-result)))
     {:ok? false :phase :learn
      :execute-result execute-result
      :verify-result verify-result
      :learn-result learn-result}
-
     (and future-state-result (not (:ok? future-state-result)))
     {:ok? false :phase :future-state
      :execute-result execute-result
      :verify-result verify-result
      :learn-result learn-result
      :future-state-result future-state-result}
-
     (and finalize-result (not (:ok? finalize-result)))
     {:ok? false :phase :finalize
      :execute-result execute-result
@@ -805,7 +761,6 @@
      :learn-result learn-result
      :future-state-result future-state-result
      :finalize-result finalize-result}
-
     :else nil))
 (defn continue-cycle-in!
   [ctx cycle-id opts]
