@@ -2,6 +2,48 @@
  {:requires ([babashka.tasks :refer [shell]]
              [clojure.string :as str])
   :init (do
+          (def chiasmus-home
+            (str (System/getProperty "user.home") "/src/chiasmus"))
+
+          (defn parse-review-plan-opts [args]
+            (loop [args args
+                   opts {:focus "quick" :limit nil}]
+              (if-let [arg (first args)]
+                (cond
+                  (= arg "--focus")
+                  (if-let [focus (second args)]
+                    (if (#{"all" "security" "architecture" "correctness" "quick"} focus)
+                      (recur (nnext args) (assoc opts :focus focus))
+                      (throw (ex-info "--focus must be one of: all, security, architecture, correctness, quick"
+                                      {:args args})))
+                    (throw (ex-info "Missing value for --focus" {:args args})))
+
+                  (= arg "--limit")
+                  (if-let [n (some-> (second args) parse-long)]
+                    (recur (nnext args) (assoc opts :limit n))
+                    (throw (ex-info "--limit requires an integer" {:args args})))
+
+                  :else
+                  (throw (ex-info "Unknown argument" {:arg arg :args args})))
+                opts)))
+
+          (defn parse-chiasmus-check-opts [args]
+            (loop [args args
+                   opts {:limit nil :full false}]
+              (if-let [arg (first args)]
+                (cond
+                  (= arg "--limit")
+                  (if-let [n (some-> (second args) parse-long)]
+                    (recur (nnext args) (assoc opts :limit n))
+                    (throw (ex-info "--limit requires an integer" {:args args})))
+
+                  (= arg "--full")
+                  (recur (next args) (assoc opts :full true))
+
+                  :else
+                  (throw (ex-info "Unknown argument" {:arg arg :args args})))
+                opts)))
+
           (defn parse-top-files-opts [args]
             (loop [args args
                    opts {:n 10 :since 100 :match nil :path nil :merges? true :sort :count :by :commits}]
@@ -223,4 +265,87 @@
            (->> (top-file-rows opts)
                 (sort-top-file-rows (:sort opts))
                 (take n)
-                (print-top-files fmt)))}}}
+                (print-top-files fmt)))}
+
+  chiasmus:review-plan
+  {:doc  "Generate a Chiasmus code review plan for components/, bases/, and extensions/. Options: --focus all|security|architecture|correctness|quick, --limit N."
+   :task (let [{:keys [focus limit]} (parse-review-plan-opts *command-line-args*)
+               find-cmd              (str "find components bases extensions -type f \\\\( -path '*/src/*' -o -path '*/test/*' \\\\)"
+                                          (when limit (str " | head -n " limit)))]
+           (when-not (.exists (java.io.File. chiasmus-home))
+             (binding [*out* *err*]
+               (println "Chiasmus checkout not found at" chiasmus-home))
+             (System/exit 1))
+           (when-not (.exists (java.io.File. (str chiasmus-home "/dist/index.js")))
+             (shell "bash" "-lc" (str "cd " chiasmus-home " && npm install && npm run build")))
+           (shell
+            "node" "--input-type=module" "-e"
+            (str
+             "import { buildReviewPlan } from '" chiasmus-home "/dist/index.js';"
+             "import { execSync } from 'node:child_process';"
+             "const files = execSync(\"" find-cmd "\", { encoding: 'utf8' })"
+             ".trim().split(/\\n+/).filter(Boolean).map(f => process.cwd() + '/' + f);"
+             "if (files.length === 0) { console.error('No files found under components/, bases/, or extensions/'); process.exit(1); }"
+             "const plan = buildReviewPlan({ files, focus: '" focus "' });"
+             "console.log(JSON.stringify(plan, null, 2));")))}
+
+  chiasmus:review-plan:full
+  {:doc  "Generate a full Chiasmus code review plan for components/, bases/, and extensions/. Options: --limit N."
+   :task (let [{:keys [limit]} (parse-chiasmus-check-opts *command-line-args*)
+               args            (cond-> ["chiasmus:review-plan" "--focus" "all"]
+                                 limit (into ["--limit" (str limit)]))]
+           (apply shell "bb" args))}
+
+  commit-check:chiasmus
+  {:doc  "Run a Chiasmus architecture check on components/, bases/, and extensions/. Options: --limit N, --full. Default runs summary + dead-code only; --full adds cycles and fails on cycles."
+   :task (let [{:keys [limit full]} (parse-chiasmus-check-opts *command-line-args*)
+               find-cmd             (str "find components bases extensions -type f \\\\( -path '*/src/*' -o -path '*/test/*' \\\\)"
+                                         (when limit (str " | head -n " limit)))]
+           (when-not (.exists (java.io.File. chiasmus-home))
+             (binding [*out* *err*]
+               (println "Chiasmus checkout not found at" chiasmus-home))
+             (System/exit 1))
+           (when-not (.exists (java.io.File. (str chiasmus-home "/dist/index.js")))
+             (shell "bash" "-lc" (str "cd " chiasmus-home " && npm install && npm run build")))
+           (let [result (shell {:continue true}
+                               "node" "--input-type=module" "-e"
+                               (str
+                                "import { runAnalysis } from '" chiasmus-home "/dist/index.js';"
+                                "import { execSync } from 'node:child_process';"
+                                "const startAll = Date.now();"
+                                "const full = " (if full "true" "false") ";"
+                                "const seconds = (ms) => (ms / 1000).toFixed(1) + 's';"
+                                "console.log('Chiasmus architecture check');"
+                                "console.log('Mode: ' + (full ? 'full' : 'quick'));"
+                                "console.log('Collecting files...');"
+                                "const files = execSync(\"" find-cmd "\", { encoding: 'utf8' })"
+                                ".trim().split(/\\n+/).filter(Boolean).map(f => process.cwd() + '/' + f);"
+                                "if (files.length === 0) { console.error('No files found under components/, bases/, or extensions/'); process.exit(1); }"
+                                "console.log('Found ' + files.length + ' files');"
+                                "const analyses = full ? ['summary','dead-code','cycles'] : ['summary','dead-code'];"
+                                "const out = {};"
+                                "for (const analysis of analyses) {"
+                                "  const start = Date.now();"
+                                "  console.log('Running ' + analysis + '...');"
+                                "  const r = await runAnalysis(files, { analysis });"
+                                "  out[analysis] = r.result;"
+                                "  console.log('Finished ' + analysis + ' in ' + seconds(Date.now() - start));"
+                                "}"
+                                "const dead = Array.isArray(out['dead-code']) ? out['dead-code'] : [];"
+                                "const cycles = Array.isArray(out['cycles']) ? out['cycles'] : [];"
+                                "if (!full) console.log('Skipping cycles analysis (run with --full to enable)');"
+                                "console.log('Summary:');"
+                                "console.log(JSON.stringify({ mode: full ? 'full' : 'quick', summary: out.summary, deadCodeCount: dead.length, cycleCount: cycles.length, elapsed: seconds(Date.now() - startAll) }, null, 2));"
+                                "if (dead.length) {"
+                                "  console.log('Dead code candidates (info):');"
+                                "  for (const x of dead.slice(0, 50)) console.log('  - ' + x);"
+                                "  if (dead.length > 50) console.log('  ... +' + (dead.length - 50) + ' more');"
+                                "}"
+                                "if (full && cycles.length) {"
+                                "  console.error('Cycles (failing):');"
+                                "  for (const x of cycles.slice(0, 50)) console.error('  - ' + JSON.stringify(x));"
+                                "  if (cycles.length > 50) console.error('  ... +' + (cycles.length - 50) + ' more');"
+                                "  process.exit(1);"
+                                "}"
+                                "console.log('Chiasmus check passed');"))]
+             (System/exit (:exit result))))}}}
