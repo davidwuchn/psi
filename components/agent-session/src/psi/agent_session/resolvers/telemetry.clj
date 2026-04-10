@@ -75,8 +75,6 @@
        (keep :tool-call-id)
        set))
 (defn- reduce-attempt-events
-  "Reduce raw tool-call streaming events into attempt maps keyed by [turn-id content-index].
-   Pure function: events in → attempts out."
   [events]
   (->> events
        (reduce (fn [acc {:keys [event-kind turn-id content-index id name delta timestamp]}]
@@ -125,7 +123,6 @@
                       :psi.tool-call-attempt/content-index))
        vec))
 (defn- enrich-attempt-status
-  "Add :status, :executed?, :result-recorded? to an attempt based on result-ids."
   [result-ids attempt]
   (let [id        (:psi.tool-call-attempt/id attempt)
         recorded? (and (string? id) (contains? result-ids id))
@@ -139,15 +136,11 @@
            :psi.tool-call-attempt/executed? recorded?
            :psi.tool-call-attempt/result-recorded? recorded?)))
 (defn- build-tool-call-attempts
-  "Build enriched tool-call attempts from raw events and committed result ids.
-   Pure function: (events, result-ids) → enriched attempt vec."
   [events result-ids]
   (mapv (partial enrich-attempt-status result-ids)
         (reduce-attempt-events events)))
 (pco/defresolver agent-session-tool-call-attempts
-  "Resolve streamed provider tool-call attempts.
-   Attempts are captured during provider streaming (:toolcall-start/:delta/:end),
-   then correlated with committed toolResult messages to identify unmatched calls."
+  "Resolve streamed provider tool-call attempts."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input
    [:psi/agent-session-ctx]
@@ -430,9 +423,6 @@
   [msg]
   (some #(when (= :error (:type %)) (:text %)) (:content msg)))
 (defn- parse-request-id
-  "Extract request-id from provider error text.
-   Supports both old clj-http header-map formatting and the normalized
-   `... [request-id req_xxx]` suffix emitted by provider adapters."
   [error-text]
   (when error-text
     (or (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))
@@ -558,7 +548,6 @@
      :psi.context-message/content-types (mapv :type (:content msg))
      :psi.context-message/snippet       (or snippet "")}))
 (def ^:private request-shape-output
-  "Shared output spec for :psi.request-shape/* attributes."
   [:psi.request-shape/message-count
    :psi.request-shape/system-prompt-chars
    :psi.request-shape/message-chars
@@ -578,11 +567,8 @@
    :psi.request-shape/alternation-violations
    :psi.request-shape/empty-content-count])
 (defn- compute-request-shape
-  "Compute request diagnostics from agent-core messages.
-   Provider-agnostic: estimates tokens from serialized char count."
   [system-prompt messages tools context-window max-output-tokens]
-  (let [;; Role counts
-        role-counts   (frequencies (map :role messages))
+  (let [role-counts   (frequencies (map :role messages))
         tool-use-ids  (into #{}
                             (comp (filter #(= "assistant" (:role %)))
                                   (mapcat :content)
@@ -630,21 +616,16 @@
      :psi.request-shape/alternation-violations violations
      :psi.request-shape/empty-content-count    empty-ct}))
 (defn- resolve-context-window
-  "Best-effort context window from session data or model config atom."
   [agent-session-ctx]
   (or (:context-window (support/session-data agent-session-ctx))
       (some-> (:model-config-atom agent-session-ctx) deref :context-window)
       200000))
 (defn- resolve-max-output-tokens
-  "Best-effort max output tokens from session data or model config atom."
   [agent-session-ctx]
   (or (some-> (:model-config-atom agent-session-ctx) deref :max-tokens)
       16384))
 (pco/defresolver api-error-list
-  "Extract API errors from assistant messages and provider reply captures.
-   Message-derived errors preserve conversation position.
-   Provider reply errors expose raw provider failures even when no assistant
-   error message was persisted."
+  "Extract API errors from assistant messages and provider reply captures."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/api-error-count
@@ -668,8 +649,7 @@
     {:psi.agent-session/api-error-count (count errors)
      :psi.agent-session/api-errors      errors}))
 (pco/defresolver api-error-detail
-  "Resolve full error text, request-id, provider metadata, and surrounding message context.
-   Seeded by :psi.api-error/message-index from the list resolver."
+  "Resolve API error detail."
   [{:keys [psi.api-error/message-index psi/agent-session-ctx]
     :as entity}]
   {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
@@ -706,9 +686,7 @@
      :psi.api-error/provider-event       (:psi.api-error/provider-event entity)
      :psi.api-error/surrounding-messages surr}))
 (pco/defresolver api-error-request-shape
-  "Reconstruct the request shape at the point of an API error.
-   Uses messages[0..message-index) — what was sent when the error occurred.
-   Expensive: full message scan + size estimation."
+  "Resolve API error request shape."
   [{:keys [psi.api-error/message-index psi/agent-session-ctx]}]
   {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
    ::pco/output [{:psi.api-error/request-shape request-shape-output}]}
@@ -722,9 +700,7 @@
                             (resolve-context-window agent-session-ctx)
                             (resolve-max-output-tokens agent-session-ctx))}))
 (pco/defresolver current-request-shape
-  "Request shape for the current conversation state.
-   Answers: 'if I send a prompt now, what does the context look like?'
-   Expensive: full message scan + size estimation."
+  "Resolve request shape for the current conversation state."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [{:psi.agent-session/request-shape request-shape-output}]}
@@ -736,8 +712,7 @@
                             (resolve-context-window agent-session-ctx)
                             (resolve-max-output-tokens agent-session-ctx))}))
 (pco/defresolver agent-session-turn
-  "Resolve per-turn streaming statechart state.
-   Returns nil/empty values when no turn is active."
+  "Resolve per-turn streaming statechart state."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.turn/phase
@@ -788,13 +763,13 @@
         [agent-session-canonical-telemetry
          agent-session-stats
          agent-session-tool-call-attempts
-   agent-session-tool-lifecycle-events
-   tool-lifecycle-summary-by-tool-id
-   agent-session-provider-captures
-   provider-request-by-turn-id
-   provider-reply-by-turn-id
-   api-error-list
-   api-error-detail
-   api-error-request-shape
-   current-request-shape
-   agent-session-turn]))
+         agent-session-tool-lifecycle-events
+         tool-lifecycle-summary-by-tool-id
+         agent-session-provider-captures
+         provider-request-by-turn-id
+         provider-reply-by-turn-id
+         api-error-list
+         api-error-detail
+         api-error-request-shape
+         current-request-shape
+         agent-session-turn]))
