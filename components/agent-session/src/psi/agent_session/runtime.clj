@@ -49,24 +49,6 @@
     (ss/journal-append-in! ctx session-id (persist/message-entry user-msg))
     user-msg))
 
-(defn- last-assistant-message-in-journal
-  [ctx session-id]
-  (let [journal (ss/get-state-value-in ctx (ss/state-path :journal session-id))]
-    (some (fn [entry]
-            (when (and (= :message (:kind entry))
-                       (= "assistant" (get-in entry [:data :message :role])))
-              (get-in entry [:data :message])))
-          (rseq (vec journal)))))
-
-(defn- last-user-message-entry-id-in-journal
-  [ctx session-id]
-  (let [journal (ss/get-state-value-in ctx (ss/state-path :journal session-id))]
-    (some (fn [entry]
-            (when (and (= :message (:kind entry))
-                       (= "user" (get-in entry [:data :message :role])))
-              (:id entry)))
-          (rseq (vec journal)))))
-
 (defn expand-input-in
   "Expand user input through skills (/skill:name) or prompt templates (/name).
 
