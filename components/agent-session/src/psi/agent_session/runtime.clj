@@ -75,34 +75,6 @@
     (catch Exception _
       nil)))
 
-(defn safe-remember-session-message!
-  "Record a session message to memory. No-op on failure."
-  [_ctx session-id msg]
-  (try
-    (memory-runtime/remember-session-message!
-     msg
-     {:session-id session-id})
-    (catch Exception _
-      nil)))
-
-(defn prepare-user-message-in!
-  "Expand text, run memory hooks, journal the user message, and return payload.
-
-   Returns:
-   {:user-message map
-    :expanded-text string
-    :expansion {:kind ... :name ...} | nil}"
-  [ctx session-id text images]
-  (require-session-id! session-id)
-  (let [{:keys [text expansion]} (expand-input-in ctx session-id text)
-        _        (safe-recover-memory! text)
-        user-msg (make-user-message text images)]
-    (ss/journal-append-in! ctx session-id (persist/message-entry user-msg))
-    (safe-remember-session-message! ctx session-id user-msg)
-    {:user-message  user-msg
-     :expanded-text text
-     :expansion     expansion}))
-
 (defn resolve-api-key-in
   "Resolve API key for ai-model provider from session oauth context, if any.
    `session-id` accepted for call-path symmetry; oauth lookup itself is not session-scoped."
