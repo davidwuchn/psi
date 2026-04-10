@@ -67,7 +67,6 @@
   (:require
    [psi.agent-session.dispatch-schema :as schema]
    [taoensso.timbre :as timbre]))
-
 (def effect-schema schema/effect-schema)
 (def pure-result-schema schema/pure-result-schema)
 (def valid-effect? schema/valid-effect?)
@@ -79,18 +78,15 @@
 ;; ============================================================
 ;; Event handler registry
 ;; ============================================================
-
 (defonce ^:private handler-registry
   ;; Map of event-type keyword → handler entry.
   ;; Entry shape: {:fn handler-fn}
   ;; Handler fn signature: (fn [ctx event-data]) → any
   (atom {}))
-
 (defn handler-entry
   "Return the registered handler entry for `event-type`, or nil."
   [event-type]
   (get @handler-registry event-type))
-
 (defn register-handler!
   "Register a handler for `event-type`.
 
@@ -107,12 +103,10 @@
    (swap! handler-registry assoc event-type
           {:fn handler-fn})
    nil))
-
 (defn registered-event-types
   "Return the set of registered event type keywords."
   []
   (set (keys @handler-registry)))
-
 (defn registered-handler-entries
   "Return all registered handler entries keyed by event type.
 
@@ -120,7 +114,6 @@
    should project them into non-executable metadata before exposing them."
   []
   @handler-registry)
-
 (defn clear-handlers!
   "Remove all registered handlers. Used in tests and during reload."
   []
@@ -130,7 +123,6 @@
 ;; ============================================================
 ;; Interceptor chain
 ;; ============================================================
-
 (defn ->interceptor
   "Create an interceptor map.
    `opts` keys: :id (required), :before (fn [ictx] → ictx), :after (fn [ictx] → ictx)."
@@ -140,7 +132,6 @@
    :after  (or after identity)})
 
 (declare next-dispatch-id append-trace-entry! pure-result? append-interceptor-trace!)
-
 (defn run-interceptor-chain
   "Run `interceptors` over interceptor context `ictx`.
    Executes :before fns in order, then :after fns in reverse order.
@@ -163,7 +154,6 @@
 ;; ============================================================
 ;; Event normalization
 ;; ============================================================
-
 (defn normalize-event
   "Normalize public dispatch inputs into one canonical internal event value.
    Lifts :session-id from event-data to :event/session-id so interceptors
@@ -176,38 +166,30 @@
    :event/ext-id      (:ext-id opts)
    :event/replaying?  (boolean (:replaying? opts))
    :event/dispatch-id (or (:dispatch-id opts) (next-dispatch-id))})
-
 (defn- event-type-of [ictx]
   (or (:event-type ictx)
       (get-in ictx [:event :event/type])))
-
 (defn- event-data-of [ictx]
   (if (contains? ictx :event-data)
     (:event-data ictx)
     (get-in ictx [:event :event/data])))
-
 (defn- event-origin-of [ictx]
   (or (:origin ictx)
       (get-in ictx [:event :event/origin])
       :core))
-
 (defn- event-ext-id-of [ictx]
   (or (:ext-id ictx)
       (get-in ictx [:event :event/ext-id])))
-
 (defn- event-replaying?-of [ictx]
   (or (:replaying? ictx)
       (boolean (get-in ictx [:event :event/replaying?]))))
-
 (defn- event-session-id-of [ictx]
   (or (:session-id ictx)
       (get-in ictx [:event :event/session-id])))
-
 (defn dispatch-id-of
   [ictx]
   (or (:dispatch-id ictx)
       (get-in ictx [:event :event/dispatch-id])))
-
 (defn- append-interceptor-trace!
   [trace-kind ictx interceptor]
   (append-trace-entry! {:trace/kind     trace-kind
@@ -215,7 +197,6 @@
                         :session-id     (event-session-id-of ictx)
                         :event-type     (event-type-of ictx)
                         :interceptor-id (:id interceptor)}))
-
 (defn- summarize-handler-result
   [result]
   (if (pure-result? result)
@@ -233,24 +214,18 @@
 ;; ============================================================
 
 ;; ── Event log ───────────────────────────────────────────────
-
 (defonce ^:private event-log
   ;; Bounded ring buffer of recent dispatch log entries.
   (atom []))
-
 (defonce ^:private dispatch-trace
   ;; Bounded ring buffer of canonical dispatch/service trace entries.
   (atom []))
-
 (def ^:private max-event-log-size
   "Maximum number of entries retained in the dispatch event log."
   1000)
-
 (def ^:private max-dispatch-trace-size
   "Maximum number of entries retained in the canonical dispatch trace."
   1000)
-
-
 (defn- trim-bounded-log
   [entries max-size]
   (let [xs (vec entries)
@@ -258,34 +233,28 @@
     (if (> n max-size)
       (subvec xs (- n max-size))
       xs)))
-
 (defn event-log-entries
   "Return the current mixed dispatch event log entries (most recent last)."
   []
   @event-log)
-
 (defn dispatch-trace-entries
   "Return the current canonical dispatch trace entries (most recent last)."
   []
   @dispatch-trace)
-
 (defn clear-event-log!
   "Clear the retained dispatch event log. Used in tests."
   []
   (reset! event-log [])
   nil)
-
 (defn clear-dispatch-trace!
   "Clear the retained canonical dispatch trace. Used in tests."
   []
   (reset! dispatch-trace [])
   nil)
-
 (defn next-dispatch-id
   "Create a stable id for one dispatched event."
   []
   (str (java.util.UUID/randomUUID)))
-
 (defn append-trace-entry!
   "Append one canonical trace entry to the bounded dispatch trace."
   [entry]
@@ -295,14 +264,12 @@
             (conj log (assoc entry :timestamp (System/currentTimeMillis)))
             max-dispatch-trace-size)))
   entry)
-
 (defn assoc-dispatch-id
   "Assoc `:dispatch-id` onto `m` when `dispatch-id` is present.
    Small helper to keep explicit trace-id threading terse."
   [m dispatch-id]
   (cond-> (or m {})
     dispatch-id (assoc :dispatch-id dispatch-id)))
-
 (defn- summarize-dispatch-db
   [db]
   (when (map? db)
@@ -312,7 +279,6 @@
      :has-turn-ctx?        (boolean (get-in db [:turn :ctx]))}))
 
 (declare dispatch!)
-
 (defn replay-event-entry!
   "Replay one retained dispatch log entry against `ctx`.
 
@@ -325,14 +291,12 @@
              {:origin (:origin entry)
               :ext-id (:ext-id entry)
               :replaying? true}))
-
 (defn replay-event-log!
   "Replay retained replayable dispatch entries against `ctx` in order.
 
    Returns a vector of per-entry dispatch return values."
   [ctx entries]
   (mapv #(replay-event-entry! ctx %) entries))
-
 (defn- dispatch-log-entry
   [ictx]
   (cond-> {:event-type           (event-type-of ictx)
@@ -356,7 +320,6 @@
            :db-summary-after     (some-> ictx :ctx :state* deref summarize-dispatch-db)}
     (event-ext-id-of ictx)       (assoc :ext-id (event-ext-id-of ictx))
     (:block-reason ictx)         (assoc :block-reason (:block-reason ictx))))
-
 (def log-interceptor
   "Captures event dispatch in the event log.
    :before records the timestamp and a bounded db summary.
@@ -378,7 +341,6 @@
         (dissoc ictx ::log-timestamp ::db-summary-before)))}))
 
 ;; ── Permission interceptor ───────────────────────────────────
-
 (def permission-interceptor
   "Checks extension dispatch rights.
    When :origin is :extension, verifies the extension is registered in the
@@ -425,7 +387,6 @@
         ictx))}))
 
 ;; ── Statechart interceptor ──────────────────────────────────
-
 (def statechart-interceptor
   "Routes statechart-owned events through an explicit dispatch boundary.
 
@@ -477,7 +438,6 @@
                 ictx))))))}))
 
 ;; ── Handler interceptor ─────────────────────────────────────
-
 (defn pure-result?
   "True when `x` is a supported pure handler result map.
 
@@ -493,7 +453,6 @@
            (contains? x :return)
            (contains? x :return-key)
            (contains? x :return-effect-result?))))
-
 (def handler-interceptor
   "Looks up and invokes the registered handler for the event type.
    Sets :result on the interceptor context.
@@ -543,7 +502,6 @@
           ictx)))}))
 
 ;; ── Apply interceptor ────────────────────────────────────────
-
 (def apply-interceptor
   "Applies pure handler results to canonical state.
 
@@ -585,7 +543,6 @@
             (and return-key (fn? read-fn))
             (assoc :result (read-fn ctx return-key))))
         ictx))}))
-
 (def effect-interceptor
   "Executes effect descriptions at the boundary.
 
@@ -650,7 +607,6 @@
                    (seq results))
               (assoc :result (first results))))
           ictx)))}))
-
 (def validate-interceptor
   "Validates dispatch results after state application and before replay/effect handling.
 
@@ -700,7 +656,6 @@
                          :validation-error (if (map? result)
                                              (or (:reason result) result)
                                              :validation-failed)))))))))}))
-
 (def trim-effects-on-replay
   "Suppresses effect execution during replay while preserving state application
    and handler return behavior.
@@ -716,7 +671,6 @@
         ictx))}))
 
 ;; ── Default chain ───────────────────────────────────────────
-
 (def default-interceptors
   "The default interceptor chain applied to every dispatched event.
    Before order: permission → log → statechart → handler → effects → trim-effects-on-replay → validate → apply
@@ -744,17 +698,14 @@
 ;; ============================================================
 ;; Interceptor chain configuration
 ;; ============================================================
-
 (defonce ^:private interceptor-chain-override
   ;; When non-nil, dispatch! uses this chain instead of default-interceptors.
   (atom nil))
-
 (defn set-interceptors!
   "Override the interceptor chain. Pass nil to restore defaults."
   [interceptors]
   (reset! interceptor-chain-override interceptors)
   nil)
-
 (defn current-interceptors
   "Return the active interceptor chain."
   []
@@ -763,7 +714,6 @@
 ;; ============================================================
 ;; Dispatch
 ;; ============================================================
-
 (defn dispatch!
   "Dispatch a named event through the interceptor chain.
 

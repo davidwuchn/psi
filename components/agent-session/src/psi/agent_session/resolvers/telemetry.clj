@@ -13,7 +13,6 @@
 (declare tool-lifecycle-summaries)
 
 ;; ── Stats snapshot ──────────────────────────────────────
-
 (defn- stats-snapshot
   "Build canonical session telemetry stats from current session/journal state.
 
@@ -37,7 +36,6 @@
      :entry-count        (count journal)
      :context-tokens     (:context-tokens sd)
      :context-window     (:context-window sd)}))
-
 (defn- canonical-start-time
   [agent-session-ctx]
   (let [sd      (support/session-data agent-session-ctx)
@@ -79,24 +77,20 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/stats]}
   {:psi.agent-session/stats (stats-snapshot agent-session-ctx)})
-
 (defn- utf8-byte-count
   [s]
   (count (.getBytes (str (or s "")) "UTF-8")))
-
 (defn- tool-call-attempt-events
   [agent-session-ctx]
   (let [sid (support/resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-call-attempts sid))
              []))))
-
 (defn- tool-result-ids
   [agent-session-ctx]
   (->> (support/agent-core-messages agent-session-ctx)
        (filter #(= "toolResult" (:role %)))
        (keep :tool-call-id)
        set))
-
 (defn- reduce-attempt-events
   "Reduce raw tool-call streaming events into attempt maps keyed by [turn-id content-index].
    Pure function: events in → attempts out."
@@ -150,7 +144,6 @@
                       :psi.tool-call-attempt/turn-id
                       :psi.tool-call-attempt/content-index))
        vec))
-
 (defn- enrich-attempt-status
   "Add :status, :executed?, :result-recorded? to an attempt based on result-ids."
   [result-ids attempt]
@@ -165,7 +158,6 @@
            :psi.tool-call-attempt/status status
            :psi.tool-call-attempt/executed? recorded?
            :psi.tool-call-attempt/result-recorded? recorded?)))
-
 (defn- build-tool-call-attempts
   "Build enriched tool-call attempts from raw events and committed result ids.
    Pure function: (events, result-ids) → enriched attempt vec."
@@ -202,13 +194,11 @@
     {:psi.agent-session/tool-call-attempt-count           (count attempts*)
      :psi.agent-session/tool-call-attempt-unmatched-count unmatched
      :psi.agent-session/tool-call-attempts                attempts*}))
-
 (defn- tool-lifecycle-events
   [agent-session-ctx]
   (let [sid (support/resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-lifecycle-events sid))
              []))))
-
 (defn- tool-lifecycle-event->eql
   [event]
   {:psi.tool-lifecycle/event-kind (:event-kind event)
@@ -221,7 +211,6 @@
    :psi.tool-lifecycle/result-text (:result-text event)
    :psi.tool-lifecycle/arguments  (:arguments event)
    :psi.tool-lifecycle/parsed-args (:parsed-args event)})
-
 (defn- tool-lifecycle-summaries
   [agent-session-ctx]
   (->> (tool-lifecycle-events agent-session-ctx)
@@ -322,24 +311,20 @@
            (when (= lookup-tool-id (:psi.tool-lifecycle.summary/tool-id summary))
              summary))
          (tool-lifecycle-summaries agent-session-ctx))})
-
 (defn- provider-requests
   [agent-session-ctx]
   (let [sid (support/resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-requests sid))
              []))))
-
 (defn- provider-nonerror-replies
   [agent-session-ctx]
   (let [sid (support/resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-replies sid))
              []))))
-
 (defn- provider-error-replies
   [agent-session-ctx]
   (vec (or (:provider-error-replies (support/session-data agent-session-ctx))
            [])))
-
 (defn- provider-replies
   [agent-session-ctx]
   (let [nonerror (provider-nonerror-replies agent-session-ctx)
@@ -350,7 +335,6 @@
            (sort-by :timestamp)
            vec)
       nonerror)))
-
 (defn- provider-request->eql
   [capture]
   {:psi.provider-request/provider  (:provider capture)
@@ -360,7 +344,6 @@
    :psi.provider-request/timestamp (:timestamp capture)
    :psi.provider-request/headers   (get-in capture [:request :headers])
    :psi.provider-request/body      (get-in capture [:request :body])})
-
 (defn- provider-reply->eql
   [capture]
   {:psi.provider-reply/provider  (:provider capture)
@@ -471,12 +454,10 @@
      :psi.agent-session/provider-error-replies   error-replies*}))
 
 ;; ── API error diagnostics (helpers) ─────────────────────
-
 (defn- error-message-text
   "Extract the first :error block text from an assistant message."
   [msg]
   (some #(when (= :error (:type %)) (:text %)) (:content msg)))
-
 (defn- parse-request-id
   "Extract request-id from provider error text.
    Supports both old clj-http header-map formatting and the normalized
@@ -485,7 +466,6 @@
   (when error-text
     (or (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))
         (second (re-find #"\[request-id\s+([^\]\s]+)\]" error-text)))))
-
 (defn- api-errors-from-messages
   [agent-session-ctx]
   (if-not (ss/agent-ctx-in agent-session-ctx (support/resolver-session-id agent-session-ctx))
@@ -508,7 +488,6 @@
                       :psi.api-error/error-message-full err-text
                       :psi.api-error/request-id (parse-request-id err-text)
                       :psi/agent-session-ctx agent-session-ctx})))))))
-
 (defn- provider-error-reply->api-error
   [agent-session-ctx idx capture]
   (let [event      (:event capture)
@@ -534,7 +513,6 @@
      :psi.api-error/provider-event event
      :psi.api-error/provider-reply-capture capture
      :psi/agent-session-ctx agent-session-ctx}))
-
 (defn- find-provider-reply-by-request-id
   [agent-session-ctx request-id]
   (when (seq request-id)
@@ -548,7 +526,6 @@
                                 (:request_id body)
                                 (parse-request-id (:error-message event))))
                      capture)))))))
-
 (defn- enrich-api-error-from-provider-reply
   [agent-session-ctx error]
   (if (or (:psi.api-error/provider-event error)
@@ -563,7 +540,6 @@
                      :psi.api-error/message-index
                      :psi/agent-session-ctx))
       error)))
-
 (defn- api-errors-from-provider-replies
   [agent-session-ctx]
   (->> (provider-replies agent-session-ctx)
@@ -571,7 +547,6 @@
                        (when (= :error (get-in capture [:event :type]))
                          (provider-error-reply->api-error agent-session-ctx idx capture))))
        vec))
-
 (defn- dedupe-api-errors
   [errors]
   (->> errors
@@ -595,7 +570,6 @@
                {})
        vals
        vec))
-
 (defn- message-summary
   "Lightweight summary of an agent-core message for context display."
   [msg idx]
@@ -614,7 +588,6 @@
      :psi.context-message/role          (:role msg)
      :psi.context-message/content-types (mapv :type (:content msg))
      :psi.context-message/snippet       (or snippet "")}))
-
 (def ^:private request-shape-output
   "Shared output spec for :psi.request-shape/* attributes."
   [:psi.request-shape/message-count
@@ -635,7 +608,6 @@
    :psi.request-shape/alternation-valid?
    :psi.request-shape/alternation-violations
    :psi.request-shape/empty-content-count])
-
 (defn- compute-request-shape
   "Compute request diagnostics from agent-core messages.
    Provider-agnostic: estimates tokens from serialized char count."
@@ -697,14 +669,12 @@
      :psi.request-shape/alternation-valid?     (zero? violations)
      :psi.request-shape/alternation-violations violations
      :psi.request-shape/empty-content-count    empty-ct}))
-
 (defn- resolve-context-window
   "Best-effort context window from session data or model config atom."
   [agent-session-ctx]
   (or (:context-window (support/session-data agent-session-ctx))
       (some-> (:model-config-atom agent-session-ctx) deref :context-window)
       200000))
-
 (defn- resolve-max-output-tokens
   "Best-effort max output tokens from session data or model config atom."
   [agent-session-ctx]
@@ -870,7 +840,6 @@
        :psi.turn/is-error             false})))
 
 ;; ── Resolver collection ─────────────────────────────────
-
 (def resolvers
   (into basics/resolvers
         [agent-session-canonical-telemetry
