@@ -269,47 +269,7 @@
       (is (= [] (:messages agent-data)))
       (is (nil? (:stream-message agent-data)))
       (is (= #{} (:pending-tool-calls agent-data)))
-      (is (nil? (:error agent-data)))))
-
-  (testing "new-session-in! resets startup telemetry"
-    (let [[ctx session-id] (test-support/make-session-ctx
-                            {:session-data {:startup-prompts [{:id "engage-nucleus"}]
-                                            :startup-bootstrap-completed? true
-                                            :startup-bootstrap-started-at (java.time.Instant/now)
-                                            :startup-bootstrap-completed-at (java.time.Instant/now)
-                                            :startup-message-ids ["m1"]}})
-          sd                 (session/new-session-in! ctx nil {})
-          session-id         (:session-id sd)
-          ctx                (retarget ctx sd)]
-      (let [sd (ss/get-session-data-in ctx session-id)]
-        (is (= [] (:startup-prompts sd)))
-        (is (false? (:startup-bootstrap-completed? sd)))
-        (is (nil? (:startup-bootstrap-started-at sd)))
-        (is (nil? (:startup-bootstrap-completed-at sd)))
-        (is (= [] (:startup-message-ids sd)))))))
-
-(deftest fork-session-resets-startup-telemetry-test
-  (let [[ctx session-id]      (test-support/make-session-ctx {})
-        parent-sd          (session/new-session-in! ctx nil {})
-        parent-id          (:session-id parent-sd)
-        ctx                (retarget ctx parent-sd)]
-    (let [entry-id (:id (ss/journal-append-in! ctx parent-id (persist/message-entry {:role "user"
-                                                                                     :content [{:type :text :text "hello"}]
-                                                                                     :timestamp (java.time.Instant/now)})))]
-      (test-support/update-state! ctx :session-data merge {:startup-prompts [{:id "engage-nucleus"}]
-                                                           :startup-bootstrap-completed? true
-                                                           :startup-bootstrap-started-at (java.time.Instant/now)
-                                                           :startup-bootstrap-completed-at (java.time.Instant/now)
-                                                           :startup-message-ids ["m1"]})
-      (let [child-sd    (session/fork-session-in! ctx parent-id entry-id)
-            child-id    (:session-id child-sd)
-            ctx         (retarget ctx child-sd)
-            sd          (ss/get-session-data-in ctx child-id)]
-        (is (= [] (:startup-prompts sd)))
-        (is (false? (:startup-bootstrap-completed? sd)))
-        (is (nil? (:startup-bootstrap-started-at sd)))
-        (is (nil? (:startup-bootstrap-completed-at sd)))
-        (is (= [] (:startup-message-ids sd)))))))
+      (is (nil? (:error agent-data))))))
 
 (deftest fork-session-persists-child-file-with-parent-lineage-test
   (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-fork-" (java.util.UUID/randomUUID))

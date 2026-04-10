@@ -159,16 +159,6 @@
       [:extension-error-count :int]
       [:extension-errors [:vector [:map [:path :string] [:error :string]]]]
       [:mutations [:vector qualified-symbol?]]]]]
-   [:startup-prompts {:optional true} [:vector
-                                       [:map
-                                        [:id :string]
-                                        [:source [:enum :global :project]]
-                                        [:phase [:enum :system-bootstrap :project-bootstrap :mode-bootstrap]]
-                                        [:priority :int]]]]
-   [:startup-bootstrap-completed? {:optional true} :boolean]
-   [:startup-bootstrap-started-at {:optional true} [:maybe inst?]]
-   [:startup-bootstrap-completed-at {:optional true} [:maybe inst?]]
-   [:startup-message-ids {:optional true} [:vector :string]]
    [:extension-last-prompt-source {:optional true} [:maybe :string]]
    [:extension-last-prompt-delivery {:optional true} [:maybe [:enum :prompt :deferred :follow-up]]]
    [:extension-last-prompt-at {:optional true} [:maybe inst?]]
@@ -243,11 +233,6 @@
      :tool-defs               []
      :extensions              {}
      :session-entries         []
-     :startup-prompts         []
-     :startup-bootstrap-completed? false
-     :startup-bootstrap-started-at nil
-     :startup-bootstrap-completed-at nil
-     :startup-message-ids     []
      :extension-last-prompt-source nil
      :extension-last-prompt-delivery nil
      :extension-last-prompt-at nil

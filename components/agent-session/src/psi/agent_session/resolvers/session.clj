@@ -449,22 +449,6 @@
     {:psi.agent-session/rpc-trace-enabled (boolean (:enabled? trace-state))
      :psi.agent-session/rpc-trace-file    (:file trace-state)}))
 
-(pco/defresolver startup-prompts-resolver
-  "Resolve startup prompt execution telemetry for the current session."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/startup-prompts
-                 :psi.agent-session/startup-bootstrap-completed?
-                 :psi.agent-session/startup-bootstrap-started-at
-                 :psi.agent-session/startup-bootstrap-completed-at
-                 :psi.agent-session/startup-message-ids]}
-  (let [sd (support/session-data agent-session-ctx)]
-    {:psi.agent-session/startup-prompts                (:startup-prompts sd [])
-     :psi.agent-session/startup-bootstrap-completed?   (boolean (:startup-bootstrap-completed? sd))
-     :psi.agent-session/startup-bootstrap-started-at   (:startup-bootstrap-started-at sd)
-     :psi.agent-session/startup-bootstrap-completed-at (:startup-bootstrap-completed-at sd)
-     :psi.agent-session/startup-message-ids            (:startup-message-ids sd [])}))
-
 (pco/defresolver startup-bootstrap-resolver
   "Resolve startup bootstrap summary and derived fields."
   [{:keys [psi/agent-session-ctx]}]
@@ -509,5 +493,4 @@
    agent-session-model-catalog
    agent-session-authenticated-providers
    agent-session-rpc-trace
-   startup-prompts-resolver
    startup-bootstrap-resolver])

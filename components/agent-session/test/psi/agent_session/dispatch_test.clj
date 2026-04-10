@@ -560,34 +560,21 @@
 
 ;; ── Origin in log entries ───────────────────────────────────
 
-(deftest startup-bootstrap-dispatch-test
+(deftest startup-bootstrap-summary-dispatch-test
   (let [[ctx _]            (create-session-context {:persist? false})
         _                  (dispatch/clear-event-log!)
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
-        started-at         (java.time.Instant/now)
         completed-at       (java.time.Instant/now)
-        prompts            [{:id "s1" :source :project :phase :system-bootstrap :priority 1}]
         summary            {:timestamp completed-at :prompt-count 1}]
-    (testing "startup lifecycle helpers route writes through dispatch handlers"
-      (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:session-id session-id :started-at started-at} {:origin :core})
-      (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id "m1"} {:origin :core})
-      (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:session-id session-id :startup-prompts prompts :completed-at completed-at} {:origin :core})
+    (testing "startup summary writes through dispatch handlers"
       (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:session-id session-id :summary summary} {:origin :core})
       (let [sd         (ss/get-session-data-in ctx session-id)
             entries     (dispatch/event-log-entries)
             event-types (mapv :event-type entries)]
-        (is (= started-at (:startup-bootstrap-started-at sd)))
-        (is (true? (:startup-bootstrap-completed? sd)))
-        (is (= completed-at (:startup-bootstrap-completed-at sd)))
-        (is (= ["m1"] (:startup-message-ids sd)))
-        (is (= prompts (:startup-prompts sd)))
         (is (= summary (:startup-bootstrap sd)))
         (is (= [:session/new-initialize
                 :session/retarget-runtime-prompt-metadata
-                :session/startup-bootstrap-begin
-                :session/record-startup-message-id
-                :session/startup-bootstrap-complete
                 :session/set-startup-bootstrap-summary]
                event-types))))))
 

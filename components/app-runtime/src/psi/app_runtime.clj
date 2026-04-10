@@ -218,24 +218,26 @@ Available: " (str/join ", " (map name (keys models/all-models))))
       [])))
 
 (defn- startup-rehydrate-from-current-session!
-  "Run startup prompts in `session-id` and return rehydrate payload.
+  "Return rehydrate payload from the current session state.
+
+   Startup prompts have been removed from runtime bootstrap. This helper now
+   only snapshots the already-bootstrapped session transcript/tool state.
 
    Returns map:
    {:agent-messages [...]
     :messages [...]
     :tool-calls {...}
     :tool-order [...]}"
-  [ctx session-id ai-ctx ai-model]
-  (try
-    (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
-    (catch Throwable t
-      (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
+  [ctx session-id _ai-ctx _ai-model]
   (let [agent-messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))
         tui-state      (transcript/agent-messages->tui-resume-state agent-messages)]
     (assoc tui-state :agent-messages agent-messages)))
 
 (defn- start-new-session-with-startup!
-  "Create a fresh session branch and run configured startup prompts.
+  "Create a fresh session branch and return rehydrate payload.
+
+   Startup prompts have been removed; the new session relies on the canonical
+   session bootstrap/runtime state and then snapshots its transcript/tool state.
 
    Returns map:
    {:session-id     string
@@ -362,14 +364,12 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                               {:origin :core})
          _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
                                                                     (or memory-runtime-opts {})))
+         _                (runtime/register-extension-run-fn-in! ctx session-id nil ai-model)
          startup-rehydrate (startup-rehydrate-from-current-session! ctx session-id nil ai-model)]
      (doseq [{:keys [path error]} (:extension-errors summary)]
        (timbre/warn "Extension error:" path error))
      (when (pos? (:extension-loaded-count summary))
        (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
-    ;; Register extension run-fn so extension-initiated prompts (e.g. PSL)
-    ;; actually invoke the LLM instead of orphaning a user message in agent-core.
-     (runtime/register-extension-run-fn-in! ctx session-id nil ai-model)
      {:ctx               ctx
       :templates         templates
       :skills            skills

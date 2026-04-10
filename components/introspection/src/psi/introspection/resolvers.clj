@@ -41,7 +41,7 @@
      :psi.startup/bootstrap-timestamp    — bootstrap finished timestamp
      :psi.startup/prompt-count           — prompts loaded at startup
      :psi.startup/skill-count            — skills loaded at startup
-     :psi.startup/tool-count             — tools loaded at startup
+     :psi.startup/tool-count             — tools loaded during bootstrap
      :psi.startup/extension-loaded-count — successful extension loads
      :psi.startup/extension-error-count  — failed extension loads
      :psi.startup/extension-errors       — [{:path :error}] failures
@@ -165,7 +165,7 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (pco/defresolver startup-bootstrap-summary
-  "Resolve startup bootstrap summary from agent-session context.
+  "Resolve bootstrap summary from agent-session context.
    Safe when no bootstrap has run yet: returns nil/zero defaults."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
@@ -178,7 +178,7 @@
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
                  :psi.startup/mutations]}
-  (let [sid     (:session-id (ss/get-session-data-in agent-session-ctx))
+  (let [sid     (:session-id (ss/get-session-data-in agent-session-ctx nil))
         state   @(:state* agent-session-ctx)
         summary (get-in state [:agent-session :sessions sid :data :startup-bootstrap])]
     {:psi.startup/bootstrap-summary      summary

@@ -91,9 +91,12 @@
         baseline    (merge (session-data-ns/initial-session)
                            (select-keys current-sd [:model
                                                     :thinking-level
+                                                    :base-system-prompt
+                                                    :system-prompt
                                                     :prompt-mode
                                                     :nucleus-prelude-override
                                                     :cache-breakpoints
+                                                    :system-prompt-build-opts
                                                     :developer-prompt
                                                     :developer-prompt-source
                                                     :auto-retry-enabled
@@ -123,11 +126,6 @@
                            :steering-messages []
                            :follow-up-messages []
                            :retry-attempt 0
-                           :startup-prompts []
-                           :startup-bootstrap-completed? false
-                           :startup-bootstrap-started-at nil
-                           :startup-bootstrap-completed-at nil
-                           :startup-message-ids []
                            :created-at (java.time.Instant/now))]
     (cond-> (-> state
                 (assoc-in (session-data-path new-session-id) next-sd)
@@ -232,12 +230,7 @@
                                    :parent-session-id parent-session-id
                                    :parent-session-path parent-session-file
                                    :session-file session-file
-                                   :spawn-mode :fork-head
-                                   :startup-prompts []
-                                   :startup-bootstrap-completed? false
-                                   :startup-bootstrap-started-at nil
-                                   :startup-bootstrap-completed-at nil
-                                   :startup-message-ids [])]
+                                   :spawn-mode :fork-head)]
     ;; carry-runtime-handles must run before any pruning as active session may be ephemeral
     (cond-> (-> state
                 (carry-runtime-handles parent-session-id new-session-id)

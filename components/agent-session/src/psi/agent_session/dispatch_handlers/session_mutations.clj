@@ -257,32 +257,6 @@
 
 (defn- register-session-state-handlers! []
   (register-core-handler!
-   :session/startup-bootstrap-begin
-   (fn [_ctx {:keys [session-id started-at]}]
-     {:root-state-update (session/session-update session-id #(assoc %
-                                                                    :startup-bootstrap-started-at started-at
-                                                                    :startup-bootstrap-completed? false
-                                                                    :startup-bootstrap-completed-at nil
-                                                                    :startup-message-ids []))}))
-
-  (register-core-handler!
-   :session/record-startup-message-id
-   (fn [_ctx {:keys [session-id message-id]}]
-     (when message-id
-       {:root-state-update (session/session-update session-id #(update % :startup-message-ids (fnil conj []) message-id))})))
-
-  (register-core-handler!
-   :session/startup-bootstrap-complete
-   (fn [_ctx {:keys [session-id startup-prompts completed-at]}]
-     {:root-state-update (session/session-update session-id
-                                                 (fn [sd]
-                                                   (cond-> (assoc sd
-                                                                  :startup-bootstrap-completed?   true
-                                                                  :startup-bootstrap-completed-at completed-at)
-                                                     (some? startup-prompts)
-                                                     (assoc :startup-prompts startup-prompts))))}))
-
-  (register-core-handler!
    :session/set-startup-bootstrap-summary
    (fn [_ctx {:keys [session-id summary]}]
      {:root-state-update (session/session-update session-id #(assoc % :startup-bootstrap summary))}))
@@ -519,21 +493,16 @@
 
   (register-core-handler!
    :session/send-extension-message
-   (fn [ctx {:keys [session-id message]}]
-     (let [bootstrap-complete? (:startup-bootstrap-completed?
-                                (session/get-session-data-in ctx session-id))]
-       {:effects (cond-> []
-                   bootstrap-complete?
-                   (into [{:effect/type :runtime/agent-append-message
-                           :message message}
-                          {:effect/type :runtime/agent-emit
-                           :event {:type :message-start :message message}}
-                          {:effect/type :runtime/agent-emit
-                           :event {:type :message-end :message message}}])
-                   true
-                   (conj {:effect/type :runtime/event-queue-offer
-                          :event {:type :external-message
-                                  :message message}}))})))
+   (fn [_ctx {:keys [message]}]
+     {:effects [{:effect/type :runtime/agent-append-message
+                 :message message}
+                {:effect/type :runtime/agent-emit
+                 :event {:type :message-start :message message}}
+                {:effect/type :runtime/agent-emit
+                 :event {:type :message-end :message message}}
+                {:effect/type :runtime/event-queue-offer
+                 :event {:type :external-message
+                         :message message}}]}))
 
   (register-core-handler!
    :session/add-tool

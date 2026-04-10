@@ -18,7 +18,6 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
-   [psi.agent-session.startup-prompts :as startup-prompts]
    [psi.memory.runtime :as memory-runtime]
    [psi.recursion.core :as recursion]
    [taoensso.timbre :as timbre]))
@@ -341,101 +340,4 @@
                       (timbre/warn e "Extension run-fn failed"))))]
      (ext-rt/set-extension-run-fn-in! ctx session-id run-fn))))
 
-(defn run-startup-prompts-in!
-  "Run configured startup prompts as visible user turns.
 
-   opts:
-   - :ai-ctx
-   - :ai-model
-   - :run-loop-fn
-   - :progress-queue
-   - :session-mode (keyword, optional; default :build)
-   - :spawn-mode (keyword, optional; default :new-root)
-   - :fail-fast? (boolean, optional; default false)
-
-   Returns {:rules [...] :applied [...] :errors [...]} where :applied contains
-   per-rule outcomes. On prompt execution failure, execution continues by default
-   with an error outcome captured in :applied/:errors."
-  [ctx session-id {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode spawn-mode fail-fast?]
-                   :or   {session-mode :build
-                          spawn-mode :new-root
-                          fail-fast? false}}]
-  (let [should-run? (startup-prompts/should-run?
-                     {:spawn-mode spawn-mode})
-        started-at (java.time.Instant/now)
-        _ (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:session-id session-id :started-at started-at} {:origin :core})
-        rules (if should-run?
-                (startup-prompts/discover-rules
-                 {:cwd (ss/effective-cwd-in ctx session-id)
-                  :session-mode session-mode})
-                [])
-        {:keys [applied errors]}
-        (loop [remaining rules
-               applied []
-               errors []]
-          (if-let [rule (first remaining)]
-            (let [text    (:text rule)
-                  outcome (try
-                            (if run-loop-fn
-                              (let [user-msg   (journal-user-message-in! ctx session-id text nil)
-                                    message-id (some-> (ss/get-state-value-in ctx (ss/state-path :journal session-id)) last :id)
-                                    api-key    (resolve-api-key-in ctx session-id ai-model)
-                                    _          (when message-id
-                                                 (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id message-id} {:origin :core}))]
-                                {:status :ok
-                                 :user-message user-msg
-                                 :assistant-result
-                                 (run-agent-loop-in! ctx session-id ai-ctx ai-model [user-msg]
-                                                     {:run-loop-fn run-loop-fn
-                                                      :api-key api-key
-                                                      :progress-queue progress-queue
-                                                      :sync-on-git-head-change? true})})
-                              (let [api-key (resolve-api-key-in ctx session-id ai-model)
-                                    _       (dispatch/dispatch! ctx :session/set-model
-                                                                {:session-id session-id
-                                                                 :model {:provider  (some-> (:provider ai-model) name)
-                                                                         :id        (:id ai-model)
-                                                                         :reasoning (boolean (:supports-reasoning ai-model))}
-                                                                 :scope :session}
-                                                                {:origin :core})
-                                    _       (submit-prompt-turn-in! ctx session-id text nil
-                                                                    {:progress-queue progress-queue
-                                                                     :runtime-opts (cond-> {}
-                                                                                     api-key (assoc :api-key api-key))
-                                                                     :sync-on-git-head-change? true})
-                                    user-id (last-user-message-entry-id-in-journal ctx session-id)
-                                    _       (when user-id
-                                              (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id user-id} {:origin :core}))]
-                                {:status :ok
-                                 :user-message (some->> (persist/all-entries-in ctx session-id)
-                                                        reverse
-                                                        (filter #(= :message (:kind %)))
-                                                        (map #(get-in % [:data :message]))
-                                                        (filter #(= "user" (:role %)))
-                                                        first)
-                                 :assistant-result (last-assistant-message-in-journal ctx session-id)}))
-                            (catch Exception e
-                              {:status :error
-                               :error {:message (ex-message e)
-                                       :data (ex-data e)}}))
-                  entry    (cond-> {:id (:id rule)
-                                    :user-message (:user-message outcome)}
-                             (= :ok (:status outcome))
-                             (merge {:status :ok
-                                     :assistant-result (:assistant-result outcome)})
-                             (= :error (:status outcome))
-                             (merge {:status :error
-                                     :error (:error outcome)}))
-                  applied' (conj applied entry)
-                  errors'  (if (= :error (:status outcome))
-                             (conj errors (:error outcome))
-                             errors)]
-              (if (and fail-fast? (= :error (:status outcome)))
-                {:applied applied' :errors errors'}
-                (recur (rest remaining) applied' errors')))
-            {:applied applied :errors errors}))
-        completed-at (java.time.Instant/now)]
-    (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:session-id session-id :startup-prompts (startup-prompts/applied-view rules) :completed-at completed-at} {:origin :core})
-    {:rules rules
-     :applied applied
-     :errors errors}))

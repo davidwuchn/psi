@@ -209,9 +209,6 @@
                :event    :workflow/finish
                :data     {:result {:ok true}}})
 
-      ;; Ensure extension-injected messages are persisted into transcript in this test.
-      (test-support/update-state! ctx :session-data assoc :startup-bootstrap-completed? true)
-
       ;; Turn boundary / idle checkpoint triggers background terminal injection path.
       (ext-rt/set-extension-run-fn-in! ctx session-id (fn [_text _source] nil))
       (Thread/sleep 30)
