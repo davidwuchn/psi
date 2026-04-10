@@ -4,7 +4,8 @@
             [clj-http.client :as http]
             [cheshire.core :as json]
             [psi.ai.models :as models]
-            [psi.ai.providers.anthropic.request-schema :as request-schema])
+            [psi.ai.providers.anthropic.request-schema :as request-schema]
+            [psi.ai.providers.anthropic.request-support :as request-support])
   (:import [java.io InputStream]
            [java.util UUID]))
 
@@ -378,13 +379,6 @@
     (assoc "x-api-key"
            (redact-secret (get headers "x-api-key")))))
 
-(defn- parse-json-body-safe
-  [body]
-  (try
-    (json/parse-string (str (or body "")) true)
-    (catch Exception _
-      (str (or body "")))))
-
 (defn- capture-request!
   [options url request]
   (safe-call! (:on-provider-request options)
@@ -392,7 +386,7 @@
                :api :anthropic-messages
                :url url
                :request {:headers (redact-request-headers (:headers request))
-                         :body (parse-json-body-safe (:body request))}}))
+                         :body (request-support/parse-json-body-safe (:body request))}}))
 
 (defn- capture-response!
   [options url event]
@@ -565,7 +559,7 @@
 (defn- request-diagnostic-hint
   [request]
   (when (map? request)
-    (let [parsed         (parse-json-body-safe (:body request))
+    (let [parsed         (request-support/parse-json-body-safe (:body request))
           model-id       (when (map? parsed) (:model parsed))
           beta           (get-in request [:headers "anthropic-beta"])
           message-count  (when (map? parsed) (count (or (:messages parsed) [])))
@@ -659,150 +653,6 @@
    (merge (error-context (:body response) (:headers response) request)
           {:status (:status response)})))
 
-(defn- split-beta-values
-  [beta-header]
-  (if (string? beta-header)
-    (->> (str/split beta-header #",")
-         (map str/trim)
-         (remove str/blank?)
-         vec)
-    []))
-
-(defn- set-beta-values
-  [headers betas]
-  (cond-> (or headers {})
-    (seq betas) (assoc "anthropic-beta" (str/join "," betas))
-    (empty? betas) (dissoc "anthropic-beta")))
-
-(defn- remove-beta-values
-  [headers remove-set]
-  (let [betas* (->> (split-beta-values (get headers "anthropic-beta"))
-                    (remove remove-set)
-                    vec)]
-    (set-beta-values headers betas*)))
-
-(defn- beta-present?
-  [headers beta]
-  (some #(= % beta)
-        (split-beta-values (get headers "anthropic-beta"))))
-
-(defn- remove-prompt-caching-betas
-  [headers]
-  ;; Keep prompt-caching-scope for OAuth compatibility; remove only the
-  ;; prompt-caching execution beta when retrying without cache directives.
-  (remove-beta-values headers #{prompt-caching-beta}))
-
-(defn- update-request-headers
-  [request f]
-  (update request :headers #(f (or % {}))))
-
-(defn- clear-beta-header
-  [headers]
-  (dissoc headers "anthropic-beta"))
-
-(defn- strip-cache-control-fields
-  [x]
-  (cond
-    (map? x)
-    (->> x
-         (remove (fn [[k _]] (or (= k :cache_control)
-                                 (= k "cache_control"))))
-         (map (fn [[k v]] [k (strip-cache-control-fields v)]))
-         (into (empty x)))
-
-    (vector? x)
-    (mapv strip-cache-control-fields x)
-
-    (set? x)
-    (set (map strip-cache-control-fields x))
-
-    (sequential? x)
-    (mapv strip-cache-control-fields x)
-
-    :else
-    x))
-
-(defn- request-body-map
-  [request]
-  (let [body* (parse-json-body-safe (:body request))]
-    (when (map? body*)
-      body*)))
-
-(defn- request-with-body-map
-  [request body-map]
-  (assoc request :body (json/generate-string body-map)))
-
-(defn- collapse-system-blocks-if-plain-text
-  [body]
-  (if (text-system-blocks? (:system body))
-    (assoc body :system (system-blocks->text (:system body)))
-    body))
-
-(defn- update-request-body
-  [request f]
-  (if-let [body* (request-body-map request)]
-    (request-with-body-map request (f body*))
-    request))
-
-(defn- request-transform
-  [step]
-  (case step
-    :without-prompt-caching
-    (fn [request]
-      (-> request
-          (update-request-headers remove-prompt-caching-betas)
-          (update-request-body #(-> %
-                                    strip-cache-control-fields
-                                    collapse-system-blocks-if-plain-text))))
-
-    :without-thinking
-    (fn [request]
-      (-> request
-          (update-request-headers #(remove-beta-values %
-                                                       #{interleaved-thinking-beta}))
-          (update-request-body #(dissoc % :thinking))))
-
-    :without-all-betas
-    #(update-request-headers % clear-beta-header)
-
-    identity))
-
-(defn- apply-request-transforms
-  [request steps]
-  (reduce (fn [req step]
-            ((request-transform step) req))
-          request
-          steps))
-
-(defn- prompt-caching-request?
-  [request]
-  (beta-present? (:headers request) prompt-caching-beta))
-
-(defn- thinking-request?
-  [request]
-  (or (beta-present? (:headers request) interleaved-thinking-beta)
-      (contains? (or (request-body-map request) {}) :thinking)))
-
-(defn- has-any-beta-header?
-  [request]
-  (seq (split-beta-values (get-in request [:headers "anthropic-beta"]))))
-
-(defn- fallback-request-steps-for-400
-  [request]
-  (cond-> []
-    (prompt-caching-request? request)              (conj :without-prompt-caching)
-    (thinking-request? request)                    (conj :without-thinking)
-    (and (has-any-beta-header? request)
-         (not (oauth-auth-request? request)))      (conj :without-all-betas)))
-
-(defn- fallback-request-for-400
-  [request]
-  (let [steps   (fallback-request-steps-for-400 request)
-        retried (apply-request-transforms request steps)]
-    (when (not= request retried)
-      {:request retried
-       :steps steps})))
-
 (defn- stream-response
   [url request]
   (http/post url (merge request {:as :stream :throw-exceptions false})))
@@ -829,7 +679,11 @@
 
 (defn- handle-400-response!
   [options url request response consume-fn consume-stream-response!]
-  (if-let [fallback (fallback-request-for-400 request)]
+  (if-let [fallback (request-support/fallback-request-for-400
+                      request
+                      {:prompt-caching-beta prompt-caching-beta
+                       :interleaved-thinking-beta interleaved-thinking-beta
+                       :oauth-auth-request? oauth-auth-request?})]
     (let [first-error (response->error response request)]
       (capture-response! options url (assoc first-error
                                             :retrying-with-compatibility-fallback true
