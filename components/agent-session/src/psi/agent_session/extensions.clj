@@ -238,7 +238,6 @@
                                         :content      (:content result)
                                         :details      (:details result)
                                         :is-error     is-error?})]
-    ;; Return the first result that modifies content/details/is-error
     (first (filter #(or (contains? % :content) (contains? % :details)
                         (contains? % :is-error))
                    (remove :error results)))))
@@ -249,16 +248,13 @@
    Returns a wrapped fn with the same signature."
   [reg execute-fn]
   (fn [tool-name args]
-    ;; Pre-hook: tool_call
     (let [block-result (dispatch-tool-call-in reg tool-name nil args)]
       (if (:block block-result)
         {:content  (or (:reason block-result)
                        "Tool execution was blocked by an extension")
          :is-error true}
-        ;; Execute the actual tool
         (let [result   (execute-fn tool-name args)
               is-error (:is-error result false)
-              ;; Post-hook: tool_result
               modified (dispatch-tool-result-in
                         reg tool-name nil args result is-error)]
           (if modified
@@ -678,11 +674,8 @@
      :switch-session switch-session!
      :get-api-key get-api-key
      :events events
-     ;; Runtime UI surface marker for extension branching.
      :ui-type ui-type
-     ;; nil when headless (no TUI); present when TUI is active.
      :ui ui
-     ;; Always routes to stderr — never to the RPC stdout pipe.
      :log runtime-log}))
 
 (defn- extension-file?
@@ -700,9 +693,7 @@
             (for [entry (.listFiles d)
                   :let  [abs (.getAbsolutePath entry)]
                   path  (cond
-                          ;; Direct .clj file
                           (extension-file? entry) [abs]
-                          ;; Subdir with extension.clj
                           (.isDirectory entry)
                           (let [ext-clj (io/file entry "extension.clj")]
                             (when (.exists ext-clj)
@@ -731,21 +722,16 @@
          home   (System/getProperty "user.home")
          seen   (atom #{})
          result (atom [])]
-     ;; 1. Project-local
      (doseq [path (discover-in-dir (str cwd "/.psi/extensions"))]
        (conj-unique! seen result path))
-     ;; 2. User-global
      (doseq [path (discover-in-dir (str home "/.psi/agent/extensions"))]
        (conj-unique! seen result path))
-     ;; 3. Explicit paths
      (doseq [configured-path configured-paths]
        (let [f (io/file configured-path)]
          (cond
-           ;; Direct file
            (and (.exists f) (.isFile f))
            (conj-unique! seen result (.getAbsolutePath f))
 
-           ;; Directory — discover within it
            (and (.exists f) (.isDirectory f))
            (doseq [path (discover-in-dir configured-path)]
              (conj-unique! seen result path)))))
@@ -761,13 +747,8 @@
     (let [f (io/file ext-path)]
       (when-not (.exists f)
         (throw (ex-info (str "Extension file not found: " ext-path) {:path ext-path})))
-      ;; Register the extension path
       (register-extension-in! reg ext-path)
-      ;; Load the file (defines namespace + vars)
       (load-file ext-path)
-      ;; Find the init fn: look for `init` in the last namespace loaded from the file.
-      ;; Convention: the file's ns should have an `init` fn.
-      ;; We resolve it by reading the ns form from the file.
       (let [ns-sym  (with-open [rdr (java.io.PushbackReader. (io/reader f))]
                       (let [form (read rdr)]
                         (when (and (list? form) (= 'ns (first form)))
@@ -820,5 +801,4 @@
   ([reg runtime-fns configured-paths cwd]
    (unregister-all-in! reg)
    (load-extensions-in! reg runtime-fns configured-paths cwd)))
-
 
