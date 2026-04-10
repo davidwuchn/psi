@@ -1,17 +1,11 @@
 (ns psi.memory.core
-  "Memory component scaffold.
-
-   Establishes an isolated memory context (Nullable pattern), global wrappers,
-   and query resolver registration hooks.
-
-   This namespace intentionally provides only Step 10 scaffold behavior.
-   Lifecycle, remember/recover logic, and graph history tracking are added in
-   follow-up tasks."
+  "Memory scaffold context, wrappers, and resolver registration."
   (:require
    [clojure.set :as set]
    [clojure.string :as str]
    [psi.engine.core :as engine]
    [psi.history.git :as git]
+   [psi.memory.capability-history :as capability-history]
    [psi.memory.graph-history :as graph-history]
    [psi.memory.ranking :as ranking]
    [psi.memory.resolvers :as resolvers]
@@ -457,104 +451,11 @@
        (distinct)
        (vec)))
 
-(defn- normalize-capability-ids
-  [capability-ids]
-  (->> (or capability-ids [])
-       (keep (fn [capability-id]
-               (cond
-                 (keyword? capability-id) capability-id
-                 (string? capability-id) capability-id
-                 :else nil)))
-       (distinct)
-       (vec)))
-
 (defn- append-capability-history
   [state events]
   (if (seq events)
     (update state :capability-history (fnil into []) events)
     state))
-
-(defn- capability-history-events-for-record
-  [record]
-  (let [provenance        (:provenance record)
-        capability-ids    (normalize-capability-ids (:capabilityIds provenance))
-        source            (or (:source provenance)
-                              (:source-type provenance)
-                              :unknown)
-        graph-fingerprint (:graphFingerprint provenance)]
-    (mapv (fn [capability-id]
-            {:event-id (str (random-uuid))
-             :event-type :memory-linked
-             :timestamp (:timestamp record)
-             :capability-id capability-id
-             :record-id (:record-id record)
-             :content-type (:content-type record)
-             :source source
-             :graph-fingerprint graph-fingerprint})
-          capability-ids)))
-
-(defn- capability-history-events-for-baseline-snapshot
-  [snapshot]
-  (mapv (fn [capability-id]
-          {:event-id (str (random-uuid))
-           :event-type :graph-capability-baseline
-           :timestamp (:timestamp snapshot)
-           :capability-id capability-id
-           :graph-fingerprint (:fingerprint snapshot)})
-        (normalize-capability-ids (:capability-ids snapshot))))
-
-(defn- capability-history-events-for-delta
-  [delta]
-  (let [timestamp        (:timestamp delta)
-        from-fingerprint (:from-fingerprint delta)
-        to-fingerprint   (:to-fingerprint delta)
-        added-events     (mapv (fn [capability-id]
-                                 {:event-id (str (random-uuid))
-                                  :event-type :graph-capability-added
-                                  :timestamp timestamp
-                                  :capability-id capability-id
-                                  :from-fingerprint from-fingerprint
-                                  :to-fingerprint to-fingerprint})
-                               (normalize-capability-ids (:added-capability-ids delta)))
-        removed-events   (mapv (fn [capability-id]
-                                 {:event-id (str (random-uuid))
-                                  :event-type :graph-capability-removed
-                                  :timestamp timestamp
-                                  :capability-id capability-id
-                                  :from-fingerprint from-fingerprint
-                                  :to-fingerprint to-fingerprint})
-                               (normalize-capability-ids (:removed-capability-ids delta)))]
-    (into [] (concat added-events removed-events))))
-
-(defn- capability-history-events-for-recovery
-  [recovery]
-  (let [timestamp      (:timestamp recovery)
-        recovery-id    (:recovery-id recovery)
-        query-text     (get-in recovery [:filters :query-text])
-        requested-ids  (normalize-capability-ids (get-in recovery [:filters :capability-ids]))
-        requested-set  (set requested-ids)]
-    (into []
-          (mapcat (fn [record]
-                    (let [provenance        (:provenance record)
-                          record-ids        (normalize-capability-ids (:capabilityIds provenance))
-                          hit-capability-ids (if (seq requested-set)
-                                               (filterv requested-set record-ids)
-                                               record-ids)
-                          source            (or (:source provenance)
-                                                (:source-type provenance)
-                                                :unknown)]
-                      (mapv (fn [capability-id]
-                              {:event-id (str (random-uuid))
-                               :event-type :recovery-hit
-                               :timestamp timestamp
-                               :capability-id capability-id
-                               :recovery-id recovery-id
-                               :record-id (:record-id record)
-                               :query-text query-text
-                               :source source
-                               :recovery-score (:recovery/score record)})
-                            hit-capability-ids)))
-                  (:results recovery)))))
 
 (defn- enrich-provenance-with-graph
   [provenance capability-graph]
@@ -624,7 +525,7 @@
                                       :tags normalized-tags
                                       :timestamp record-timestamp
                                       :provenance full-provenance}
-          capability-history-events  (capability-history-events-for-record memory-record)]
+          capability-history-events  (capability-history/events-for-record memory-record)]
       (swap-state-in! ctx
                       (fn [state]
                         (-> state
@@ -813,7 +714,7 @@
                                    :resultsTruncated truncated?
                                    :results results}
                 capability-history-events
-                (capability-history-events-for-recovery recovery)]
+                (capability-history/events-for-recovery recovery)]
             (swap-state-in! ctx
                             (fn [s]
                               (-> s
@@ -866,8 +767,8 @@
          (let [delta (when latest-snapshot
                        (graph-history/make-delta latest-snapshot snapshot timestamp))
                capability-history-events (if delta
-                                           (capability-history-events-for-delta delta)
-                                           (capability-history-events-for-baseline-snapshot snapshot))]
+                                           (capability-history/events-for-delta delta)
+                                           (capability-history/events-for-baseline-snapshot snapshot))]
            (swap-state-in! ctx
                            (fn [s]
                              (let [snapshot-limit (normalize-retention-limit
