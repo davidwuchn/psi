@@ -196,7 +196,7 @@
      :cancelled?  — true if any handler returned {:cancel true}
      :results     — vector of all handler return values (nil for void handlers)
      :override    — last explicit override payload from handlers, or nil.
-                    Accepts {:result x} and {:compaction x} (for compat)."
+                    Accepts {:result x} and {:compaction x}."
   [reg event-name event]
   (let [state             @(:state reg)
         ordered-paths     (:registration-order state)
