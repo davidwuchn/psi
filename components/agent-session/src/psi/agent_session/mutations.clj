@@ -165,6 +165,19 @@
     {:psi.extension/path       ext-path
      :psi.extension/flag-names (vec (ext/flag-names-in reg))}))
 
+(pco/defmutation set-allowed-events
+  "Set the explicit allowed event set for an extension."
+  [_ {:keys [psi/agent-session-ctx ext-path allowed-events]}]
+  {::pco/op-name 'psi.extension/set-allowed-events
+   ::pco/params  [:psi/agent-session-ctx :ext-path :allowed-events]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension/allowed-events]}
+  (let [reg          (:extension-registry agent-session-ctx)
+        allowed-set  (set (or allowed-events #{}))]
+    (ext/set-allowed-events-in! reg ext-path allowed-set)
+    {:psi.extension/path           ext-path
+     :psi.extension/allowed-events (vec (sort allowed-set))}))
+
 (pco/defmutation register-shortcut
   "Register an extension-owned keyboard shortcut into the extension registry."
   [_ {:keys [psi/agent-session-ctx ext-path key opts]}]
@@ -730,41 +743,42 @@
 (def all-mutations
   "All agent-session mutations defined in this namespace."
   (into [set-session-name
-   add-prompt-template
-   add-skill
-   add-tool
-   set-active-tools
-   register-tool
-   register-command
-   register-handler
-   register-flag
-   register-shortcut
-   register-post-tool-processor
-   ensure-service
-   stop-service
-   service-request
-   service-notify
-   register-prompt-contribution
-   update-prompt-contribution
-   unregister-prompt-contribution
-   set-model
-   run-read-tool
-   run-bash-tool
-   run-write-tool
-   run-update-tool
-   run-tool-plan
-   run-chain-tool
-   add-extension
-   create-session
-   create-child-session
-   run-agent-loop-in-session
-   switch-session
-   set-rpc-trace
-   interrupt
-   compact
-   append-entry
-   send-message
-   send-prompt
-   set-widget-spec
-   clear-widget-spec]
-   workflow-mutations/all-mutations))
+         add-prompt-template
+         add-skill
+         add-tool
+         set-active-tools
+         register-tool
+         register-command
+         register-handler
+         register-flag
+         set-allowed-events
+         register-shortcut
+         register-post-tool-processor
+         ensure-service
+         stop-service
+         service-request
+         service-notify
+         register-prompt-contribution
+         update-prompt-contribution
+         unregister-prompt-contribution
+         set-model
+         run-read-tool
+         run-bash-tool
+         run-write-tool
+         run-update-tool
+         run-tool-plan
+         run-chain-tool
+         add-extension
+         create-session
+         create-child-session
+         run-agent-loop-in-session
+         switch-session
+         set-rpc-trace
+         interrupt
+         compact
+         append-entry
+         send-message
+         send-prompt
+         set-widget-spec
+         clear-widget-spec]
+        workflow-mutations/all-mutations))

@@ -344,13 +344,8 @@
 (def permission-interceptor
   "Checks extension dispatch rights.
    When :origin is :extension, verifies the extension is registered in the
-   extension registry on the session context and, when present, enforces
-   manifest-declared `:allowed-events` membership.
-
-   Current migration behavior for missing manifests:
-   - registered extension with explicit `:allowed-events` => enforced
-   - registered extension with no `:allowed-events` => compatibility allow
-   - unknown extension => blocked
+   extension registry on the session context and enforces explicit
+   `:allowed-events` membership.
 
    Non-extension origins (:core, :statechart, :adapter) bypass this check."
   (->interceptor
@@ -373,17 +368,16 @@
                    :blocked? true
                    :block-reason :unknown-extension)
 
-            (set? allowed-set)
-            (if (contains? allowed-set event-type)
-              ictx
-              (assoc ictx
-                     :blocked? true
-                     :block-reason {:reason :permission-denied
-                                    :event-type event-type
-                                    :ext-id ext-id}))
+            (and (set? allowed-set)
+                 (contains? allowed-set event-type))
+            ictx
 
             :else
-            (assoc ictx :permission-compat? true)))
+            (assoc ictx
+                   :blocked? true
+                   :block-reason {:reason :permission-denied
+                                  :event-type event-type
+                                  :ext-id ext-id})))
         ictx))}))
 
 ;; ── Statechart interceptor ──────────────────────────────────

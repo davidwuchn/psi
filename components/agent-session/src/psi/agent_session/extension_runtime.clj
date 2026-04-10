@@ -35,6 +35,7 @@
     'psi.extension/register-prompt-contribution
     'psi.extension/update-prompt-contribution
     'psi.extension/unregister-prompt-contribution
+    'psi.extension/set-allowed-events
     'psi.extension.tool/read
     'psi.extension.tool/bash
     'psi.extension.tool/write
@@ -91,6 +92,19 @@
                       {:psi/agent-session-ctx        ctx
                        :psi.agent-session/session-id session-id}
                       eql-query))))
+
+(def ^:private extension-ui-allowed-events
+  #{:session/ui-request-dialog
+    :session/ui-set-widget
+    :session/ui-clear-widget
+    :session/ui-set-widget-spec
+    :session/ui-clear-widget-spec
+    :session/ui-set-status
+    :session/ui-clear-status
+    :session/ui-notify
+    :session/ui-register-tool-renderer
+    :session/ui-register-message-renderer
+    :session/ui-set-tools-expanded})
 
 (defn- extension-ui-context
   [ctx session-id current-session-data ext-path]
@@ -201,11 +215,13 @@
   "Build the runtime-fns map for extension API EQL access.
    Extensions interact with session state via query/mutation only.
    Secrets are exposed via narrow capability fns (not queryable resolvers)."
-  [ctx session-id]
+  [ctx session-id ext-path]
   (let [register-resolvers! (:register-resolvers-fn ctx)
         register-mutations! (:register-mutations-fn ctx)
         current-session-data (fn []
                                (ss/get-session-data-in ctx session-id))]
+    (when-let [reg (:extension-registry ctx)]
+      (ext/set-allowed-events-in! reg (str ext-path) extension-ui-allowed-events))
     {:query-fn
      (fn [eql-query]
        (query-extension-state register-resolvers! register-mutations! ctx session-id eql-query))
@@ -243,7 +259,7 @@
   ([ctx session-id configured-paths]
    (load-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
-   (let [runtime-fns (make-extension-runtime-fns ctx session-id)]
+   (let [runtime-fns (make-extension-runtime-fns ctx session-id nil)]
      (ext/load-extensions-in! (:extension-registry ctx) runtime-fns
                               configured-paths cwd))))
 
@@ -258,7 +274,7 @@
    (reload-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
    (dispatch/dispatch! ctx :session/reset-prompt-contributions {:session-id session-id} {:origin :core})
-   (let [runtime-fns (make-extension-runtime-fns ctx session-id)
+   (let [runtime-fns (make-extension-runtime-fns ctx session-id nil)
          result      (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns
                                                 configured-paths cwd)]
      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
@@ -274,7 +290,7 @@
    (let [{:keys [extension error]}
          (ext/load-extension-in! (:extension-registry ctx)
                                  path
-                                 (make-extension-runtime-fns ctx session-id))]
+                                 (make-extension-runtime-fns ctx session-id path))]
      {:loaded? (some? extension)
       :path    extension
       :error   error})))

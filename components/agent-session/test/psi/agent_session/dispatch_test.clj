@@ -501,13 +501,20 @@
     (dispatch/register-handler! :adapter-event (fn [_ _] :ok))
     (is (= :ok (dispatch/dispatch! {} :adapter-event nil {:origin :adapter}))))
 
-  (testing "extension origin with registered ext-id and no manifest allowed-events is compatibility-allowed"
+  (testing "extension origin with registered ext-id and no manifest allowed-events is blocked"
     (let [reg (make-test-registry [["/ext/a.clj" {:path "/ext/a.clj"}]])
           ctx {:extension-registry reg}]
       (dispatch/register-handler! :ext-event (fn [_ _] :allowed))
-      (is (= :allowed (dispatch/dispatch! ctx :ext-event nil
-                                          {:origin :extension
-                                           :ext-id "/ext/a.clj"})))))
+      (dispatch/clear-event-log!)
+      (is (nil? (dispatch/dispatch! ctx :ext-event nil
+                                    {:origin :extension
+                                     :ext-id "/ext/a.clj"})))
+      (let [entry (last (dispatch/event-log-entries))]
+        (is (true? (:blocked? entry)))
+        (is (= {:reason :permission-denied
+                :event-type :ext-event
+                :ext-id "/ext/a.clj"}
+               (:block-reason entry))))))
 
   (testing "extension origin with allowed manifest event is allowed"
     (let [reg (make-test-registry [["/ext/a.clj" {:path "/ext/a.clj"
