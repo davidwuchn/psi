@@ -207,11 +207,12 @@
                     :event :session/retry-done}]
                   (:effects result)))))))
 
-  (testing "on-retrying-entered returns nil because retry state was already updated"
+  (testing "on-retrying-entered returns an explicit no-op pure result because retry state was already updated"
     (let [[ctx _session-id] (test-support/make-session-ctx {})]
       (with-registered-handlers
         ctx
-        #(is (nil? (invoke-handler ctx :on-retrying-entered {}))))))
+        #(is (= {:effects []}
+                (invoke-handler ctx :on-retrying-entered {}))))))
 
   (testing "on-retry-resume emits agent-start-loop"
     (let [[ctx _session-id] (test-support/make-session-ctx {})]

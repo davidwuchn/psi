@@ -138,7 +138,7 @@
   (dispatch/register-handler!
    :on-retrying-entered
    (fn [_ctx _data]
-     nil)) ;; retry-attempt increment handled in :on-retry-triggered
+     {:effects []})) ;; retry-attempt increment handled in :on-retry-triggered
 
   (dispatch/register-handler!
    :on-retry-resume
