@@ -50,16 +50,7 @@
     :else fallback))
 
 (defn create-context
-  "Create an isolated MemoryContext.
-
-   Options:
-   - :state-overrides                map merged over initial memory state
-   - :retention-overrides            {:snapshots int :deltas int}
-   - :require-provenance-on-write?   feature flag for follow-up tasks
-                                     (default true)
-   - :store-registry-overrides       map merged over bootstrapped registry
-   - :auto-store-fallback?           fallback to in-memory on provider selection failure
-                                     (default true)"
+  "Create an isolated MemoryContext."
   ([]
    (create-context {}))
   ([{:keys [state-overrides
