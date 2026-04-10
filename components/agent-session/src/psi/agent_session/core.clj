@@ -560,15 +560,16 @@
         preparation (compaction/prepare-compaction sd keep-recent)
         reg         (:extension-registry ctx)]
     (when preparation
-      (let [{:keys [cancelled? override]}
+      (let [{:keys [cancelled? override override-present?]}
             (ext/dispatch-in reg "session_before_compact"
                              {:preparation         preparation
                               :branch-entries      (:session-entries sd)
                               :custom-instructions custom-instructions})]
         (when-not cancelled?
-          (let [from-extension? (some? override)
-                result   (or override
-                             ((:compaction-fn ctx) sd preparation custom-instructions))
+          (let [from-extension? (boolean override-present?)
+                result   (if override-present?
+                           override
+                           ((:compaction-fn ctx) sd preparation custom-instructions))
                 entry    (persist/compaction-entry result from-extension?)
                 new-msgs (compaction/rebuild-messages-from-entries result sd)]
             (ss/journal-append-in! ctx session-id entry)

@@ -193,10 +193,16 @@
    Fires handlers in registration order (extension registration order, then
    handler-registration order within each extension).
    Returns a map:
-     :cancelled?  — true if any handler returned {:cancel true}
-     :results     — vector of all handler return values (nil for void handlers)
-     :override    — last explicit override payload from handlers, or nil.
-                    Accepts {:result x} and {:compaction x}."
+     :cancelled?        — true if any handler returned {:cancel true}
+     :results           — vector of all handler return values (nil for void handlers)
+     :override-present? — true when any handler returned explicit override data
+                          via canonical :result or legacy :compaction
+     :override          — selected override payload, or nil.
+
+   Override precedence:
+   - canonical :result wins over legacy :compaction
+   - within each form, last writer wins
+   - explicit {:result nil} counts as an override and suppresses legacy fallback"
   [reg event-name event]
   (let [state             @(:state reg)
         ordered-paths     (:registration-order state)
@@ -208,13 +214,27 @@
                                        (catch Exception e
                                          {:error (.getMessage e)})))
                                 all-handlers)
-        overrides         (keep (fn [r]
-                                  (or (:result r)
-                                      (:compaction r)))
-                                results)]
-    {:cancelled? (boolean (some :cancel results))
-     :override   (last overrides)
-     :results    results}))
+        result-overrides  (reduce (fn [xs r]
+                                    (if (contains? r :result)
+                                      (conj xs (:result r))
+                                      xs))
+                                  []
+                                  results)
+        comp-overrides    (reduce (fn [xs r]
+                                    (if (contains? r :compaction)
+                                      (conj xs (:compaction r))
+                                      xs))
+                                  []
+                                  results)
+        override-present? (or (seq result-overrides)
+                              (seq comp-overrides))
+        override          (if (seq result-overrides)
+                            (last result-overrides)
+                            (last comp-overrides))]
+    {:cancelled?        (boolean (some :cancel results))
+     :override-present? (boolean override-present?)
+     :override          override
+     :results           results}))
 (defn dispatch-tool-call-in
   "Dispatch a tool_call event. Returns {:block true :reason s} or nil."
   [reg tool-name tool-call-id args]

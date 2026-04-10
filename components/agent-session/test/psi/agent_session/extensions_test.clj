@@ -156,7 +156,18 @@
       (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
         (is (= result (:override dispatch-result))))))
 
-  (testing "last override wins when multiple handlers return override payloads"
+  (testing ":result nil wins over later :compaction fallback"
+    (let [reg (ext/create-registry)
+          r2  {:summary "second" :first-kept-entry-id "e2" :tokens-before 200}]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-extension-in! reg "/ext/b")
+      (ext/register-handler-in! reg "/ext/a" "session_before_compact" (fn [_] {:result nil}))
+      (ext/register-handler-in! reg "/ext/b" "session_before_compact" (fn [_] {:compaction r2}))
+      (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
+        (is (true? (:override-present? dispatch-result)))
+        (is (nil? (:override dispatch-result))))))
+
+  (testing "canonical :result wins over later legacy :compaction"
     (let [reg    (ext/create-registry)
           r1     {:summary "first" :first-kept-entry-id "e1" :tokens-before 100}
           r2     {:summary "second" :first-kept-entry-id "e2" :tokens-before 200}]
@@ -164,6 +175,18 @@
       (ext/register-extension-in! reg "/ext/b")
       (ext/register-handler-in! reg "/ext/a" "session_before_compact" (fn [_] {:result r1}))
       (ext/register-handler-in! reg "/ext/b" "session_before_compact" (fn [_] {:compaction r2}))
+      (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
+        (is (true? (:override-present? dispatch-result)))
+        (is (= r1 (:override dispatch-result))))))
+
+  (testing "last canonical :result wins when multiple handlers return canonical overrides"
+    (let [reg    (ext/create-registry)
+          r1     {:summary "first" :first-kept-entry-id "e1" :tokens-before 100}
+          r2     {:summary "second" :first-kept-entry-id "e2" :tokens-before 200}]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-extension-in! reg "/ext/b")
+      (ext/register-handler-in! reg "/ext/a" "session_before_compact" (fn [_] {:result r1}))
+      (ext/register-handler-in! reg "/ext/b" "session_before_compact" (fn [_] {:result r2}))
       (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
         (is (= r2 (:override dispatch-result))))))
 
