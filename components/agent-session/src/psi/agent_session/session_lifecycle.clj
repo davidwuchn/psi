@@ -2,6 +2,7 @@
   "Session lifecycle operations — create, resume, fork, switch."
   (:require
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
@@ -223,3 +224,30 @@
 
       (ext/dispatch-in reg "session_fork" {})
       (session/get-session-data-in ctx new-session-id))))
+
+(defn ensure-session-loaded-in!
+  "Ensure `session-id` is available in this context.
+
+   Behavior:
+   - if session-id is nil, no-op
+   - if already present in the context registry, returns its data
+   - if known only by persisted session-file path, resumes that file
+   - otherwise throws ex-info with :error-code request/not-found
+
+   Returns session-data for the available session."
+  [ctx _source-session-id session-id]
+  (when session-id
+    (let [sessions (session/get-sessions-map-in ctx)
+          target   (get sessions session-id)
+          path     (get-in target [:data :session-file])]
+      (cond
+        target
+        (session/get-session-data-in ctx session-id)
+
+        (and path (not (str/blank? path)))
+        (resume-session-in! ctx session-id path)
+
+        :else
+        (throw (ex-info "session id not found in context session index"
+                        {:error-code "request/not-found"
+                         :session-id session-id}))))))
