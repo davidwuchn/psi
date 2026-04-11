@@ -4,6 +4,220 @@ Remove completed plan sections once finished; `PLAN.md` should contain active wo
 
 # Active work
 
+## Structural refactor plan from Gordian
+
+Sequencing note:
+- current worktree is active in prompt lifecycle files, so split the refactor into two waves
+- Wave A can proceed now with lower-risk structural extraction
+- Wave B should follow once the current prompt lifecycle thread settles
+- after each step: keep behavior stable, keep tests green, and rerun Gordian at wave boundaries
+
+Guardrails for every commit:
+- run targeted tests first, then broader suites before continuing
+- useful commands:
+  - `bb lint`
+  - `bb clojure:test:unit`
+  - `bb clojure:test:extensions`
+  - `bb emacs:test` when RPC/app-runtime payloads move
+- acceptance criteria for each step:
+  - no API behavior change
+  - no cycles introduced
+  - propagation cost stays near the current baseline
+  - public façade namespaces become thinner, not broader
+
+### Wave A — landed structural decomposition
+
+Completed commits:
+1. `e5411bdc` — `⚒ mutations: split agent-session mutations by domain`
+2. `35715c8a` — `⚒ core: extract context prompt settings and introspection namespaces`
+3. `c9e652e0` — `⚒ extensions: split runtime eql ui and delivery helpers`
+4. `cca1e910` — `⚒ rpc: split command handling by workflow`
+
+What landed:
+- `psi.agent-session.mutations` is now an aggregator over focused mutation namespaces:
+  - `mutations.session`
+  - `mutations.prompts`
+  - `mutations.tools`
+  - `mutations.extensions`
+  - `mutations.services`
+  - `mutations.ui`
+- `psi.agent-session.core` is now a thin façade over focused runtime namespaces:
+  - `context`
+  - `prompt-control`
+  - `session-settings`
+  - `compaction-runtime`
+  - `introspection`
+- `psi.agent-session.extension-runtime` now delegates to focused extension runtime helpers:
+  - `extensions.runtime-eql`
+  - `extensions.runtime-ui`
+  - `extensions.runtime-fns`
+  - `extensions.runtime-delivery`
+- `psi.rpc.session.commands` now delegates to focused RPC command helpers:
+  - `command-results`
+  - `command-resume`
+  - `command-tree`
+  - `command-pickers`
+
+Validation completed during Wave A:
+- focused namespace compilation checks passed
+- `clojure:test:unit` passed after each step
+- `clojure:test:extensions` passed after each agent-session step
+- `emacs:test` passed after the RPC step
+
+Note:
+- `bb lint` remains noisy/red because of pre-existing unrelated lint failures in TUI/spec areas, so Wave A used compile checks + targeted suites as the step gate
+
+### Wave B — after prompt lifecycle work settles
+
+#### 5. Extract shared prompt streaming helpers
+
+Create:
+- `components/agent-session/src/psi/agent_session/prompt_stream.clj`
+  - move shared helpers from `executor.clj` and `prompt_runtime.clj`:
+    - `llm-stream-idle-timeout-ms`
+    - `llm-stream-wait-poll-ms`
+    - `now-ms`
+    - `do-stream!`
+    - `chain-callbacks`
+    - `wait-for-turn-result`
+  - move turn-abort helpers from `prompt_runtime.clj`:
+    - `cancelled-stream-handle?`
+    - `cancel-stream-handle!`
+    - `mark-turn-stream-handle!`
+    - `abort-turn!`
+
+Suggested commit:
+- `⚒ prompts: extract shared prompt streaming helpers`
+
+Validation:
+- `bb lint`
+- `bb clojure:test:unit`
+- `bb clojure:test:extensions`
+
+#### 6. Split single-turn execution from loop execution
+
+Create:
+- `components/agent-session/src/psi/agent_session/prompt_turn.clj`
+  - move from `executor.clj`: `session-messages`, `session-tool-defs`, `stream-turn!`, `run-turn!`
+- `components/agent-session/src/psi/agent_session/prompt_loop.clj`
+  - move from `executor.clj`: `run-agent-loop!`
+
+Reduce:
+- `components/agent-session/src/psi/agent_session/executor.clj`
+  - keep as a temporary façade to `prompt-turn` / `prompt-loop`, then delete once callers move
+
+Suggested commit:
+- `⚒ prompts: split single-turn and loop execution`
+
+Validation:
+- `bb lint`
+- `bb clojure:test:unit`
+- `bb clojure:test:extensions`
+
+#### 7. Narrow the prepared-request runtime boundary
+
+Reduce:
+- `components/agent-session/src/psi/agent_session/prompt_runtime.clj`
+  - keep only: `execute-prepared-request!`, `abort-active-turn-in!`
+  - consume `prompt_stream.clj` instead of owning duplicate stream helpers
+
+Suggested commit:
+- `⚒ prompts: narrow prompt-runtime to prepared-request execution`
+
+Validation:
+- `bb lint`
+- `bb clojure:test:unit`
+- `bb clojure:test:extensions`
+
+#### 8. Consolidate prompt dispatch registration
+
+Create:
+- `components/agent-session/src/psi/agent_session/dispatch_handlers/prompt_lifecycle.clj`
+  - start by moving the current contents of `dispatch_handlers/prompt_handlers.clj`
+  - then move any prompt-lifecycle registrations currently split across `session_lifecycle.clj` and `statechart_actions.clj`
+
+Update:
+- `components/agent-session/src/psi/agent_session/dispatch_handlers.clj`
+  - require/register `prompt-lifecycle` instead of `prompt-handlers`
+
+Delete when stable:
+- `components/agent-session/src/psi/agent_session/dispatch_handlers/prompt_handlers.clj`
+
+Suggested commit:
+- `⚒ dispatch: consolidate prompt lifecycle handler registration`
+
+Validation:
+- `bb lint`
+- `bb clojure:test:unit`
+- `bb clojure:test:extensions`
+
+#### 9. Extract a canonical background-job view model
+
+Create:
+- `components/app-runtime/src/psi/app_runtime/background_job_view.clj`
+  - move from `background_jobs.clj`: `default-list-statuses`, `status-order`, `sort-jobs`, `job-summary`, `jobs-summary`, `job-detail`, `cancel-job-summary`
+
+Reduce:
+- `components/app-runtime/src/psi/app_runtime/background_jobs.clj`
+  - keep as façade only during migration
+- `components/app-runtime/src/psi/app_runtime/background_job_widgets.clj`
+  - consume `background-job-view` directly
+
+Suggested commit:
+- `⚒ background-jobs: extract canonical view model`
+
+Validation:
+- `bb lint`
+- `bb clojure:test:unit`
+- `bb emacs:test`
+
+#### 10. Finish the OpenAI internal split
+
+Create:
+- `components/ai/src/psi/ai/providers/openai/transport.clj`
+- `components/ai/src/psi/ai/providers/openai/content.clj`
+- `components/ai/src/psi/ai/providers/openai/reasoning.clj`
+
+Move:
+- transport/error/capture helpers out of `common.clj` to `transport.clj`
+- content/tool/message-shaping helpers out of `common.clj` to `content.clj`
+- reasoning helpers out of `common.clj` to `reasoning.clj`
+
+Reduce:
+- `components/ai/src/psi/ai/providers/openai/common.clj`
+  - keep as a temporary façade during migration, then delete when callers are updated
+
+Suggested commit:
+- `⚒ openai: separate transport content and reasoning helpers`
+
+Validation:
+- `bb lint`
+- provider-focused unit tests
+- `bb clojure:test:unit`
+
+### Recommended commit order
+
+1. `⚒ mutations: split agent-session mutations by domain`
+2. `⚒ core: extract context prompt settings and introspection namespaces`
+3. `⚒ extensions: split runtime eql ui and delivery helpers`
+4. `⚒ rpc: split command handling by workflow`
+5. `⚒ prompts: extract shared prompt streaming helpers`
+6. `⚒ prompts: split single-turn and loop execution`
+7. `⚒ prompts: narrow prompt-runtime to prepared-request execution`
+8. `⚒ dispatch: consolidate prompt lifecycle handler registration`
+9. `⚒ background-jobs: extract canonical view model`
+10. `⚒ openai: separate transport content and reasoning helpers`
+
+### Wave-boundary checks
+
+After Wave A:
+- rerun Gordian on src
+- verify `psi.agent-session.core` is thinner, `psi.agent-session.mutations` is near-trivial, and `extension-runtime` no longer mixes unrelated concerns
+
+After Wave B:
+- rerun Gordian on src and src+test
+- compare prompt-subsystem, background-job, and OpenAI coupling against the current baseline
+
 ## Compatibility scaffold removal
 
 Goal:
