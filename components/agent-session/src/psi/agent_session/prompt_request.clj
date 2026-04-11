@@ -99,6 +99,18 @@
              :stable? true
              :content contrib}))))
 
+(defn- queued-steering-messages
+  [session-data user-message]
+  (when (nil? user-message)
+    (->> (:steering-messages session-data)
+         (keep (fn [text]
+                 (when (and (string? text)
+                            (not (str/blank? text)))
+                   {:role "user"
+                    :content [{:type :text :text text}]})))
+         vec
+         not-empty)))
+
 (defn build-prepared-request
   "Build a minimal prepared-request artifact from canonical session state.
    This first-pass scaffold intentionally consumes the already-composed
@@ -109,41 +121,44 @@
    - :user-message
    - :runtime-opts"
   [ctx session-id {:keys [turn-id user-message runtime-opts] :as opts}]
-  (let [session-data    (ss/get-session-data-in ctx session-id)
-        journal         (or (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal]) [])
-        messages        (journal->provider-messages journal)
-        tool-defs       (or (:tool-defs session-data) [])
-        ai-options      (session->request-options ctx session-data (or runtime-opts {}))
-        cache-bps       (set (or (:cache-breakpoints session-data) #{}))
-        prompt-layers   (build-prompt-layers session-data opts)
-        system-prompt   (:system-prompt session-data)
-        provider-conv   (conv/agent-messages->ai-conversation
-                         system-prompt
-                         messages
-                         tool-defs
-                         {:cache-breakpoints cache-bps})
-        runtime-model   (resolve-runtime-model (:model session-data))]
-    {:prepared-request/id                   turn-id
-     :prepared-request/session-id           session-id
-     :prepared-request/user-message         user-message
-     :prepared-request/session-snapshot     {:model                   (:model session-data)
-                                             :thinking-level          (:thinking-level session-data)
-                                             :prompt-mode             (:prompt-mode session-data)
-                                             :cache-breakpoints       cache-bps
-                                             :active-tools            (:active-tools session-data)
-                                             :developer-prompt        (:developer-prompt session-data)
-                                             :developer-prompt-source (:developer-prompt-source session-data)}
-     :prepared-request/prompt-layers        prompt-layers
-     :prepared-request/system-prompt        system-prompt
-     :prepared-request/system-prompt-blocks (:system-prompt-blocks provider-conv)
-     :prepared-request/messages             (:messages provider-conv)
-     :prepared-request/tools                (:tools provider-conv)
-     :prepared-request/model                runtime-model
-     :prepared-request/ai-options           ai-options
-     :prepared-request/cache-projection     {:cache-breakpoints cache-bps
-                                             :system-cached?    (contains? cache-bps :system)
-                                             :tools-cached?     (contains? cache-bps :tools)
-                                             :message-breakpoint-count
-                                             (count (filter #(= :user (:role %))
-                                                            (:messages provider-conv)))}
-     :prepared-request/provider-conversation provider-conv}))
+  (let [session-data       (ss/get-session-data-in ctx session-id)
+        journal            (or (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal]) [])
+        steering-messages  (queued-steering-messages session-data user-message)
+        messages           (cond-> (journal->provider-messages journal)
+                             (seq steering-messages) (into steering-messages))
+        tool-defs          (or (:tool-defs session-data) [])
+        ai-options         (session->request-options ctx session-data (or runtime-opts {}))
+        cache-bps          (set (or (:cache-breakpoints session-data) #{}))
+        prompt-layers      (build-prompt-layers session-data opts)
+        system-prompt      (:system-prompt session-data)
+        provider-conv      (conv/agent-messages->ai-conversation
+                            system-prompt
+                            messages
+                            tool-defs
+                            {:cache-breakpoints cache-bps})
+        runtime-model      (resolve-runtime-model (:model session-data))]
+    {:prepared-request/id                       turn-id
+     :prepared-request/session-id               session-id
+     :prepared-request/user-message             user-message
+     :prepared-request/queued-steering-messages steering-messages
+     :prepared-request/session-snapshot         {:model                   (:model session-data)
+                                                 :thinking-level          (:thinking-level session-data)
+                                                 :prompt-mode             (:prompt-mode session-data)
+                                                 :cache-breakpoints       cache-bps
+                                                 :active-tools            (:active-tools session-data)
+                                                 :developer-prompt        (:developer-prompt session-data)
+                                                 :developer-prompt-source (:developer-prompt-source session-data)}
+     :prepared-request/prompt-layers            prompt-layers
+     :prepared-request/system-prompt            system-prompt
+     :prepared-request/system-prompt-blocks     (:system-prompt-blocks provider-conv)
+     :prepared-request/messages                 (:messages provider-conv)
+     :prepared-request/tools                    (:tools provider-conv)
+     :prepared-request/model                    runtime-model
+     :prepared-request/ai-options               ai-options
+     :prepared-request/cache-projection         {:cache-breakpoints cache-bps
+                                                 :system-cached?    (contains? cache-bps :system)
+                                                 :tools-cached?     (contains? cache-bps :tools)
+                                                 :message-breakpoint-count
+                                                 (count (filter #(= :user (:role %))
+                                                                (:messages provider-conv)))}
+     :prepared-request/provider-conversation    provider-conv}))

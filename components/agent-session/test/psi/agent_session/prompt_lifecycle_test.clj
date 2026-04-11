@@ -7,7 +7,9 @@
    [psi.agent-session.prompt-request]
    [psi.agent-session.prompt-runtime]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.test-support :as test-support]))
+   [psi.agent-session.test-support :as test-support]
+   [psi.ai.providers.anthropic]
+   [psi.ai.providers.openai]))
 
 (defn- create-session-context
   ([] (create-session-context {}))
@@ -158,3 +160,179 @@
       (is (= "Hint A" (get-in prepared [:prepared-request/prompt-layers 2 :content])))
       (is (= "dev" (get-in prepared [:prepared-request/session-snapshot :developer-prompt])))
       (is (= :explicit (get-in prepared [:prepared-request/session-snapshot :developer-prompt-source]))))))
+
+(deftest queued-steering-is-injected-into-continuation-prepared-request-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        assistant-msg    {:role "assistant"
+                          :content [{:type :tool-call :id "tc-1" :name "read" :arguments "{}"}]
+                          :stop-reason :stop
+                          :timestamp (java.time.Instant/now)}
+        execution-result {:execution-result/turn-id "turn-1"
+                          :execution-result/session-id session-id
+                          :execution-result/assistant-message assistant-msg
+                          :execution-result/turn-outcome :turn.outcome/tool-use
+                          :execution-result/tool-calls [{:id "tc-1" :name "read" :arguments "{}"}]
+                          :execution-result/stop-reason :stop}
+        tool-result-msg  {:role "toolResult"
+                          :tool-call-id "tc-1"
+                          :tool-name "read"
+                          :content [{:type :text :text "file body"}]
+                          :timestamp (java.time.Instant/now)}]
+    (dispatch/dispatch! ctx :session/bootstrap-prompt-state
+                        {:session-id session-id
+                         :system-prompt "sys"}
+                        {:origin :core})
+    (dispatch/dispatch! ctx :session/prompt-submit
+                        {:session-id session-id
+                         :user-msg {:role "user"
+                                    :content [{:type :text :text "hi"}]
+                                    :timestamp (java.time.Instant/now)}}
+                        {:origin :core})
+    (with-redefs [psi.agent-session.prompt-chain/run-prompt-tools! (fn [_ctx _sid _res _pq]
+                                                                     {:continued? true :tool-call-count 1})]
+      (dispatch/dispatch! ctx :session/prompt-record-response
+                          {:session-id session-id
+                           :execution-result execution-result}
+                          {:origin :core}))
+    (dispatch/dispatch! ctx :session/tool-record-result
+                        {:session-id session-id
+                         :shaped-result {:result-message tool-result-msg}}
+                        {:origin :core})
+    (dispatch/dispatch! ctx :session/enqueue-steering-message
+                        {:session-id session-id
+                         :text "Please be brief."}
+                        {:origin :core})
+    (let [prepared            (psi.agent-session.prompt-request/build-prepared-request
+                               ctx session-id {:turn-id "turn-2"
+                                               :user-message nil})
+          provider-conv       (:prepared-request/provider-conversation prepared)
+          openai-messages     (#'psi.ai.providers.openai/transform-messages provider-conv)
+          anthropic-messages  (#'psi.ai.providers.anthropic/transform-messages provider-conv)]
+      (is (= [{:role "user" :content "Please be brief."}]
+             (take-last 1 openai-messages)))
+      (is (= {:role "assistant"
+              :tool_calls [{:id "tc-1"
+                            :type "function"
+                            :function {:name "read"
+                                       :arguments "{}"}}]}
+             (second openai-messages)))
+      (is (= {:role "tool"
+              :tool_call_id "tc-1"
+              :content "file body"}
+             (nth openai-messages 2)))
+      (is (= [{:role "user"
+               :content [{:type "text" :text "Please be brief." :cache_control {:type "ephemeral"}}]}]
+             (take-last 1 anthropic-messages)))
+      (is (= {:role "assistant"
+              :content [{:type "tool_use"
+                         :id "tc-1"
+                         :name "read"
+                         :input {}}]}
+             (second anthropic-messages)))
+      (is (= {:role "user"
+              :content [{:type "tool_result"
+                         :tool_use_id "tc-1"
+                         :content "file body"}]}
+             (nth anthropic-messages 2))))))
+
+(deftest prompt-prepare-request-consumes-queued-steering-test
+  (let [[ctx session-id] (create-session-context {:persist? false})]
+    (dispatch/dispatch! ctx :session/enqueue-steering-message
+                        {:session-id session-id
+                         :text "Please be brief."}
+                        {:origin :core})
+    (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                    {:execution-result/turn-id (:prepared-request/id prepared)
+                     :execution-result/session-id sid
+                     :execution-result/assistant-message {:role "assistant"
+                                                          :content [{:type :text :text "ok"}]
+                                                          :stop-reason :stop
+                                                          :timestamp (java.time.Instant/now)}
+                     :execution-result/turn-outcome :turn.outcome/stop
+                     :execution-result/tool-calls []
+                     :execution-result/stop-reason :stop})]
+      (dispatch/dispatch! ctx :session/prompt-prepare-request
+                          {:session-id session-id
+                           :turn-id "turn-steer"
+                           :user-msg nil}
+                          {:origin :core}))
+    (is (= [] (:steering-messages (ss/get-session-data-in ctx session-id))))))
+
+(deftest prompt-finish-triggers-follow-up-next-run-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        assistant-msg    {:role "assistant"
+                          :content [{:type :text :text "done"}]
+                          :stop-reason :stop
+                          :timestamp (java.time.Instant/now)}
+        terminal-result  {:execution-result/turn-id "turn-1"
+                          :execution-result/session-id session-id
+                          :execution-result/assistant-message assistant-msg
+                          :execution-result/turn-outcome :turn.outcome/stop
+                          :execution-result/tool-calls []
+                          :execution-result/stop-reason :stop}]
+    (dispatch/dispatch! ctx :session/enqueue-follow-up-message
+                        {:session-id session-id
+                         :text "next question"}
+                        {:origin :core})
+    (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                    (is (= "next question"
+                           (get-in prepared [:prepared-request/user-message :content 0 :text])))
+                    {:execution-result/turn-id (:prepared-request/id prepared)
+                     :execution-result/session-id sid
+                     :execution-result/assistant-message {:role "assistant"
+                                                          :content [{:type :text :text "followed up"}]
+                                                          :stop-reason :stop
+                                                          :timestamp (java.time.Instant/now)}
+                     :execution-result/turn-outcome :turn.outcome/stop
+                     :execution-result/tool-calls []
+                     :execution-result/stop-reason :stop})]
+      (dispatch/dispatch! ctx :session/prompt-finish
+                          {:session-id session-id
+                           :turn-id "turn-1"
+                           :terminal-result terminal-result}
+                          {:origin :core}))
+    (let [msgs (journal-messages ctx session-id)]
+      (is (= ["user" "assistant"] (mapv :role msgs)))
+      (is (= "next question" (get-in (first msgs) [:content 0 :text])))
+      (is (= [] (:follow-up-messages (ss/get-session-data-in ctx session-id)))))))
+
+(deftest prompt-finish-chains-follow-ups-in-one-at-a-time-batches-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        assistant-msg    {:role "assistant"
+                          :content [{:type :text :text "done"}]
+                          :stop-reason :stop
+                          :timestamp (java.time.Instant/now)}
+        terminal-result  {:execution-result/turn-id "turn-1"
+                          :execution-result/session-id session-id
+                          :execution-result/assistant-message assistant-msg
+                          :execution-result/turn-outcome :turn.outcome/stop
+                          :execution-result/tool-calls []
+                          :execution-result/stop-reason :stop}
+        seen-prompts     (atom [])]
+    (dispatch/dispatch! ctx :session/enqueue-follow-up-message
+                        {:session-id session-id :text "q1"}
+                        {:origin :core})
+    (dispatch/dispatch! ctx :session/enqueue-follow-up-message
+                        {:session-id session-id :text "q2"}
+                        {:origin :core})
+    (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                    (swap! seen-prompts conj (get-in prepared [:prepared-request/user-message :content 0 :text]))
+                    {:execution-result/turn-id (:prepared-request/id prepared)
+                     :execution-result/session-id sid
+                     :execution-result/assistant-message {:role "assistant"
+                                                          :content [{:type :text :text "ok"}]
+                                                          :stop-reason :stop
+                                                          :timestamp (java.time.Instant/now)}
+                     :execution-result/turn-outcome :turn.outcome/stop
+                     :execution-result/tool-calls []
+                     :execution-result/stop-reason :stop})]
+      (dispatch/dispatch! ctx :session/prompt-finish
+                          {:session-id session-id
+                           :turn-id "turn-1"
+                           :terminal-result terminal-result}
+                          {:origin :core}))
+    (is (= ["q1" "q2"] @seen-prompts))
+    (is (= [] (:follow-up-messages (ss/get-session-data-in ctx session-id))))))

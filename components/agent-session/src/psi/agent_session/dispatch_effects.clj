@@ -70,6 +70,10 @@
 (defmethod execute-effect! :runtime/agent-clear-follow-up-queue [ctx effect]
   (when-let [ac (effect-agent-ctx ctx effect)] (agent/clear-follow-up-queue-in! ac)))
 
+(defmethod execute-effect! :runtime/agent-drain-follow-up-queue [ctx effect]
+  (when-let [ac (effect-agent-ctx ctx effect)]
+    (agent/drain-follow-up-in! ac (:messages effect))))
+
 (defmethod execute-effect! :runtime/agent-start-loop [ctx effect]
   (when-let [ac (effect-agent-ctx ctx effect)] (agent/start-loop-in! ac [])))
 

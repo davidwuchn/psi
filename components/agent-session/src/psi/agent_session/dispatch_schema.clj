@@ -12,6 +12,9 @@
     [:map [:effect/type [:= :runtime/agent-clear-steering-queue]]]]
    [:runtime/agent-clear-follow-up-queue
     [:map [:effect/type [:= :runtime/agent-clear-follow-up-queue]]]]
+   [:runtime/agent-drain-follow-up-queue
+    [:map [:effect/type [:= :runtime/agent-drain-follow-up-queue]]
+     [:messages [:vector :map]]]]
    [:runtime/agent-start-loop
     [:map [:effect/type [:= :runtime/agent-start-loop]]]]
    [:runtime/agent-reset
