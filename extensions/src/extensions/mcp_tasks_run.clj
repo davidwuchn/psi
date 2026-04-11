@@ -27,7 +27,7 @@
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-core.core :as agent]
-   [psi.agent-session.executor :as executor]
+   [psi.agent-session.prompt-loop :as prompt-loop]
    [psi.agent-session.tools :as session-tools]
    [psi.ai.models :as models]
    [taoensso.timbre :as timbre]))
@@ -848,7 +848,7 @@
                    (str "Continuing step " step-name " with user answer")
                    (str "Executing step " step-name))}))
     (try
-      (let [result  (executor/run-agent-loop!
+      (let [result  (prompt-loop/run-agent-loop!
                      nil
                      step-session-ctx
                      agent-ctx

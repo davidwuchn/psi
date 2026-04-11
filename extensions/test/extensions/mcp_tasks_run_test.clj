@@ -2,7 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [extensions.mcp-tasks-run :as sut]
-   [psi.agent-session.executor :as executor]
+   [psi.agent-session.prompt-loop :as prompt-loop]
    [psi.extension-test-helpers.nullable-api :as nullable]))
 
 (deftest derive-task-state-test
@@ -931,7 +931,7 @@
                                                   (is (= fake-agent-ctx agent-ctx))
                                                   fake-session-ctx)
                     sut/update-workflow-progress! (fn [& _])
-                    executor/run-agent-loop! (fn [& args]
+                    prompt-loop/run-agent-loop! (fn [& args]
                                                (reset! captured args)
                                                {:role "assistant"
                                                 :stop-reason :stop
@@ -977,7 +977,7 @@
                                                 (throw (ex-info "should not create a new agent ctx" {})))
                     sut/create-step-session-ctx (fn [_]
                                                   (throw (ex-info "should not create a new session ctx" {})))
-                    executor/run-agent-loop! (fn [& args]
+                    prompt-loop/run-agent-loop! (fn [& args]
                                                (reset! captured args)
                                                {:role "assistant"
                                                 :stop-reason :stop
