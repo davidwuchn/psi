@@ -10,12 +10,12 @@
    Public API:
    - run-agent-loop! — run the full loop from current state"
   (:require
-   [psi.ai.core :as ai]
    [psi.agent-session.conversation :as conv-translate]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
-   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc])
@@ -45,37 +45,34 @@
 ;; Single LLM turn
 ;; ============================================================
 
+(def ^:dynamic ^:private llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
+(def ^:dynamic ^:private llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
+
+(defn- now-ms []
+  (prompt-stream/now-ms))
+
 (defn- do-stream!
   "Invoke the appropriate streaming fn depending on whether ai-ctx is provided."
   [ai-ctx ai-conv ai-model ai-options consume-fn]
-  (if ai-ctx
-    (ai/stream-response-in ai-ctx ai-conv ai-model ai-options consume-fn)
-    (ai/stream-response ai-conv ai-model ai-options consume-fn)))
-
-(def ^:private llm-stream-idle-timeout-ms 600000)
-(def ^:private llm-stream-wait-poll-ms 250)
-
-(defn- now-ms [] (System/currentTimeMillis))
+  (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
 
 (defn- chain-callbacks
   [& callbacks]
-  (let [callbacks* (vec (keep #(when (fn? %) %) callbacks))]
-    (when (seq callbacks*)
-      (fn [payload]
-        (doseq [cb callbacks*]
-          (try (cb payload) (catch Exception _ nil)))))))
+  (apply prompt-stream/chain-callbacks callbacks))
 
 (defn- wait-for-turn-result
   "Wait for `done-p` with an idle timeout that resets on any stream progress."
-  [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms]}]
-  (let [poll-ms    (max 1 (long (or wait-poll-ms llm-stream-wait-poll-ms)))
-        timeout-ms (max 1 (long (or idle-timeout-ms llm-stream-idle-timeout-ms)))]
-    (loop []
-      (let [result (deref done-p poll-ms ::pending)]
-        (cond
-          (not= ::pending result) result
-          (>= (- (now-ms) @last-progress-ms) timeout-ms) ::timeout
-          :else (recur))))))
+  [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms abort-pred]}]
+  (let [opts   (cond-> {:idle-timeout-ms llm-stream-idle-timeout-ms
+                        :wait-poll-ms    llm-stream-wait-poll-ms}
+                 idle-timeout-ms (assoc :idle-timeout-ms idle-timeout-ms)
+                 wait-poll-ms    (assoc :wait-poll-ms wait-poll-ms)
+                 abort-pred      (assoc :abort-pred abort-pred))
+        result (prompt-stream/wait-for-turn-result done-p last-progress-ms opts)]
+    (case result
+      ::prompt-stream/timeout ::timeout
+      ::prompt-stream/aborted ::aborted
+      result)))
 
 (defn- stream-turn!
   "Stream one LLM response into agent-core via the per-turn statechart.

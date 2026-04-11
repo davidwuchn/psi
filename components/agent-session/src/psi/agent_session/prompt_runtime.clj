@@ -6,85 +6,23 @@
    consuming the prepared-request artifact instead of recomputing request shape
    inside the dispatch effect handler."
   (:require
-   [psi.ai.core :as ai]
    [psi.ai.models :as models]
+   [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.turn-accumulator :as accum]
-   [psi.agent-session.turn-statechart :as turn-sc])
-  (:import
-   (java.util.concurrent Future)))
-
-(def ^:private llm-stream-idle-timeout-ms 600000)
-(def ^:private llm-stream-wait-poll-ms 250)
-
-(defn- now-ms []
-  (System/currentTimeMillis))
+   [psi.agent-session.turn-statechart :as turn-sc]))
 
 (defn- do-stream!
   [ai-ctx ai-conv ai-model ai-options consume-fn]
-  (if ai-ctx
-    (ai/stream-response-in ai-ctx ai-conv ai-model ai-options consume-fn)
-    (ai/stream-response ai-conv ai-model ai-options consume-fn)))
-
-(defn- chain-callbacks
-  [& callbacks]
-  (let [callbacks* (vec (keep #(when (fn? %) %) callbacks))]
-    (when (seq callbacks*)
-      (fn [payload]
-        (doseq [cb callbacks*]
-          (try (cb payload) (catch Exception _ nil)))))))
-
-(defn- wait-for-turn-result
-  [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms abort-pred]}]
-  (let [poll-ms    (max 1 (long (or wait-poll-ms llm-stream-wait-poll-ms)))
-        timeout-ms (max 1 (long (or idle-timeout-ms llm-stream-idle-timeout-ms)))
-        aborted?   (fn [] (boolean (when abort-pred (abort-pred))))]
-    (loop []
-      (let [result  (deref done-p poll-ms ::pending)
-            aborted (aborted?)]
-        (cond
-          aborted ::aborted
-          (not= ::pending result) result
-          (>= (- (now-ms) @last-progress-ms) timeout-ms) ::timeout
-          :else (recur))))))
-
-
-(defn- cancelled-stream-handle?
-  [stream-handle]
-  (boolean
-   (or (:cancelled? stream-handle)
-       (some-> (:future stream-handle) future-cancelled?)
-       (some-> (:future stream-handle) ^Future .isCancelled))))
-
-(defn- cancel-stream-handle!
-  [stream-handle]
-  (when-let [f (:future stream-handle)]
-    (future-cancel f))
-  (assoc stream-handle :cancelled? true))
-
-(defn- mark-turn-stream-handle!
-  [turn-ctx stream-handle]
-  (swap! (:turn-data turn-ctx) assoc :stream-handle stream-handle)
-  stream-handle)
-
-(defn- abort-turn!
-  [turn-ctx]
-  (let [td @(:turn-data turn-ctx)
-        stream-handle (:stream-handle td)]
-    (when stream-handle
-      (swap! (:turn-data turn-ctx) assoc :stream-handle (cancel-stream-handle! stream-handle)))
-    (when-not (:final-message td)
-      (turn-sc/send-event! turn-ctx :turn/error {:stop-reason :aborted
-                                                 :error-message "Aborted"}))
-    :aborted))
+  (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
 
 (defn abort-active-turn-in!
   "Abort the currently active prepared-request turn for `session-id`, if any.
    Cancels the stream handle and forces an aborted terminal turn result." 
   [ctx session-id]
   (when-let [turn-ctx (sa/turn-context-in ctx session-id)]
-    (abort-turn! turn-ctx)
+    (prompt-stream/abort-turn! turn-ctx)
     true))
 
 (defn- extract-tool-calls
@@ -123,17 +61,17 @@
                                                   ai-model thinking-buffers)
         turn-ctx         (turn-sc/create-turn-context actions-fn)
         _                (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
-        last-progress-ms (atom (now-ms))
+        last-progress-ms (atom (prompt-stream/now-ms))
         timed-out?       (atom false)
         ai-options       (-> base-ai-options
                              (assoc :on-provider-request
-                                    (chain-callbacks
+                                    (prompt-stream/chain-callbacks
                                      (:on-provider-request base-ai-options)
                                      (fn [capture]
                                        (sa/append-provider-request-capture-in!
                                         ctx session-id (assoc capture :turn-id turn-id)))))
                              (assoc :on-provider-response
-                                    (chain-callbacks
+                                    (prompt-stream/chain-callbacks
                                      (:on-provider-response base-ai-options)
                                      (fn [capture]
                                        (sa/append-provider-reply-capture-in!
@@ -142,13 +80,13 @@
     (turn-sc/send-event! turn-ctx :turn/start)
     (let [call-action! (fn [action-key extra]
                          (actions-fn action-key (merge {:turn-data (:turn-data turn-ctx)} extra)))
-          stream-handle (mark-turn-stream-handle!
+          stream-handle (prompt-stream/mark-turn-stream-handle!
                          turn-ctx
                          (do-stream! ai-ctx ai-conv ai-model ai-options
-                                     (fn [event]
-                                       (when-not (or @timed-out?
-                                                     (cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx))))
-                                         (reset! last-progress-ms (now-ms))
+                                                   (fn [event]
+                                                     (when-not (or @timed-out?
+                                                                   (prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx))))
+                                                       (reset! last-progress-ms (prompt-stream/now-ms))
                                          (case (:type event)
                                            :start                    nil
                                            :text-start               (call-action! :on-text-start
@@ -186,12 +124,12 @@
                                                                                           (cond-> {:error-message (:error-message event)}
                                                                                             (:http-status event) (assoc :http-status (:http-status event))))
                                            nil)))))]
-      (let [assistant-msg (let [result (wait-for-turn-result done-p last-progress-ms
-                                                            {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
-                                                             :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
-                                                             :abort-pred      #(cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))})]
+      (let [assistant-msg (let [result (prompt-stream/wait-for-turn-result done-p last-progress-ms
+                                                                           {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
+                                                                            :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
+                                                                            :abort-pred      #(prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))})]
                             (cond
-                              (= result ::timeout)
+                              (= result ::prompt-stream/timeout)
                               (do (reset! timed-out? true)
                                   (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
                                   {:role          "assistant"
@@ -200,9 +138,9 @@
                                    :error-message "Timeout waiting for LLM response"
                                    :timestamp     (java.time.Instant/now)})
 
-                              (= result ::aborted)
+                              (= result ::prompt-stream/aborted)
                               (do
-                                (abort-turn! turn-ctx)
+                                (prompt-stream/abort-turn! turn-ctx)
                                 (:final-message @(:turn-data turn-ctx)))
 
                               :else
