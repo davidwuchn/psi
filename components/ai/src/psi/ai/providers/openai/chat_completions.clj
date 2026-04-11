@@ -2,50 +2,52 @@
   (:require [clojure.java.io :as io]
             [cheshire.core :as json]
             [psi.ai.models :as models]
-            [psi.ai.providers.openai.common :as common]))
+            [psi.ai.providers.openai.content :as content]
+            [psi.ai.providers.openai.reasoning :as reasoning]
+            [psi.ai.providers.openai.transport :as transport]))
 
 (defn- extract-reasoning-delta
   [delta]
   (let [reasoning (:reasoning delta)]
     (or
-     (common/string-fragment (get-in delta [:reasoning :content]))
-     (common/string-fragment (get-in delta [:reasoning :summary]))
-     (common/string-fragment (:reasoning_content delta))
+     (content/string-fragment (get-in delta [:reasoning :content]))
+     (content/string-fragment (get-in delta [:reasoning :summary]))
+     (content/string-fragment (:reasoning_content delta))
 
      (when (string? reasoning)
        reasoning)
 
      (when (map? reasoning)
-       (or (common/string-fragment (:content reasoning))
-           (common/string-fragment (:summary reasoning))
-           (common/string-fragment (:text reasoning))
-           (common/string-fragment (:delta reasoning))))
+       (or (content/string-fragment (:content reasoning))
+           (content/string-fragment (:summary reasoning))
+           (content/string-fragment (:text reasoning))
+           (content/string-fragment (:delta reasoning))))
 
      (when (sequential? reasoning)
-       (common/join-parts
+       (content/join-parts
         (keep (fn [part]
                 (when (map? part)
-                  (let [ptype (common/normalize-part-type part)]
-                    (when (or (contains? common/reasoning-part-types ptype)
+                  (let [ptype (content/normalize-part-type part)]
+                    (when (or (contains? reasoning/reasoning-part-types ptype)
                               (contains? part :reasoning)
                               (contains? part :summary))
-                      (or (common/string-fragment (:text part))
-                          (common/string-fragment (:content part))
-                          (common/string-fragment (:delta part))
-                          (common/string-fragment (:reasoning part))
-                          (common/string-fragment (:summary part)))))))
+                      (or (content/string-fragment (:text part))
+                          (content/string-fragment (:content part))
+                          (content/string-fragment (:delta part))
+                          (content/string-fragment (:reasoning part))
+                          (content/string-fragment (:summary part)))))))
               reasoning)))
 
      (when (sequential? (:content delta))
-       (common/join-parts
+       (content/join-parts
         (keep (fn [part]
                 (when (map? part)
-                  (let [ptype (common/normalize-part-type part)]
-                    (when (contains? common/reasoning-part-types ptype)
-                      (or (common/string-fragment (:text part))
-                          (common/string-fragment (:content part))
-                          (common/string-fragment (:delta part))
-                          (common/string-fragment (:summary part)))))))
+                  (let [ptype (content/normalize-part-type part)]
+                    (when (contains? reasoning/reasoning-part-types ptype)
+                      (or (content/string-fragment (:text part))
+                          (content/string-fragment (:content part))
+                          (content/string-fragment (:delta part))
+                          (content/string-fragment (:summary part)))))))
               (:content delta)))))))
 
 (defn- extract-text-delta
@@ -55,13 +57,13 @@
     (:content delta)
 
     (sequential? (:content delta))
-    (common/join-parts
+    (content/join-parts
      (keep (fn [part]
              (when (map? part)
-               (let [ptype (common/normalize-part-type part)]
+               (let [ptype (content/normalize-part-type part)]
                  (when (contains? #{"text" "output_text"} ptype)
-                   (or (common/string-fragment (:text part))
-                       (common/string-fragment (:content part)))))))
+                   (or (content/string-fragment (:text part))
+                       (content/string-fragment (:content part)))))))
            (:content delta)))
 
     :else nil))
@@ -92,16 +94,16 @@
           (case (:role msg)
             :user
             (conj acc {:role    "user"
-                       :content (common/user-message-text msg)})
+                       :content (content/user-message-text msg)})
 
             :assistant
             (if (= :structured (get-in msg [:content :kind]))
-              (let [{:keys [text tool-calls]} (common/assistant-structured-content msg)
+              (let [{:keys [text tool-calls]} (content/assistant-structured-content msg)
                     base                     (cond-> {:role "assistant"}
                                                (seq text) (assoc :content text))]
                 (conj acc
                       (if (seq tool-calls)
-                        (assoc base :tool_calls (mapv common/chat-tool-call tool-calls))
+                        (assoc base :tool_calls (mapv content/chat-tool-call tool-calls))
                         base)))
               (conj acc {:role    "assistant"
                          :content (get-in msg [:content :text] "")}))
@@ -109,7 +111,7 @@
             :tool-result
             (conj acc {:role         "tool"
                        :tool_call_id (:tool-call-id msg)
-                       :content      (common/tool-result-text msg)})
+                       :content      (content/tool-result-text msg)})
 
             acc))
         [])))
@@ -130,7 +132,7 @@
                                             :description (:description t)
                                             :parameters  (:parameters t)}})
                               (:tools conversation)))
-        effort        (common/reasoning-effort model options)
+        effort        (reasoning/reasoning-effort model options)
         temperature   (or (:temperature options) 0)
         body          (cond-> {:model          (:id model)
                                :messages       (vec messages)
@@ -219,7 +221,7 @@
 (defn- start-chat-tool-if-ready!
   [{:keys [tool-state stream-started?]} consume-fn idx force?]
   (let [{:keys [id name started? args-buffer]} (get @tool-state idx)
-        id* (or id (when force? (common/new-call-id)))]
+        id* (or id (when force? (content/new-call-id)))]
     (when (and (not started?) (seq name) (seq id*))
       (swap! tool-state assoc idx
              {:id id*
@@ -241,7 +243,7 @@
   (let [{:keys [tool-state tool-index-by-id stream-started?]} stream-state
         call-id   (:id tool-call)
         call-name (get-in tool-call [:function :name])
-        args      (common/normalize-tool-arguments
+        args      (content/normalize-tool-arguments
                    (get-in tool-call [:function :arguments]))]
     (ensure-chat-tool-entry! stream-state idx)
     (when (seq call-id)
@@ -252,7 +254,7 @@
     (start-chat-tool-if-ready! stream-state consume-fn idx false)
     (when (seq args)
       (let [current-buffer (get-in @tool-state [idx :args-buffer] "")
-            {:keys [buffer delta]} (common/accumulate-tool-arguments current-buffer args)]
+            {:keys [buffer delta]} (content/accumulate-tool-arguments current-buffer args)]
         (swap! tool-state assoc-in [idx :args-buffer] buffer)
         (when (and (get-in @tool-state [idx :started?])
                    (seq delta))
@@ -324,8 +326,8 @@
 
 (defn- process-chat-sse-line!
   [stream-state consume-fn model options url line]
-  (when-let [chunk (common/parse-sse-line line)]
-    (common/capture-response! options :openai-completions url chunk)
+  (when-let [chunk (transport/parse-sse-line line)]
+    (transport/capture-response! options :openai-completions url chunk)
     (let [choice (first (:choices chunk))
           delta  (:delta choice)]
       (emit-chat-chunk! stream-state consume-fn choice delta)
@@ -337,20 +339,20 @@
         request      (build-request conversation model options)
         stream-state (make-chat-stream-state)]
     (try
-      (common/capture-request! options :openai-completions url request)
-      (let [response (common/stream-response url request)]
-        (if (common/error-status? (:status response))
-          (common/emit-error! options
+      (transport/capture-request! options :openai-completions url request)
+      (let [response (transport/stream-response url request)]
+        (if (transport/error-status? (:status response))
+          (transport/emit-error! options
                               :openai-completions
                               url
                               consume-fn
-                              (common/response->error response))
+                              (transport/response->error response))
           (with-open [reader (io/reader (:body response))]
             (doseq [line (line-seq reader)]
               (process-chat-sse-line! stream-state consume-fn model options url line)))))
       (catch Exception e
-        (common/emit-error! options
+        (transport/emit-error! options
                             :openai-completions
                             url
                             consume-fn
-                            (common/exception->error e))))))
+                            (transport/exception->error e))))))

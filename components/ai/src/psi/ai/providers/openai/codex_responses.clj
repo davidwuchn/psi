@@ -3,11 +3,13 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [psi.ai.models :as models]
-            [psi.ai.providers.openai.common :as common]))
+            [psi.ai.providers.openai.content :as content]
+            [psi.ai.providers.openai.reasoning :as reasoning]
+            [psi.ai.providers.openai.transport :as transport]))
 
 (defn- resolve-codex-url
   [base-url]
-  (let [raw        (if (str/blank? base-url) common/default-codex-base-url base-url)
+  (let [raw        (if (str/blank? base-url) "https://chatgpt.com/backend-api" base-url)
         normalized (str/replace raw #"/+$" "")]
     (cond
       (str/ends-with? normalized "/codex/responses") normalized
@@ -17,24 +19,24 @@
 (defn- assistant-content->codex-items
   [msg]
   (if (= :structured (get-in msg [:content :kind]))
-    (let [{:keys [text tool-calls]} (common/assistant-structured-content msg)
+    (let [{:keys [text tool-calls]} (content/assistant-structured-content msg)
           text-item                 (when (seq text)
-                                      (common/codex-message-item text))
-          tool-items                (map common/codex-tool-call-item tool-calls)]
+                                      (content/codex-message-item text))
+          tool-items                (map content/codex-tool-call-item tool-calls)]
       (vec (concat (when text-item [text-item]) tool-items)))
     (let [text (get-in msg [:content :text] "")]
       (if (seq text)
-        [(common/codex-message-item text)]
+        [(content/codex-message-item text)]
         []))))
 
 (defn- tool-result->codex-item
   [msg]
   (let [raw-id  (or (:tool-call-id msg) "")
         call-id (or (first (str/split raw-id #"\|" 2))
-                    (common/new-call-id))]
+                    (content/new-call-id))]
     {"type"    "function_call_output"
      "call_id" call-id
-     "output"  (common/tool-result-text msg)}))
+     "output"  (content/tool-result-text msg)}))
 
 (defn codex-input-messages
   [conversation]
@@ -44,7 +46,7 @@
                    :user
                    [{"role"    "user"
                      "content" [{"type" "input_text"
-                                 "text" (common/user-message-text msg)}]}]
+                                 "text" (content/user-message-text msg)}]}]
                    :assistant
                    (assistant-content->codex-items msg)
                    :tool-result
@@ -66,7 +68,7 @@
 (defn codex-reasoning
   [model options]
   (when (:supports-reasoning model)
-    (let [effort (get common/thinking-level->effort
+    (let [effort (get reasoning/thinking-level->effort
                       (:thinking-level options)
                       "medium")]
       (when effort
@@ -97,7 +99,7 @@
   [conversation model options]
   (let [api-key    (or (:api-key options)
                        (System/getenv "OPENAI_API_KEY"))
-        account-id (common/extract-chatgpt-account-id api-key)]
+        account-id (content/extract-chatgpt-account-id api-key)]
     (when-not (seq api-key)
       (throw (ex-info "OpenAI API key is required"
                       {:provider :openai :api :openai-codex-responses})))
@@ -109,7 +111,7 @@
           headers   (cond-> {"Content-Type"       "application/json"
                              "Authorization"      (str "Bearer " api-key)
                              "accept"             "text/event-stream"
-                             "OpenAI-Beta"        common/codex-beta-header
+                             "OpenAI-Beta"        "responses=experimental"
                              "originator"         "psi"
                              "chatgpt-account-id" account-id}
                       (:session-id options)
@@ -219,7 +221,7 @@
     (reset! done? true)
     (let [err (cond-> {:type :error :error-message msg}
                 http-status (assoc :http-status http-status))]
-      (common/capture-response! options :openai-codex-responses url err)
+      (transport/capture-response! options :openai-codex-responses url err)
       (consume-fn err))))
 
 (defn- emit-codex-thinking-boundary!
@@ -230,7 +232,7 @@
 
 (defn- emit-codex-thinking-delta!
   [stream-state consume-fn event]
-  (when-let [delta (common/string-fragment (:delta event))]
+  (when-let [delta (content/string-fragment (:delta event))]
     (emit-codex-started-event! consume-fn (:started? stream-state)
                                {:type :thinking-delta
                                 :content-index 0
@@ -284,7 +286,7 @@
 
       "function_call"
       (let [idx       (register-codex-tool-index! stream-state event item)
-            call-id   (or (:call_id item) (common/new-call-id))
+            call-id   (or (:call_id item) (content/new-call-id))
             item-id   (:id item)
             tool-id   (if (seq item-id) (str call-id "|" item-id) call-id)
             tool-name (or (:name item) "tool")]
@@ -310,7 +312,7 @@
 
 (defn- handle-codex-event!
   [stream-state consume-fn model options url event]
-  (common/capture-response! options :openai-codex-responses url event)
+  (transport/capture-response! options :openai-codex-responses url event)
   (let [event-type (:type event)]
     (cond
       (= "response.output_item.added" event-type)
@@ -327,7 +329,7 @@
       (handle-codex-output-item-done! stream-state consume-fn event)
 
       (= "response.output_text.delta" event-type)
-      (when-let [delta (common/string-fragment (:delta event))]
+      (when-let [delta (content/string-fragment (:delta event))]
         (emit-codex-started-event! consume-fn (:started? stream-state)
                                    {:type :text-delta
                                     :content-index 0
@@ -362,19 +364,19 @@
         stream-state (make-codex-stream-state)]
     (try
       (let [request  (build-codex-request conversation model options)
-            _        (common/capture-request! options :openai-codex-responses url request)
-            response (common/stream-response url request)]
-        (if (common/error-status? (:status response))
-          (let [{:keys [error-message http-status]} (common/response->error response)]
+            _        (transport/capture-request! options :openai-codex-responses url request)
+            response (transport/stream-response url request)]
+        (if (transport/error-status? (:status response))
+          (let [{:keys [error-message http-status]} (transport/response->error response)]
             (emit-codex-error! stream-state consume-fn options url error-message http-status))
           (do
             (with-open [reader (io/reader (:body response))]
               (doseq [line (line-seq reader)]
-                (when-let [event (common/parse-sse-line line)]
+                (when-let [event (transport/parse-sse-line line)]
                   (handle-codex-event! stream-state consume-fn model options url event))))
             (when-not @(-> stream-state :done?)
               (emit-codex-start! consume-fn (-> stream-state :started?))
               (emit-codex-done! stream-state consume-fn model {:response {:status "completed"}})))))
       (catch Exception e
-        (let [{:keys [error-message http-status]} (common/exception->error e)]
+        (let [{:keys [error-message http-status]} (transport/exception->error e)]
           (emit-codex-error! stream-state consume-fn options url error-message http-status))))))
