@@ -333,30 +333,34 @@
         completed (complete-tool-calls (:turn-id @td) tool-calls)
         content   (build-final-content thinking-blocks text-buffer completed)
         usage     (:usage data)
+        stop-reason (or (:reason data) :stop)
         final     (cond-> {:role        "assistant"
                            :content     content
-                           :stop-reason (or (:reason data) :stop)
+                           :stop-reason stop-reason
                            :timestamp   (java.time.Instant/now)}
                     (map? usage) (assoc :usage usage))]
     (note-last-provider-event! td :done data)
     (emit-tool-assembly-errors! progress-queue completed)
-    (swap! td assoc :final-message final)
+    (swap! td assoc :final-message final :stop-reason stop-reason)
     (deliver done-p final)))
 
 (defn- handle-error! [td done-p data]
   (let [{:keys [text-buffer]} @td
-        err-msg (:error-message data)
+        stop-reason (or (:stop-reason data) :error)
+        err-msg     (or (:error-message data)
+                        (when (= :aborted stop-reason) "Aborted")
+                        "Unknown error")
         content (cond-> []
                   (seq text-buffer) (conj {:type :text :text text-buffer})
                   :always           (conj {:type :error :text err-msg}))
         final   (cond-> {:role          "assistant"
                          :content       content
-                         :stop-reason   :error
+                         :stop-reason   stop-reason
                          :error-message err-msg
                          :timestamp     (java.time.Instant/now)}
                   (:http-status data) (assoc :http-status (:http-status data)))]
     (note-last-provider-event! td :error data)
-    (swap! td assoc :final-message final :error-message err-msg)
+    (swap! td assoc :final-message final :error-message err-msg :stop-reason stop-reason)
     (deliver done-p final)))
 
 (defn make-turn-actions

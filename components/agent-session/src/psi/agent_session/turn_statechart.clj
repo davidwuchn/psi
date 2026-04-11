@@ -57,7 +57,8 @@
    :content-blocks      (sorted-map)
    :last-provider-event nil
    :final-message       nil
-   :error-message       nil})
+   :error-message       nil
+   :stop-reason         nil})
 
 ;; ============================================================
 ;; Script helper

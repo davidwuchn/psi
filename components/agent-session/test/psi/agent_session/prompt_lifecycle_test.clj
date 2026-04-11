@@ -1,6 +1,6 @@
 (ns psi.agent-session.prompt-lifecycle-test
   (:require
-   [clojure.test :refer [deftest is]]
+   [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.prompt-chain]
@@ -132,6 +132,45 @@
       (is (= :idle (ss/sc-phase-in ctx session-id)))
       (is (false? (:is-streaming (ss/get-session-data-in ctx session-id))))
       (is (= ["user" "assistant"] (mapv :role msgs))))))
+
+(deftest abort-cancels-active-prompt-runtime-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        started (promise)
+        release (promise)
+        progress-q (java.util.concurrent.LinkedBlockingQueue.)]
+    (with-redefs [psi.agent-session.prompt-runtime/do-stream!
+                  (fn [_ai-ctx _conv _model _opts consume-fn]
+                    {:future
+                     (future
+                       (consume-fn {:type :start})
+                       (deliver started true)
+                       @release
+                       (consume-fn {:type :text-delta :content-index 0 :delta "late"})
+                       (consume-fn {:type :done :reason :stop}))})]
+      (let [runner (future
+                     (session/prompt-in! ctx session-id "hello" nil {:progress-queue progress-q}))]
+        (is (= true (deref started 1000 ::timeout)))
+        (testing "session enters streaming before abort"
+          (is (= :streaming (ss/sc-phase-in ctx session-id))))
+        (session/abort-in! ctx session-id)
+        (deliver release true)
+        (let [result (deref runner 1000 ::timeout)
+              assistant (session/last-assistant-message-in ctx session-id)
+              entries (dispatch/event-log-entries)
+              execution-summary (get-in (ss/get-session-data-in ctx session-id)
+                                        [:last-execution-result-summary :stop-reason])]
+          (is (not= ::timeout result))
+          (is (= :idle (ss/sc-phase-in ctx session-id)))
+          (is (false? (:is-streaming (ss/get-session-data-in ctx session-id))))
+          ;; prompt-prepare-request currently returns the prepared-request scaffold,
+          ;; while execution proceeds via the effect path.
+          (is (map? result))
+          (is (contains? result :prepared-request))
+          (is (= :aborted execution-summary))
+          (is (= :aborted (:stop-reason assistant)))
+          (is (= "Aborted" (:error-message assistant)))
+          (is (some #(= :session/abort (:event-type %)) entries))
+          (is (some #(= :session/prompt-record-response (:event-type %)) entries)))))))
 
 (deftest build-prepared-request-surfaces-developer-and-contribution-layers-test
   (let [[ctx session-id] (create-session-context {:persist? false})]

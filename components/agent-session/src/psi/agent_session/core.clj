@@ -479,6 +479,7 @@
 (defn abort-in!
   "Abort the current agent run immediately for `session-id`. Prefer `request-interrupt-in!` for deferred semantics."
   [ctx session-id]
+  (prompt-runtime/abort-active-turn-in! ctx session-id)
   (dispatch/dispatch! ctx :session/abort {:session-id session-id} {:origin :core}))
 
 (defn consume-queued-input-text-in!

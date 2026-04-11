@@ -14,7 +14,8 @@
    [psi.agent-session.user-config :as user-cfg]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as sc]
-   [psi.agent-session.tool-defs :as tool-defs]))
+   [psi.agent-session.tool-defs :as tool-defs]
+   [psi.agent-session.turn-statechart :as turn-sc]))
 
 (defmulti execute-effect!
   "Execute one dispatch effect description.
@@ -56,6 +57,14 @@
 ;;; runtime/agent-* — delegate to agent-core (skipped for child sessions without agent-ctx)
 
 (defmethod execute-effect! :runtime/agent-abort [ctx effect]
+  (when-let [turn-ctx (ss/get-state-value-in ctx (ss/state-path :turn-ctx (effect-session-id ctx effect)))]
+    (when-let [stream-handle (:stream-handle @(:turn-data turn-ctx))]
+      (when-let [f (:future stream-handle)]
+        (future-cancel f))
+      (swap! (:turn-data turn-ctx) assoc :stream-handle (assoc stream-handle :cancelled? true)))
+    (when-not (:final-message @(:turn-data turn-ctx))
+      (turn-sc/send-event! turn-ctx :turn/error {:stop-reason :aborted
+                                                 :error-message "Aborted"})))
   (when-let [ac (effect-agent-ctx ctx effect)] (agent/abort-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-queue-steering [ctx effect]
