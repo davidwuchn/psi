@@ -6,6 +6,7 @@
   (:require
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-handlers.prompt-handlers :as prompt-handlers]
+   [psi.agent-session.dispatch-handlers.prompt-lifecycle :as prompt-lifecycle]
    [psi.agent-session.dispatch-handlers.session-lifecycle :as lifecycle]
    [psi.agent-session.dispatch-handlers.session-mutations :as mutations]
    [psi.agent-session.dispatch-handlers.statechart-actions :as sc-actions]
@@ -48,5 +49,6 @@
   (sc-actions/register! ctx)
   (ui-handlers/register! ctx)
   (prompt-handlers/register! ctx)
+  (prompt-lifecycle/register! ctx)
   (lifecycle/register! ctx)
   (mutations/register! ctx))
