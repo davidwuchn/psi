@@ -7,4 +7,7 @@
    :timeout-ms 20000}
   {:id "file-lengths"
    :cmd ["bb" "commit-check:file-lengths"]
+   :timeout-ms 20000}
+  {:id "dispatch-architecture"
+   :cmd ["bb" "commit-check:dispatch-architecture"]
    :timeout-ms 20000}]}

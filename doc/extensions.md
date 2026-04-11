@@ -190,6 +190,9 @@ The example project config in this repo defines these bb tasks:
   - then runs `rama-cc bases/ --threshold 21 --fail-above 20`
 - `bb commit-check:file-lengths`
   - fails if any file under `components/` or `bases/` in a `src/` or `test/` path exceeds 800 lines
+- `bb commit-check:dispatch-architecture`
+  - fails on dispatch effect parity drift in `agent-session`
+  - reports advisory warnings for handler side-effect candidates and direct canonical state writes outside an allowlist
 
 ### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
 

@@ -2,6 +2,7 @@
  {:requires ([babashka.tasks :refer [shell]]
              [clojure.string :as str])
   :init (do
+          (load-file "bb/dispatch_architecture_check.clj")
           (def chiasmus-home
             (str (System/getProperty "user.home") "/src/chiasmus"))
 
@@ -174,6 +175,10 @@
                (doseq [line bad]
                  (println line)))
              (System/exit 1)))}
+
+  commit-check:dispatch-architecture
+  {:doc  "Run psi-specific dispatch architecture checks. Fails on effect parity drift; reports handler purity and canonical state write boundary advisories."
+   :task (System/exit (bb.dispatch-architecture-check/run! *command-line-args*))}
 
   clojure:test:unit
   {:doc  "Run Clojure unit tests (Kaocha :unit suite)."

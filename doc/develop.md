@@ -101,6 +101,7 @@ This repo defines:
 ```bash
 bb commit-check:rama-cc
 bb commit-check:file-lengths
+bb commit-check:dispatch-architecture
 ```
 
 ### `commit-check:rama-cc`
@@ -120,6 +121,24 @@ Scans `components/` and `bases/` for files under `src/` or `test/` and fails if
 any exceed 800 lines.
 
 When it fails it prints the matching files to stderr and exits non-zero.
+
+### `commit-check:dispatch-architecture`
+
+Runs a psi-specific dispatch architecture check for `agent-session`.
+
+Current behavior:
+- fails on dispatch effect parity drift:
+  - emitted `:effect/type` missing from `dispatch_schema.clj`
+  - emitted `:effect/type` missing from `dispatch_effects.clj`
+  - schema-declared effect without executor
+  - executor without schema declaration
+- reports advisory warnings for:
+  - direct side-effect candidates inside `dispatch_handlers/`
+  - direct canonical `(:state* ctx)` writes outside a small allowlist of
+    infrastructure namespaces
+
+This task is intentionally narrow and project-specific so we can prove its
+usefulness before broadening scope or upstreaming ideas.
 
 ## CI
 
