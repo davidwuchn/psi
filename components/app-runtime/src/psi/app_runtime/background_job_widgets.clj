@@ -2,7 +2,7 @@
   "Adapter-neutral background-job widget/status projections shared across interactive UIs."
   (:require
    [clojure.string :as str]
-   [psi.app-runtime.background-jobs :as bg]))
+   [psi.app-runtime.background-job-view :as view]))
 
 (defn- status->level
   [status]
@@ -32,7 +32,7 @@
                  extension-id "psi-background-jobs"
                  widget-id "background-jobs"
                  placement :below-editor}}]
-   (let [summary (:jobs/items (bg/jobs-summary jobs {:statuses statuses}))]
+   (let [summary (:jobs/items (view/jobs-summary jobs {:statuses statuses}))]
      {:widget/extension-id extension-id
       :widget/widget-id widget-id
       :widget/placement placement
@@ -45,7 +45,7 @@
   ([jobs {:keys [extension-id statuses]
           :or   {extension-id "psi-background-jobs"
                  statuses [:running :pending-cancel]}}]
-   (let [items (:jobs/items (bg/jobs-summary jobs {:statuses statuses}))]
+   (let [items (:jobs/items (view/jobs-summary jobs {:statuses statuses}))]
      (vec
       (for [item items]
         {:status/extension-id extension-id
