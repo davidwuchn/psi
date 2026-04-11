@@ -2,9 +2,7 @@
   "Runtime prompt execution scaffold.
 
    This namespace is the effectful boundary for executing prepared requests.
-   Initial implementation reuses the existing per-turn streaming machinery while
-   consuming the prepared-request artifact instead of recomputing request shape
-   inside the dispatch effect handler."
+   It now keeps only the prepared-request execution path and turn abort entry."
   (:require
    [psi.ai.models :as models]
    [psi.agent-session.prompt-stream :as prompt-stream]
@@ -25,13 +23,9 @@
     (prompt-stream/abort-turn! turn-ctx)
     true))
 
-(defn- extract-tool-calls
+(defn- classify-execution-result
   [assistant-msg]
-  (vec (filter #(= :tool-call (:type %)) (:content assistant-msg))))
-
-(defn- classify-turn-outcome
-  [assistant-msg]
-  (let [tool-calls (extract-tool-calls assistant-msg)]
+  (let [tool-calls (vec (filter #(= :tool-call (:type %)) (:content assistant-msg)))]
     (cond
       (= :error (:stop-reason assistant-msg))
       {:turn/outcome :turn.outcome/error
@@ -146,7 +140,7 @@
                               :else
                               result))
             _ (swap! (:turn-data turn-ctx) dissoc :stream-handle)
-            outcome       (classify-turn-outcome assistant-msg)]
+            outcome       (classify-execution-result assistant-msg)]
         {:execution-result/turn-id             turn-id
          :execution-result/session-id          session-id
          :execution-result/prepared-request-id turn-id
