@@ -1,0 +1,210 @@
+(ns psi.agent-session.mutations.session
+  (:require
+   [clojure.string :as str]
+   [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.ai.models :as models]
+   [psi.agent-session.core :as core]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.persistence :as persist]
+   [psi.agent-session.session :as session]
+   [psi.agent-session.session-state :as ss]))
+
+(pco/defmutation set-session-name
+  "Set the human-readable name of the current session."
+  [_ {:keys [psi/agent-session-ctx session-id name]}]
+  {::pco/op-name 'psi.extension/set-session-name
+   ::pco/params  [:psi/agent-session-ctx :session-id :name]
+   ::pco/output  [:psi.agent-session/session-name]}
+  (dispatch/dispatch! agent-session-ctx :session/set-session-name {:session-id session-id :name name} {:origin :mutations})
+  {:psi.agent-session/session-name name})
+
+(pco/defmutation set-model
+  "Set the active model and clamp thinking-level for the current session.
+   Optional :scope — :session (runtime only), :project (default), :user (user-global)."
+  [_ {:keys [psi/agent-session-ctx session-id model scope]}]
+  {::pco/op-name 'psi.extension/set-model
+   ::pco/params  [:psi/agent-session-ctx :session-id :model]
+   ::pco/output  [:psi.agent-session/model
+                  :psi.agent-session/thinking-level]}
+  (let [result (dispatch/dispatch! agent-session-ctx :session/set-model
+                                   (cond-> {:session-id session-id :model model}
+                                     scope (assoc :scope scope))
+                                   {:origin :mutations})]
+    {:psi.agent-session/model          (:model result)
+     :psi.agent-session/thinking-level (:thinking-level result)}))
+
+(pco/defmutation create-session
+  "Create a new session branch with optional name, worktree, system prompt, and thinking level."
+  [_ {:keys [psi/agent-session-ctx parent-session-id session-name worktree-path system-prompt thinking-level]}]
+  {::pco/op-name 'psi.extension/create-session
+   ::pco/params  [:psi/agent-session-ctx :parent-session-id]
+   ::pco/output  [:psi.agent-session/session-id
+                  :psi.agent-session/session-name
+                  :psi.agent-session/cwd
+                  :psi.agent-session/thinking-level]}
+  (let [sd      (core/new-session-in! agent-session-ctx parent-session-id {:session-name  session-name
+                                                                           :worktree-path worktree-path})
+        new-sid (:session-id sd)
+        _       (when system-prompt
+                  (dispatch/dispatch! agent-session-ctx :session/set-system-prompt {:session-id new-sid :prompt system-prompt} {:origin :mutations}))
+        _       (when thinking-level
+                  (dispatch/dispatch! agent-session-ctx :session/set-thinking-level {:session-id new-sid :level thinking-level} {:origin :mutations}))
+        sd      (ss/get-session-data-in agent-session-ctx new-sid)]
+    {:psi.agent-session/session-id     (:session-id sd)
+     :psi.agent-session/session-name   (:session-name sd)
+     :psi.agent-session/cwd            (:worktree-path sd)
+     :psi.agent-session/thinking-level (:thinking-level sd)}))
+
+(pco/defmutation create-child-session
+  "Create a child session for agent execution without switching active session.
+  Returns the child session-id. The child shares the parent's context but has
+  its own journal, telemetry, and session data."
+  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level]}]
+  {::pco/op-name 'psi.extension/create-child-session
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.agent-session/session-id]}
+  (let [child-sid (str (java.util.UUID/randomUUID))]
+    (dispatch/dispatch! agent-session-ctx
+                        :session/create-child
+                        {:session-id       session-id
+                         :child-session-id child-sid
+                         :session-name     session-name
+                         :system-prompt    system-prompt
+                         :tool-defs        tool-defs
+                         :thinking-level   thinking-level}
+                        {:origin :mutations})
+    {:psi.agent-session/session-id child-sid}))
+
+(pco/defmutation run-agent-loop-in-session
+  "Run the prompt lifecycle for a specific child session.
+  Scopes the ctx to the target session-id and blocks until the turn completes.
+  Returns the final assistant result summary."
+  [_ {:keys [psi/agent-session-ctx session-id prompt model api-key]}]
+  {::pco/op-name 'psi.extension/run-agent-loop-in-session
+   ::pco/params  [:psi/agent-session-ctx :session-id :prompt]
+   ::pco/output  [:psi.agent-session/agent-run-ok?
+                  :psi.agent-session/agent-run-text
+                  :psi.agent-session/agent-run-elapsed-ms
+                  :psi.agent-session/agent-run-error-message]}
+  (let [session-model  (:model (ss/get-session-data-in agent-session-ctx session-id))
+        resolved-model (or model
+                           (when session-model
+                             (some (fn [m]
+                                     (when (and (= (:provider m) (keyword (:provider session-model)))
+                                                (= (:id m) (:id session-model)))
+                                       m))
+                                   (vals models/all-models)))
+                           (get models/all-models :sonnet-4.6))
+        started-ms     (System/currentTimeMillis)]
+    (try
+      (dispatch/dispatch! agent-session-ctx :session/set-model
+                          {:session-id session-id
+                           :model resolved-model
+                           :scope :session}
+                          {:origin :mutations})
+      (core/prompt-in! agent-session-ctx session-id (or prompt "") nil
+                       {:runtime-opts (cond-> {}
+                                        api-key (assoc :api-key api-key))})
+      (let [result (core/last-assistant-message-in agent-session-ctx session-id)
+            text   (->> (:content result)
+                        (keep (fn [c]
+                                (case (:type c)
+                                  :text (:text c)
+                                  :error (:text c)
+                                  nil)))
+                        (clojure.string/join "\n"))
+            ok?    (not= :error (:stop-reason result))]
+        {:psi.agent-session/agent-run-ok?           ok?
+         :psi.agent-session/agent-run-text          text
+         :psi.agent-session/agent-run-elapsed-ms    (- (System/currentTimeMillis) started-ms)
+         :psi.agent-session/agent-run-error-message (:error-message result)})
+      (catch Throwable e
+        {:psi.agent-session/agent-run-ok?           false
+         :psi.agent-session/agent-run-text          (str "Error: " (or (ex-message e) (.getMessage e) (str e)))
+         :psi.agent-session/agent-run-elapsed-ms    (- (System/currentTimeMillis) started-ms)
+         :psi.agent-session/agent-run-error-message (or (ex-message e) (.getMessage e) (str e))}))))
+
+(pco/defmutation switch-session
+  "Switch the active session to the given session-id."
+  [_ {:keys [psi/agent-session-ctx source-session-id session-id]}]
+  {::pco/op-name 'psi.extension/switch-session
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.agent-session/session-id
+                  :psi.agent-session/session-name
+                  :psi.agent-session/cwd]}
+  (let [origin-session-id (or source-session-id session-id)
+        sd                (core/ensure-session-loaded-in! agent-session-ctx origin-session-id session-id)]
+    {:psi.agent-session/session-id   (:session-id sd)
+     :psi.agent-session/session-name (:session-name sd)
+     :psi.agent-session/cwd          (:worktree-path sd)}))
+
+(pco/defmutation set-rpc-trace
+  "Enable, disable, or toggle RPC trace logging for the current session."
+  [_ {:keys [psi/agent-session-ctx session-id enabled file] :as params}]
+  {::pco/op-name 'psi.extension/set-rpc-trace
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.agent-session/rpc-trace-enabled
+                  :psi.agent-session/rpc-trace-file]}
+  (let [current       (or (session/get-state-value-in agent-session-ctx
+                                                      (session/state-path :rpc-trace))
+                          {:enabled? false :file nil})
+        enabled?      (if (contains? params :enabled)
+                        (boolean enabled)
+                        (not (boolean (:enabled? current))))
+        file-present? (contains? params :file)
+        file*         (if file-present?
+                        (when-not (str/blank? file)
+                          file)
+                        (:file current))]
+    (when (and enabled? (str/blank? file*))
+      (throw (ex-info "rpc trace requires a non-empty :file when enabled"
+                      {:error-code "request/invalid-params"})))
+    (dispatch/dispatch! agent-session-ctx :session/set-rpc-trace {:session-id session-id :enabled? enabled? :file file*} {:origin :mutations})
+    {:psi.agent-session/rpc-trace-enabled enabled?
+     :psi.agent-session/rpc-trace-file    file*}))
+
+(pco/defmutation interrupt
+  "Request an interrupt at the next turn boundary."
+  [_ {:keys [psi/agent-session-ctx session-id]}]
+  {::pco/op-name 'psi.extension/interrupt
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.agent-session/interrupt-pending
+                  :psi.agent-session/is-idle]}
+  (let [{:keys [pending?]} (core/request-interrupt-in! agent-session-ctx session-id)]
+    {:psi.agent-session/interrupt-pending (boolean pending?)
+     :psi.agent-session/is-idle           (ss/idle-in? agent-session-ctx session-id)}))
+
+(pco/defmutation compact
+  "Trigger manual context compaction for the current session."
+  [_ {:keys [psi/agent-session-ctx session-id instructions]}]
+  {::pco/op-name 'psi.extension/compact
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.agent-session/is-compacting
+                  :psi.agent-session/session-entry-count]}
+  (core/manual-compact-in! agent-session-ctx session-id instructions)
+  {:psi.agent-session/is-compacting     false
+   :psi.agent-session/session-entry-count
+   (count (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id)))})
+
+(pco/defmutation append-entry
+  "Append a custom journal entry to the current session."
+  [_ {:keys [psi/agent-session-ctx session-id custom-type data]}]
+  {::pco/op-name 'psi.extension/append-entry
+   ::pco/params  [:psi/agent-session-ctx :session-id :custom-type]
+   ::pco/output  [:psi.agent-session/session-entry-count]}
+  (ss/journal-append-in! agent-session-ctx session-id
+                         (persist/custom-message-entry custom-type (str data) nil false))
+  {:psi.agent-session/session-entry-count
+   (count (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id)))})
+
+(def all-mutations
+  [set-session-name
+   set-model
+   create-session
+   create-child-session
+   run-agent-loop-in-session
+   switch-session
+   set-rpc-trace
+   interrupt
+   compact
+   append-entry])
