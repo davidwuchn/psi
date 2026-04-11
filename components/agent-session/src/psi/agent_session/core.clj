@@ -211,7 +211,7 @@
                                                     ([ctx session-id]
                                                      (ss/effective-cwd-in ctx session-id)))
    :daemon-thread-fn                              dispatch-handlers/daemon-thread
-   :drop-trailing-overflow-error-fn               dispatch-handlers/drop-trailing-overflow-error!
+   :drop-trailing-overflow-error-fn               dispatch-effects/drop-trailing-overflow-error!
    :validate-dispatch-result-fn                   dispatch/validate-dispatch-schemas
    :all-mutations                                 mutations})
 

@@ -4,7 +4,6 @@
    on-compacting-entered, on-compact-done, on-retry-triggered, on-retrying-entered,
    on-retry-resume."
   (:require
-   [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as session]))
@@ -61,15 +60,6 @@
       :threshold
 
       :else nil)))
-
-(defn drop-trailing-overflow-error!
-  "Remove a trailing overflow-error assistant message from the agent context.
-   Called via ctx :drop-trailing-overflow-error-fn."
-  [ctx session-id]
-  (let [messages (:messages (agent/get-data-in (session/agent-ctx-in ctx session-id)))
-        last-msg (last messages)]
-    (when (overflow-error-assistant? last-msg)
-      (agent/replace-messages-in! (session/agent-ctx-in ctx session-id) (vec (butlast messages))))))
 
 ;;; Registration
 

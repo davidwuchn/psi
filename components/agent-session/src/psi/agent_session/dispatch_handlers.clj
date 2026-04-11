@@ -2,7 +2,7 @@
   "Entry point for dispatch handler registration.
    Delegates to sub-namespaces; exposes the public API consumed by core.clj:
      register-all!, make-actions-fn, dispatch-statechart-event-in!,
-     daemon-thread, drop-trailing-overflow-error!"
+     daemon-thread"
   (:require
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-handlers.prompt-handlers :as prompt-handlers]
@@ -19,11 +19,6 @@
   "Start a daemon thread running f. Returns the Thread."
   [f]
   (sc-actions/daemon-thread f))
-
-(defn drop-trailing-overflow-error!
-  "Remove a trailing overflow-error assistant message from the agent context."
-  [ctx session-id]
-  (sc-actions/drop-trailing-overflow-error! ctx session-id))
 
 ;;; Wiring
 

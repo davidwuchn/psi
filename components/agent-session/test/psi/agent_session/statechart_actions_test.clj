@@ -3,6 +3,7 @@
    [clojure.test :refer [deftest testing is]]
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.dispatch-effects :as dispatch-effects]
    [psi.agent-session.dispatch-handlers.statechart-actions :as statechart-actions]
    [psi.agent-session.session-state :as session-state]
    [psi.agent-session.test-support :as test-support]))
@@ -47,7 +48,7 @@
                                                      :stop-reason :error
                                                      :error-message "context window exceeded"
                                                      :content [{:type :text :text "too long"}]}]})
-      (statechart-actions/drop-trailing-overflow-error! ctx session-id)
+      (dispatch-effects/drop-trailing-overflow-error! ctx session-id)
       (is (= [{:role "user" :content [{:type :text :text "hi"}]}]
              (:messages (agent/get-data-in agent-ctx))))))
 
@@ -61,7 +62,7 @@
       (agent/create-agent-in! agent-ctx {:system-prompt "prompt"
                                          :model {:provider "anthropic" :id "claude"}
                                          :messages messages})
-      (statechart-actions/drop-trailing-overflow-error! ctx session-id)
+      (dispatch-effects/drop-trailing-overflow-error! ctx session-id)
       (is (= messages
              (:messages (agent/get-data-in agent-ctx)))))))
 

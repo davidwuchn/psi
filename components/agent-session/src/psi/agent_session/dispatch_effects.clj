@@ -10,6 +10,7 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
+   [psi.agent-session.session :as session-data]
    [psi.agent-session.user-config :as user-cfg]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as sc]
@@ -37,6 +38,20 @@
 (defn- effect-sc-session-id
   [ctx effect]
   (ss/sc-session-id-in ctx (effect-session-id ctx effect)))
+
+(defn drop-trailing-overflow-error!
+  "Remove a trailing overflow-error assistant message from the agent context.
+   Used by the auto-compaction effect path before retrying after overflow."
+  [ctx session-id]
+  (let [ac          (ss/agent-ctx-in ctx session-id)
+        messages    (:messages (agent/get-data-in ac))
+        last-msg    (last messages)
+        stop-reason (or (:stop-reason last-msg) (:stopReason last-msg))
+        err         (str (or (:error-message last-msg) ""))]
+    (when (and (map? last-msg)
+               (or (= :error stop-reason) (= "error" stop-reason))
+               (session-data/context-overflow-error? err))
+      (agent/replace-messages-in! ac (vec (butlast messages))))))
 
 ;;; runtime/agent-* — delegate to agent-core (skipped for child sessions without agent-ctx)
 
