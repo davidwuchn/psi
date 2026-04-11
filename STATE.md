@@ -66,3 +66,23 @@ The bridge-removal plan is complete. Remaining work is follow-on cleanup / next 
 - retire remaining agent-core coupling in some consumers
 - configuration scoping
 - cache stability improvements
+- post-Wave-B façade thinning:
+  - reduce `psi.agent-session.executor` to a true compatibility façade
+  - migrate direct callers off `psi.ai.providers.openai.common`
+  - decide whether `psi.app-runtime.background-jobs` remains as façade or is retired in favour of `background-job-view`
+
+#### Post-Wave-B check
+
+Wave B of the Gordian refactor is complete.
+
+Completed commits:
+- `da746cef` — `⚒ prompts: extract shared prompt streaming helpers`
+- `177a3551` — `⚒ prompts: split single-turn and loop execution`
+- `7221fa57` — `⚒ prompts: narrow prompt-runtime to prepared-request execution`
+- `1530e0b9` — `⚒ dispatch: consolidate prompt lifecycle handler registration`
+- `5ea34cc0` — `⚒ background-jobs: extract canonical view model`
+- `0614907f` — `⚒ openai: separate transport content and reasoning helpers`
+
+Gordian wave-boundary snapshot:
+- `src`: propagation cost `13.7%`, cycles `none`, namespaces `181`
+- `src+test`: propagation cost `12.9%`, cycles `none`, namespaces `306`
