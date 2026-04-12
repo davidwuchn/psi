@@ -22,7 +22,7 @@
   - startup prompts now use the shared prompt lifecycle on the default runtime path while retaining injected `:run-loop-fn` compatibility
   - `psi.extension/run-agent-loop-in-session` now routes through `prompt-in!` instead of direct executor entry
   - prepared-request introspection now exposes explicit prompt layers for base system prompt, developer metadata layer, and prompt contributions
-  - intentionally isolated workflow/ephemeral runtimes remain executor-owned by decision, rather than being forced into shared-session lifecycle semantics
+  - intentionally isolated workflow/ephemeral runtimes remain owned by their isolated workflow runtimes by decision, rather than being forced into shared-session lifecycle semantics
 - ✓ Verification:
   - changed Clojure files pass `cljfmt`
   - changed Clojure files pass `clj-kondo`

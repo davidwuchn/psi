@@ -278,7 +278,7 @@ search text (file contents): `git grep "λ"`
 | Capability Catalog (S1) | Known set | ⊨ Explicit model: known {tools, prompts, skills, extensions} |
 | Session Capabilities (S1) | Available set per session | ⊨ Explicit model: available(session-id) {tools, prompts, skills, extensions} |
 | Handlers (S1) | Pure transforms | ~ Migration in progress — pure-result shape defined, legacy handlers coexist |
-| Effects (S1) | Impure boundary | ✓ Effect schema + effect-interceptor — tool execution still executor-owned |
+| Effects (S1) | Impure boundary | ✓ Effect schema + effect-interceptor — tool execution still runtime-owned outside dispatch effects |
 | Adapters (S1) | Presentation | ✓ TUI + RPC exist |
 | Resolvers (S1) | Federated reads | ✓ Pathom graph |
 | OAuth/Authn (S2) | Identity verification | ~ Modelled in VSM; implementation wiring/status tracked in runtime work |
@@ -290,7 +290,7 @@ search text (file contents): `git grep "λ"`
 | Dispatch (S3) | Coordination | ✓ Event dispatch with normalized event map |
 | Event log (S4) | Audit + replay | ✓ Bounded ring buffer (1000 entries) + replay-event-log! — suppresses effects on replay |
 | Introspection (S4) | Self-awareness | ✓ EQL graph |
-| Time-travel (S4) | Debugging | ~ Replay infrastructure exists; full time-travel blocked by executor-owned tool execution |
+| Time-travel (S4) | Debugging | ~ Replay infrastructure exists; full time-travel blocked by runtime-owned tool execution outside dispatch effects |
 
 ### Recursive Structure
 
@@ -306,7 +306,7 @@ S1(code) → S2(manifest/permissions) → S3(dispatch/subscribe) → S4(introspe
 ### Frontier
 
 - **Handler purity**: pure-result shape (`{:root-state-update f :effects [...]}`) defined and validated; legacy handlers still perform side effects inline — migration ongoing
-- **Tool execution boundary**: actual tool execution is intentionally executor-owned and has not moved under dispatch-owned runtime effects — blocks full replay fidelity
+- **Tool execution boundary**: actual tool execution is intentionally owned by the runtime boundary and has not moved under dispatch-owned runtime effects — blocks full replay fidelity
 - **Validation rollback**: validate-interceptor is post-apply; invalid results suppress effects but do not roll back already-applied state
 - **Manifest permissions**: `allowed-events` only enforced when explicitly declared; missing manifests get compatibility-allow — implicit permissions still exist
 

@@ -148,7 +148,7 @@ Bootstrapped on 2026-04-02.
 - `psi.agent-session.executor` has been deleted; shared-session prompt execution now has one path:
   - `prompt-turn` owns streaming + recursive turn progression
   - `prompt-loop` owns loop lifecycle completion
-- Decision taken: keep extension/workflow-local ephemeral sessions executor-owned when they are intentionally isolated runtimes (for example workflow step-local sessions in `extensions/mcp_tasks_run.clj`) rather than forcing them into the shared session lifecycle.
+- Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes when they are intentionally isolated (for example workflow step-local sessions in `extensions/mcp_tasks_run.clj`) rather than forcing them into the shared session lifecycle.
 - The next convergence target should therefore be shared-session prompt semantics such as agent profile / skill injection in request preparation, not isolated workflow runtimes.
 - Keep LSP follow-on work as a secondary thread.
 
