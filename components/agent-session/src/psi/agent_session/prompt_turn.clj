@@ -10,9 +10,7 @@
    [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
-   [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.tool-batch :as tool-batch]
-   [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
 (defn session-messages
@@ -56,17 +54,9 @@
                           sd
                           (session-messages ctx session-id))
         base-ai-options  (or extra-ai-options {})
-        ai-options       (prompt-runtime/capture-aware-ai-options ctx session-id turn-id base-ai-options)
-        done-p           (promise)
-        thinking-buffers (atom {})
-        actions-fn       (accum/make-turn-actions ctx session-id agent-ctx done-p progress-queue
-                                                  ai-model thinking-buffers)
-        turn-ctx         (turn-sc/create-turn-context actions-fn)
-        _                (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
-        last-progress-ms (atom (now-ms))
-        timed-out?       (atom false)]
-    (sa/set-turn-context-in! ctx session-id turn-ctx)
-    (turn-sc/send-event! turn-ctx :turn/start)
+        {:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
+        (prompt-runtime/create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
+        ai-options       (prompt-runtime/capture-aware-ai-options ctx session-id turn-id base-ai-options)]
     (do-stream! ai-ctx ai-conv ai-model ai-options
                 (prompt-runtime/make-provider-event-consumer
                  turn-ctx actions-fn last-progress-ms timed-out?

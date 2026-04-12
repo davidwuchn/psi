@@ -43,6 +43,27 @@
                   (sa/append-provider-reply-capture-in!
                    ctx session-id (assoc capture :turn-id turn-id))))))))
 
+(defn create-live-turn-context
+  "Create and install the canonical live turn execution state used by prompt
+   execution paths. Returns the working state needed to drive one provider
+   stream to completion."
+  [ctx session-id agent-ctx ai-model progress-queue turn-id]
+  (let [done-p           (promise)
+        thinking-buffers (atom {})
+        actions-fn       (accum/make-turn-actions ctx session-id agent-ctx done-p progress-queue
+                                                  ai-model thinking-buffers)
+        turn-ctx         (turn-sc/create-turn-context actions-fn)
+        _                (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
+        last-progress-ms (atom (prompt-stream/now-ms))
+        timed-out?       (atom false)]
+    (sa/set-turn-context-in! ctx session-id turn-ctx)
+    (turn-sc/send-event! turn-ctx :turn/start)
+    {:done-p done-p
+     :actions-fn actions-fn
+     :turn-ctx turn-ctx
+     :last-progress-ms last-progress-ms
+     :timed-out? timed-out?}))
+
 (defn- classify-execution-result
   [assistant-msg]
   (prompt-recording/classify-assistant-message assistant-msg))
@@ -107,17 +128,9 @@
                              (:model (ss/get-session-data-in ctx session-id))
                              (models/get-model :sonnet-4.6))
         base-ai-options  (or (:prepared-request/ai-options prepared-request) {})
-        done-p           (promise)
-        thinking-buffers (atom {})
-        actions-fn       (accum/make-turn-actions ctx session-id agent-ctx done-p progress-queue
-                                                  ai-model thinking-buffers)
-        turn-ctx         (turn-sc/create-turn-context actions-fn)
-        _                (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
-        last-progress-ms (atom (prompt-stream/now-ms))
-        timed-out?       (atom false)
+        {:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
+        (create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
         ai-options       (capture-aware-ai-options ctx session-id turn-id base-ai-options)]
-    (sa/set-turn-context-in! ctx session-id turn-ctx)
-    (turn-sc/send-event! turn-ctx :turn/start)
     (let [stream-handle (prompt-stream/mark-turn-stream-handle!
                          turn-ctx
                          (do-stream! ai-ctx ai-conv ai-model ai-options
