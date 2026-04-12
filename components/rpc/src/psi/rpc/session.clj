@@ -7,7 +7,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
-   [psi.app-runtime.background-jobs :as app-bg-jobs]
+   [psi.app-runtime.background-job-view :as app-bg-view]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
@@ -136,7 +136,7 @@
 
 (defn- background-job->rpc-view
   [job]
-  (let [summary (app-bg-jobs/job-summary job)]
+  (let [summary (app-bg-view/job-summary job)]
     (merge
      (-> job
          (select-keys [:job-id
