@@ -26,7 +26,7 @@
    [clojure.string :as str]
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as session]
-   [psi.app-runtime.background-jobs :as app-bg-jobs]
+   [psi.app-runtime.background-job-view :as app-bg-view]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
@@ -430,7 +430,7 @@
     (if invalid?
       {:type :text :message "Usage: /jobs [status ...]"}
       {:type :text
-       :message (:jobs/text (app-bg-jobs/jobs-summary jobs {:statuses (or statuses [:running :pending-cancel])}))})))
+       :message (:jobs/text (app-bg-view/jobs-summary jobs {:statuses (or statuses [:running :pending-cancel])}))})))
 
 (defn- dispatch-job-command
   [ctx session-id trimmed]
@@ -439,7 +439,7 @@
       {:type :text :message "Usage: /job <job-id>"}
       (let [job (bg-rt/inspect-background-job-in! ctx session-id job-id)]
         {:type :text
-         :message (:job/text (app-bg-jobs/job-detail job))}))))
+         :message (:job/text (app-bg-view/job-detail job))}))))
 
 (defn- dispatch-cancel-job-command
   [ctx session-id trimmed]
@@ -448,7 +448,7 @@
       {:type :text :message "Usage: /cancel-job <job-id>"}
       (let [job (bg-rt/cancel-background-job-in! ctx session-id job-id :user)]
         {:type :text
-         :message (:job/message (app-bg-jobs/cancel-job-summary job-id job))}))))
+         :message (:job/message (app-bg-view/cancel-job-summary job-id job))}))))
 
 (defn- dispatch-remember-command
   [ctx session-id trimmed]
