@@ -68,8 +68,11 @@ The bridge-removal plan is complete. Remaining work is follow-on cleanup / next 
 - cache stability improvements
 - post-Wave-B façade thinning:
   - reduce `psi.agent-session.executor` to a true compatibility façade
-  - migrate direct callers off `psi.ai.providers.openai.common`
-  - decide whether `psi.app-runtime.background-jobs` remains as façade or is retired in favour of `background-job-view`
+  - migrate the remaining prompt/streaming test seams off executor-owned internals
+
+Completed follow-on cleanup since Wave B:
+- `psi.ai.providers.openai.common` has been removed after migrating direct callers
+- `psi.app-runtime.background-jobs` has been removed after migrating commands, RPC, widgets, and tests to `background-job-view`
 
 #### Post-Wave-B check
 

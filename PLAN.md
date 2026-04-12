@@ -22,10 +22,12 @@ Wave-boundary check results:
 - prompt, background-job, and OpenAI slices all moved toward thinner focused namespaces without introducing cycles
 
 Active follow-on slices from Gordian:
-1. thin `psi.agent-session.executor` into a true compatibility façade, then migrate test/private-var coupling to `prompt-turn` / `prompt-loop`
-2. finish the OpenAI migration by moving direct callers off `psi.ai.providers.openai.common`, then delete the façade
-3. decide whether `psi.app-runtime.background-jobs` should remain a façade or whether callers should move directly to `background-job-view`
-4. keep an eye on prompt-lifecycle / session-lifecycle conceptual overlap while avoiding new structural coupling
+1. thin `psi.agent-session.executor` into a true compatibility façade, then migrate the remaining prompt/streaming test coupling to `prompt-turn` / `prompt-loop`
+2. keep an eye on prompt-lifecycle / session-lifecycle conceptual overlap while avoiding new structural coupling
+
+Completed follow-on slices:
+- OpenAI migration completed; `psi.ai.providers.openai.common` has been deleted
+- background-job façade retirement completed; `psi.app-runtime.background-jobs` has been deleted
 
 Guardrails for follow-on commits:
 - keep behavior stable
