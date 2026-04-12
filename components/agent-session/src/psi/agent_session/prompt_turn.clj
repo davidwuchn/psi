@@ -67,49 +67,10 @@
         timed-out?       (atom false)]
     (sa/set-turn-context-in! ctx session-id turn-ctx)
     (turn-sc/send-event! turn-ctx :turn/start)
-    (let [call-action! (fn [action-key extra]
-                         (actions-fn action-key (merge {:turn-data (:turn-data turn-ctx)} extra)))]
-      (do-stream! ai-ctx ai-conv ai-model ai-options
-                  (fn [event]
-                    (when-not @timed-out?
-                      (reset! last-progress-ms (now-ms))
-                      (case (:type event)
-                        :start                    nil
-                        :text-start               (call-action! :on-text-start
-                                                                {:content-index (:content-index event)})
-                        :text-delta               (turn-sc/send-event! turn-ctx :turn/text-delta
-                                                                       {:content-index (:content-index event)
-                                                                        :delta         (:delta event)})
-                        :text-end                 (call-action! :on-text-end
-                                                                {:content-index (:content-index event)})
-                        :thinking-start           (call-action! :on-thinking-start
-                                                                {:content-index (:content-index event)
-                                                                 :thinking      (:thinking event)
-                                                                 :signature     (:signature event)})
-                        :thinking-delta           (call-action! :on-thinking-delta
-                                                                {:content-index (:content-index event)
-                                                                 :delta         (:delta event)})
-                        :thinking-signature-delta (call-action! :on-thinking-signature-delta
-                                                                {:content-index (:content-index event)
-                                                                 :signature     (:signature event)})
-                        :thinking-end             (call-action! :on-thinking-end
-                                                                {:content-index (:content-index event)})
-                        :toolcall-start           (turn-sc/send-event! turn-ctx :turn/toolcall-start
-                                                                       {:content-index (:content-index event)
-                                                                        :tool-id       (:id event)
-                                                                        :tool-name     (:name event)})
-                        :toolcall-delta           (turn-sc/send-event! turn-ctx :turn/toolcall-delta
-                                                                       {:content-index (:content-index event)
-                                                                        :delta         (:delta event)})
-                        :toolcall-end             (turn-sc/send-event! turn-ctx :turn/toolcall-end
-                                                                       {:content-index (:content-index event)})
-                        :done                     (turn-sc/send-event! turn-ctx :turn/done
-                                                                       {:reason (:reason event)
-                                                                        :usage  (:usage event)})
-                        :error                    (turn-sc/send-event! turn-ctx :turn/error
-                                                                       (cond-> {:error-message (:error-message event)}
-                                                                         (:http-status event) (assoc :http-status (:http-status event))))
-                        nil)))))
+    (do-stream! ai-ctx ai-conv ai-model ai-options
+                (prompt-runtime/make-provider-event-consumer
+                 turn-ctx actions-fn last-progress-ms timed-out?
+                 {:now-fn now-ms}))
     (let [result (wait-for-turn-result done-p last-progress-ms
                                        {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
                                         :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)})
