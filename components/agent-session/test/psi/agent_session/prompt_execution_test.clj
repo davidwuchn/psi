@@ -183,13 +183,13 @@
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           result      {:role "assistant" :content [] :stop-reason :stop}]
-      (is (= result (#'prompt-loop/finish-agent-loop! session-ctx session-ctx-id agent-ctx result)))))
+      (is (= result (#'prompt-loop/finish-agent-loop! session-ctx session-ctx-id result)))))
 
   (testing "error path returns result"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           result      {:role "assistant" :content [] :stop-reason :error :error-message "boom"}]
-      (is (= result (#'prompt-loop/finish-agent-loop! session-ctx session-ctx-id agent-ctx result))))))
+      (is (= result (#'prompt-loop/finish-agent-loop! session-ctx session-ctx-id result))))))
 
 (deftest run-agent-loop-lifecycle-test
   ;; Callers pre-journal user messages; run-agent-loop! runs body, then finishes.
@@ -203,7 +203,7 @@
                       (swap! calls conj [:body extra-ai-options progress-queue])
                       {:role "assistant" :content [{:type :text :text "done"}] :stop-reason :stop})
                     psi.agent-session.prompt-loop/finish-agent-loop!
-                    (fn [_ _ _ result]
+                    (fn [_ _ result]
                       (swap! calls conj [:finish (:stop-reason result)])
                       result)]
         ;; Caller is responsible for journaling before invoking the loop
@@ -638,7 +638,7 @@
     (testing "finish-agent-loop! with child session (spawn-mode :agent)"
       (testing "returns result without error"
         (let [returned (#'prompt-loop/finish-agent-loop!
-                        session-ctx child-id agent-ctx result)]
+                        session-ctx child-id result)]
           (is (= result returned)
               "should return the result unchanged"))))))
 

@@ -11,7 +11,7 @@
 
 (defn finish-agent-loop!
   "Send :agent-end to the session statechart (skipped for child sessions)."
-  [ctx session-id _agent-ctx result]
+  [ctx session-id result]
   (when (not= :agent (:spawn-mode (session/get-session-data-in ctx session-id)))
     (let [sc-env (:sc-env ctx)
           sc-sid (session/sc-session-id-in ctx session-id)]
@@ -50,4 +50,4 @@
                              :error-message (or (ex-message e) (.getMessage e) (str e))
                              :timestamp     (java.time.Instant/now)}
                       (:status (ex-data e)) (assoc :http-status (:status (ex-data e))))))]
-     (finish-agent-loop! ctx session-id agent-ctx result))))
+     (finish-agent-loop! ctx session-id result))))
