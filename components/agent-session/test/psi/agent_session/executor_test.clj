@@ -6,6 +6,8 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.prompt-loop :as prompt-loop]
+   [psi.agent-session.tool-batch :as tool-batch]
    [psi.agent-session.core :as session-core]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
@@ -150,7 +152,7 @@
           session-ctx (assoc session-ctx* :config {:llm-stream-idle-timeout-ms 777})
           _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
                                                  assoc :thinking-level :high)
-          opts        (#'executor/agent-loop-options session-ctx session-ctx-id {:api-key "secret"})]
+          opts        (#'prompt-loop/agent-loop-options session-ctx session-ctx-id {:api-key "secret"})]
       (is (= "secret" (:api-key opts)))
       (is (= :high (:thinking-level opts)))
       (is (= 777 (:llm-stream-idle-timeout-ms opts))))))
@@ -161,13 +163,13 @@
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           result      {:role "assistant" :content [] :stop-reason :stop}]
-      (is (= result (#'executor/finish-agent-loop! session-ctx session-ctx-id agent-ctx result)))))
+      (is (= result (#'prompt-loop/finish-agent-loop! session-ctx session-ctx-id agent-ctx result)))))
 
   (testing "error path returns result"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           result      {:role "assistant" :content [] :stop-reason :error :error-message "boom"}]
-      (is (= result (#'executor/finish-agent-loop! session-ctx session-ctx-id agent-ctx result))))))
+      (is (= result (#'prompt-loop/finish-agent-loop! session-ctx session-ctx-id agent-ctx result))))))
 
 (deftest run-agent-loop-lifecycle-test
   ;; Callers pre-journal user messages; run-agent-loop! runs body, then finishes.
@@ -307,7 +309,7 @@
                     (fn [_ _ shaped _]
                       (swap! records conj (get-in shaped [:result-message :tool-call-id]))
                       (:result-message shaped))]
-        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
+        (let [results (#'tool-batch/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
           (is (= #{"call-1" "call-2"} (set @starts)))
           (is (= #{"call-1" "call-2"} (set @executes)))
           (is (= ["call-1" "call-2"] @records))
@@ -346,7 +348,7 @@
                     psi.agent-session.tool-execution/record-tool-call-result!
                     (fn [_ _ shaped _]
                       (:result-message shaped))]
-        (let [runner (future (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
+        (let [runner (future (#'tool-batch/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
           @started
           (deliver release true)
           (let [results @runner]
@@ -379,7 +381,7 @@
                     (fn [_ _ shaped _]
                       (swap! record-order conj (get-in shaped [:result-message :tool-call-id]))
                       (:result-message shaped))]
-        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
+        (let [results (#'tool-batch/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
           (is (= ["call-1" "call-2"] @record-order))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
@@ -406,7 +408,7 @@
                     psi.agent-session.tool-execution/record-tool-call-result!
                     (fn [_ _ shaped _]
                       (:result-message shaped))]
-        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)
+        (let [results (#'tool-batch/run-tool-calls! session-ctx session-ctx-id tool-calls nil)
               first-result (first results)
               second-result (second results)]
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results)))
@@ -436,7 +438,7 @@
                       {:content (str "ok-" (:tool-call-id opts))
                        :is-error false
                        :details {:truncation {:truncated false}}})]
-        (let [results (#'executor/execute-tool-calls! session-ctx session-ctx-id outcome nil)
+        (let [results (#'tool-batch/execute-tool-calls! session-ctx session-ctx-id outcome nil)
               lifecycle (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events session-ctx-id))
               result-events (filterv #(= :tool-result (:event-kind %)) lifecycle)
               output-stats (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))
@@ -487,7 +489,7 @@
                     (fn [_ _ shaped _]
                       (:result-message shaped))]
         (let [ctx*    (assoc session-ctx :tool-batch-executor fake-executor)
-              results (#'executor/run-tool-calls! ctx* session-ctx-id tool-calls nil)]
+              results (#'tool-batch/run-tool-calls! ctx* session-ctx-id tool-calls nil)]
           (is (= 2 (count @submitted)))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
@@ -512,12 +514,12 @@
                        :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
                                     {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}
           calls       (atom [])]
-      (with-redefs [psi.agent-session.executor/run-tool-calls!
+      (with-redefs [psi.agent-session.tool-batch/run-tool-calls!
                     (fn [_ _ tool-calls _]
                       (reset! calls (mapv :id tool-calls))
                       [{:tool-call-id "call-1"}
                        {:tool-call-id "call-2"}])]
-        (let [results (#'executor/execute-tool-calls! session-ctx session-ctx-id outcome nil)]
+        (let [results (#'tool-batch/execute-tool-calls! session-ctx session-ctx-id outcome nil)]
           (is (= ["call-1" "call-2"] @calls))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
@@ -655,7 +657,7 @@
                      :stop-reason :stop}]
     (testing "finish-agent-loop! with child session (spawn-mode :agent)"
       (testing "returns result without error"
-        (let [returned (#'executor/finish-agent-loop!
+        (let [returned (#'prompt-loop/finish-agent-loop!
                         session-ctx child-id agent-ctx result)]
           (is (= result returned)
               "should return the result unchanged"))))))
@@ -690,7 +692,7 @@
                          :effective-policy nil}))
                     psi.agent-session.tool-execution/record-tool-call-result!
                     (fn [_ _ shaped _] (:result-message shaped))]
-        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
+        (let [results (#'tool-batch/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
           (is (= 1 @max-active)
               "same-file calls must not overlap — max concurrent should be 1")
           (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results)))))
@@ -730,7 +732,7 @@
                          :effective-policy nil}))
                     psi.agent-session.tool-execution/record-tool-call-result!
                     (fn [_ _ shaped _] (:result-message shaped))]
-        (let [runner (future (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
+        (let [runner (future (#'tool-batch/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
           @started
           (deliver release true)
           (let [results @runner]
