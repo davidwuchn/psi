@@ -1,4 +1,4 @@
-(ns psi.app-runtime.background-jobs-test
+(ns psi.app-runtime.background-job-view-test
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.app-runtime.background-job-view :as bg]))
