@@ -74,7 +74,7 @@ The `replace_all` approach for converting `{:session-update #(assoc %` to `{:roo
 
 ### λ Audit all direct mutations first, classify as strong-candidate vs acceptable, then convert in one pass
 
-The agent-core effect migration was most efficient when preceded by a thorough audit that classified every direct `agent/` call as either a strong dispatch candidate or an acceptable runtime boundary call. That gave a clear scope (6 functions, 9 mutations) and avoided incremental discovery during implementation. The acceptable calls (executor streaming, infrastructure setup, effect executor internals) were identified once and left alone.
+The agent-core effect migration was most efficient when preceded by a thorough audit that classified every direct `agent/` call as either a strong dispatch candidate or an acceptable runtime boundary call. That gave a clear scope (6 functions, 9 mutations) and avoided incremental discovery during implementation. The acceptable calls (prompt streaming, infrastructure setup, effect-runtime internals) were identified once and left alone.
 
 ---
 
