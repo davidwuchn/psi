@@ -7,10 +7,9 @@
   [assistant-msg]
   (filter #(= :tool-call (:type %)) (:content assistant-msg)))
 
-(defn classify-execution-result
-  [execution-result]
-  (let [assistant-msg (:execution-result/assistant-message execution-result)
-        tool-calls    (vec (extract-tool-calls assistant-msg))]
+(defn classify-assistant-message
+  [assistant-msg]
+  (let [tool-calls (vec (extract-tool-calls assistant-msg))]
     (cond
       (= :error (:stop-reason assistant-msg))
       {:turn/outcome :turn.outcome/error
@@ -26,6 +25,10 @@
       {:turn/outcome :turn.outcome/stop
        :assistant-message assistant-msg
        :tool-calls tool-calls})))
+
+(defn classify-execution-result
+  [execution-result]
+  (classify-assistant-message (:execution-result/assistant-message execution-result)))
 
 (defn build-record-response
   "Build a pure-result for prompt response recording.

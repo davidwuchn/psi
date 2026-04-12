@@ -7,6 +7,7 @@
    [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
@@ -144,22 +145,10 @@
       (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
       assistant-msg)))
 
-(defn- extract-tool-calls [assistant-msg]
-  (filter #(= :tool-call (:type %)) (:content assistant-msg)))
-
 (defn- classify-turn-outcome
   "Classify a completed streamed message into :stop, :tool-use, or :error."
   [assistant-msg]
-  (let [tool-calls (vec (extract-tool-calls assistant-msg))]
-    (cond
-      (= :error (:stop-reason assistant-msg))
-      {:turn/outcome :turn.outcome/error :assistant-message assistant-msg}
-
-      (seq tool-calls)
-      {:turn/outcome :turn.outcome/tool-use :assistant-message assistant-msg :tool-calls tool-calls}
-
-      :else
-      {:turn/outcome :turn.outcome/stop :assistant-message assistant-msg})))
+  (prompt-recording/classify-assistant-message assistant-msg))
 
 (defn- run-tool-call!
   "Dispatch one tool call through the runtime-effect boundary."
