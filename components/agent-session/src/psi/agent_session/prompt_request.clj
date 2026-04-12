@@ -31,11 +31,21 @@
         (when-let [provider (:provider (:model session-data))]
           (oauth/get-api-key oauth-ctx provider)))))
 
+(defn- resolve-llm-stream-idle-timeout-ms
+  [ctx runtime-opts]
+  (let [runtime-timeout (:llm-stream-idle-timeout-ms runtime-opts)
+        config-timeout  (get-in ctx [:config :llm-stream-idle-timeout-ms])]
+    (cond
+      (and (number? runtime-timeout) (pos? runtime-timeout)) (long runtime-timeout)
+      (and (number? config-timeout) (pos? config-timeout))   (long config-timeout)
+      :else nil)))
+
 (defn session->request-options
   "Build request/runtime options from canonical session data.
-   Initial scaffold only returns the currently relevant keys."
+   This is the canonical projection for provider request/runtime shaping."
   [ctx session-data runtime-opts]
-  (let [api-key (resolve-api-key ctx session-data runtime-opts)]
+  (let [api-key         (resolve-api-key ctx session-data runtime-opts)
+        idle-timeout-ms (resolve-llm-stream-idle-timeout-ms ctx runtime-opts)]
     (cond-> {}
       (contains? session-data :thinking-level)
       (assoc :thinking-level (:thinking-level session-data))
@@ -43,8 +53,8 @@
       (some? api-key)
       (assoc :api-key api-key)
 
-      (contains? runtime-opts :llm-stream-idle-timeout-ms)
-      (assoc :llm-stream-idle-timeout-ms (:llm-stream-idle-timeout-ms runtime-opts)))))
+      idle-timeout-ms
+      (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))))
 
 (defn- resolve-runtime-model
   [session-model]

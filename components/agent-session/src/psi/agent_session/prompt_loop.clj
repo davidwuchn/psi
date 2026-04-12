@@ -4,26 +4,18 @@
    Canonical home for shared-session prompt loop lifecycle orchestration and
    terminal session-statechart completion."
   (:require
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-turn :as prompt-turn]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.statechart :as sc]))
 
-(defn- session-thinking-level [ctx session-id]
-  (:thinking-level (session/get-session-data-in ctx session-id)))
-
-(defn- session-llm-stream-idle-timeout-ms [ctx]
-  (let [v (get-in ctx [:config :llm-stream-idle-timeout-ms])]
-    (when (and (number? v) (pos? v)) (long v))))
-
 (defn agent-loop-options
-  "Build effective AI options from session state and runtime opts."
-  [ctx session-id {:keys [api-key]}]
-  (let [thinking-level  (session-thinking-level ctx session-id)
-        idle-timeout-ms (session-llm-stream-idle-timeout-ms ctx)]
-    (cond-> {}
-      api-key                   (assoc :api-key api-key)
-      (keyword? thinking-level) (assoc :thinking-level thinking-level)
-      idle-timeout-ms           (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))))
+  "Build effective AI options from canonical request-shaping inputs."
+  [ctx session-id runtime-opts]
+  (prompt-request/session->request-options
+   ctx
+   (session/get-session-data-in ctx session-id)
+   runtime-opts))
 
 (defn run-agent-loop-body!
   "Execute the turn loop, converting uncaught exceptions to error messages."
