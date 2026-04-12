@@ -5,6 +5,7 @@
    It now keeps only the prepared-request execution path and turn abort entry."
   (:require
    [psi.ai.models :as models]
+   [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
@@ -25,19 +26,7 @@
 
 (defn- classify-execution-result
   [assistant-msg]
-  (let [tool-calls (vec (filter #(= :tool-call (:type %)) (:content assistant-msg)))]
-    (cond
-      (= :error (:stop-reason assistant-msg))
-      {:turn/outcome :turn.outcome/error
-       :tool-calls tool-calls}
-
-      (seq tool-calls)
-      {:turn/outcome :turn.outcome/tool-use
-       :tool-calls tool-calls}
-
-      :else
-      {:turn/outcome :turn.outcome/stop
-       :tool-calls tool-calls})))
+  (prompt-recording/classify-assistant-message assistant-msg))
 
 (defn execute-prepared-request!
   "Execute one prepared request through the existing turn-streaming runtime.
