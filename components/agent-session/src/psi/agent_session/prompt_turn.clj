@@ -7,6 +7,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-request :as prompt-request]
+   [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
@@ -29,10 +30,6 @@
   "Invoke the appropriate streaming fn depending on whether ai-ctx is provided."
   [ai-ctx ai-conv ai-model ai-options consume-fn]
   (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
-
-(defn- chain-callbacks
-  [& callbacks]
-  (apply prompt-stream/chain-callbacks callbacks))
 
 (defn- wait-for-turn-result
   "Wait for `done-p` with an idle timeout that resets on any stream progress."
@@ -59,19 +56,7 @@
                           sd
                           (session-messages ctx session-id))
         base-ai-options  (or extra-ai-options {})
-        ai-options       (-> base-ai-options
-                             (assoc :on-provider-request
-                                    (chain-callbacks
-                                     (:on-provider-request base-ai-options)
-                                     (fn [capture]
-                                       (sa/append-provider-request-capture-in!
-                                        ctx session-id (assoc capture :turn-id turn-id)))))
-                             (assoc :on-provider-response
-                                    (chain-callbacks
-                                     (:on-provider-response base-ai-options)
-                                     (fn [capture]
-                                       (sa/append-provider-reply-capture-in!
-                                        ctx session-id (assoc capture :turn-id turn-id))))))
+        ai-options       (prompt-runtime/capture-aware-ai-options ctx session-id turn-id base-ai-options)
         done-p           (promise)
         thinking-buffers (atom {})
         actions-fn       (accum/make-turn-actions ctx session-id agent-ctx done-p progress-queue
