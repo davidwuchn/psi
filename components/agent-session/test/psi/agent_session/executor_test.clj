@@ -7,6 +7,7 @@
    [psi.agent-session.executor :as executor]
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.prompt-loop :as prompt-loop]
+   [psi.agent-session.prompt-turn :as prompt-turn]
    [psi.agent-session.tool-batch :as tool-batch]
    [psi.agent-session.core :as session-core]
    [psi.agent-session.persistence :as persist]
@@ -119,7 +120,7 @@
     (let [assistant-msg {:role "assistant"
                          :content [{:type :text :text "done"}]
                          :stop-reason :stop}
-          outcome (#'executor/classify-turn-outcome assistant-msg)]
+          outcome (#'prompt-turn/classify-turn-outcome assistant-msg)]
       (is (= :turn.outcome/stop (:turn/outcome outcome)))
       (is (= assistant-msg (:assistant-message outcome)))
       (is (nil? (:tool-calls outcome)))))
@@ -129,7 +130,7 @@
                          :content [{:type :text :text "checking"}
                                    {:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
                          :stop-reason :tool_use}
-          outcome (#'executor/classify-turn-outcome assistant-msg)]
+          outcome (#'prompt-turn/classify-turn-outcome assistant-msg)]
       (is (= :turn.outcome/tool-use (:turn/outcome outcome)))
       (is (= assistant-msg (:assistant-message outcome)))
       (is (= [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
@@ -140,7 +141,7 @@
                          :content [{:type :error :text "boom"}
                                    {:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
                          :stop-reason :error}
-          outcome (#'executor/classify-turn-outcome assistant-msg)]
+          outcome (#'prompt-turn/classify-turn-outcome assistant-msg)]
       (is (= :turn.outcome/error (:turn/outcome outcome)))
       (is (= assistant-msg (:assistant-message outcome)))
       (is (nil? (:tool-calls outcome))))))
