@@ -40,11 +40,6 @@
       (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
       assistant-msg)))
 
-(defn execute-tool-calls!
-  "Execute all tool calls from a tool-use outcome. Returns tool results."
-  [ctx session-id outcome progress-queue]
-  (tool-batch/execute-tool-calls! ctx session-id outcome progress-queue))
-
 (defn execute-one-turn!
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
   (let [assistant-msg (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
@@ -59,7 +54,7 @@
                            extra-ai-options progress-queue)]
     (case (:turn/outcome outcome)
       :turn.outcome/tool-use
-      (do (execute-tool-calls! ctx session-id outcome progress-queue)
+      (do (tool-batch/execute-tool-calls! ctx session-id outcome progress-queue)
           (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
                           extra-ai-options progress-queue))
 

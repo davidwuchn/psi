@@ -276,7 +276,7 @@
                                      :assistant-message {:role "assistant"
                                                          :content [{:type :text :text "done"}]
                                                          :stop-reason :stop}}})))
-                    psi.agent-session.prompt-turn/execute-tool-calls!
+                    psi.agent-session.tool-batch/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! calls conj (:turn/outcome outcome))
                       [{:tool-call-id "call-1"}])]
@@ -314,7 +314,7 @@
                                    :assistant-message {:role "assistant"
                                                        :content [{:type :text :text "done"}]
                                                        :stop-reason :stop}}}))
-                    psi.agent-session.prompt-turn/execute-tool-calls!
+                    psi.agent-session.tool-batch/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! tool-batches conj (mapv :id (:tool-calls outcome)))
                       [{:tool-call-id "call-1"}
