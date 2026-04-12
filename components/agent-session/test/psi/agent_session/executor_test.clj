@@ -4,7 +4,6 @@
    [clojure.test :refer [deftest testing is]]
    [clojure.string :as str]
    [psi.agent-core.core :as agent]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.prompt-loop :as prompt-loop]
    [psi.agent-session.prompt-turn :as prompt-turn]
@@ -54,10 +53,10 @@
   (let [agent-ctx   (setup-agent-ctx!)
         [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
-    (with-redefs [psi.agent-session.executor/do-stream!
+    (with-redefs [psi.agent-session.prompt-turn/do-stream!
                   (stub-text-stream "response")]
       (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (let [session-id session-ctx-id
             msgs       (journal-messages session-ctx session-id)]
         (is (>= (count msgs) 2)
@@ -69,18 +68,18 @@
   (let [agent-ctx   (setup-agent-ctx!)
         [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
-    (with-redefs [psi.agent-session.executor/do-stream!
+    (with-redefs [psi.agent-session.prompt-turn/do-stream!
                   (stub-text-stream "ok")]
-      (let [result (executor/run-agent-loop!
+      (let [result (prompt-loop/run-agent-loop!
                     nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= "assistant" (:role result))))))
 
   (let [agent-ctx   (setup-agent-ctx!)
         [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
-    (with-redefs [psi.agent-session.executor/do-stream!
+    (with-redefs [psi.agent-session.prompt-turn/do-stream!
                   (stub-text-stream "hello world")]
-      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (let [turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= "hello world" (:text-buffer td)))
@@ -97,8 +96,8 @@
                       (reset! seen-opts opts)
                       (consume-fn {:type :start})
                       (consume-fn {:type :done :reason :stop}))]
-    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+    (with-redefs [psi.agent-session.prompt-turn/do-stream! stream-fn]
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (is (= :high (:thinking-level @seen-opts))))))
 
 (deftest session-idle-timeout-config-is-forwarded-to-ai-options-test
@@ -111,8 +110,8 @@
                       (reset! seen-opts opts)
                       (consume-fn {:type :start})
                       (consume-fn {:type :done :reason :stop}))]
-    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+    (with-redefs [psi.agent-session.prompt-turn/do-stream! stream-fn]
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (is (= 777 (:llm-stream-idle-timeout-ms @seen-opts))))))
 
 (deftest classify-turn-outcome-test
@@ -179,18 +178,18 @@
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
           calls       (atom [])]
-      (with-redefs [psi.agent-session.executor/run-agent-loop-body!
+      (with-redefs [psi.agent-session.prompt-loop/run-agent-loop-body!
                     (fn [_ _ _ _ _ extra-ai-options progress-queue]
                       (swap! calls conj [:body extra-ai-options progress-queue])
                       {:role "assistant" :content [{:type :text :text "done"}] :stop-reason :stop})
-                    psi.agent-session.executor/finish-agent-loop!
+                    psi.agent-session.prompt-loop/finish-agent-loop!
                     (fn [_ _ _ result]
                       (swap! calls conj [:finish (:stop-reason result)])
                       result)]
         ;; Caller is responsible for journaling before invoking the loop
         (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-        (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
-                                               {:api-key "k"})]
+        (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
+                                                  {:api-key "k"})]
           (is (= :stop (:stop-reason result)))
           (is (= :body (ffirst @calls)))
           (is (= :finish (first (second @calls))))
@@ -203,9 +202,9 @@
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
       (agent/start-loop-in! agent-ctx [user-msg])
-      (with-redefs [psi.agent-session.executor/do-stream!
+      (with-redefs [psi.agent-session.prompt-turn/do-stream!
                     (stub-text-stream "one-turn")]
-        (let [result (#'executor/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
+        (let [result (#'prompt-turn/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
           (is (= "assistant" (get-in result [:assistant-message :role])))
           (is (= :turn.outcome/stop (get-in result [:outcome :turn/outcome])))
           (is (= "one-turn"
@@ -217,7 +216,7 @@
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           calls       (atom [])]
-      (with-redefs [psi.agent-session.executor/execute-one-turn!
+      (with-redefs [psi.agent-session.prompt-turn/execute-one-turn!
                     (fn [_ _ _ _ _ _ _]
                       (let [n (count @calls)]
                         (if (zero? n)
@@ -236,11 +235,11 @@
                                      :assistant-message {:role "assistant"
                                                          :content [{:type :text :text "done"}]
                                                          :stop-reason :stop}}})))
-                    psi.agent-session.executor/execute-tool-calls!
+                    psi.agent-session.prompt-turn/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! calls conj (:turn/outcome outcome))
                       [{:tool-call-id "call-1"}])]
-        (let [result (#'executor/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
+        (let [result (#'prompt-turn/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
           (is (= [":turn.outcome/tool-use"] (mapv str @calls)))
           (is (= :stop (:stop-reason result)))
           (is (= "done"
@@ -252,7 +251,7 @@
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           turn-count   (atom 0)
           tool-batches (atom [])]
-      (with-redefs [psi.agent-session.executor/execute-one-turn!
+      (with-redefs [psi.agent-session.prompt-turn/execute-one-turn!
                     (fn [_ _ _ _ _ _ _]
                       (swap! turn-count inc)
                       (if (= 1 @turn-count)
@@ -274,12 +273,12 @@
                                    :assistant-message {:role "assistant"
                                                        :content [{:type :text :text "done"}]
                                                        :stop-reason :stop}}}))
-                    psi.agent-session.executor/execute-tool-calls!
+                    psi.agent-session.prompt-turn/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! tool-batches conj (mapv :id (:tool-calls outcome)))
                       [{:tool-call-id "call-1"}
                        {:tool-call-id "call-2"}])]
-        (let [result (#'executor/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
+        (let [result (#'prompt-turn/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
           (is (= 2 @turn-count))
           (is (= [["call-1" "call-2"]] @tool-batches))
           (is (= :stop (:stop-reason result))))))))
@@ -625,10 +624,10 @@
                      :content [{:type :text :text "hi child"}]
                      :timestamp (java.time.Instant/now)}]
     (testing "executor child session end-to-end"
-      (with-redefs [psi.agent-session.executor/do-stream!
+      (with-redefs [psi.agent-session.prompt-turn/do-stream!
                     (stub-text-stream "child response")]
         (ss/journal-append-in! scoped child-id (persist/message-entry user-msg))
-        (executor/run-agent-loop! nil scoped child-id agent-ctx stub-model [user-msg]))
+        (prompt-loop/run-agent-loop! nil scoped child-id agent-ctx stub-model [user-msg]))
       (testing "child journal contains both user and assistant messages"
         (let [child-journal  (journal-for-session session-ctx child-id)
               child-messages (->> child-journal
