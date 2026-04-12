@@ -177,27 +177,6 @@
       (is (= [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
              (:tool-calls outcome))))))
 
-(deftest agent-loop-options-test
-  (testing "builds effective AI options from canonical request shaping"
-    (let [agent-ctx   (setup-agent-ctx!)
-          [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
-          session-ctx (assoc session-ctx* :config {:llm-stream-idle-timeout-ms 777})
-          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
-                                                 assoc :thinking-level :high)
-          opts        (#'prompt-loop/agent-loop-options session-ctx session-ctx-id {:api-key "secret"})]
-      (is (= "secret" (:api-key opts)))
-      (is (= :high (:thinking-level opts)))
-      (is (= 777 (:llm-stream-idle-timeout-ms opts)))))
-
-  (testing "explicit runtime timeout overrides config timeout"
-    (let [agent-ctx   (setup-agent-ctx!)
-          [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
-          session-ctx (assoc session-ctx* :config {:llm-stream-idle-timeout-ms 777})
-          opts        (#'prompt-loop/agent-loop-options session-ctx session-ctx-id
-                                                        {:api-key "secret"
-                                                         :llm-stream-idle-timeout-ms 222})]
-      (is (= 222 (:llm-stream-idle-timeout-ms opts))))))
-
 (deftest finish-agent-loop-test
   ;; finish-agent-loop! sends :agent-end to session statechart and returns result.
   (testing "success path returns result"

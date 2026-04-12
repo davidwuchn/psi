@@ -26,17 +26,13 @@
        :assistant-message assistant-msg
        :tool-calls tool-calls})))
 
-(defn classify-execution-result
-  [execution-result]
-  (classify-assistant-message (:execution-result/assistant-message execution-result)))
-
 (defn build-record-response
   "Build a pure-result for prompt response recording.
    Records bounded summary, appends the assistant journal entry, and returns the
    next prompt lifecycle event so orchestration can remain dispatch-visible."
   [session-id execution-result _progress-queue]
   (let [{:keys [turn/outcome assistant-message tool-calls] :as classified}
-        (classify-execution-result execution-result)
+        (classify-assistant-message (:execution-result/assistant-message execution-result))
         turn-id (:execution-result/turn-id execution-result)
         next-event (if (= :turn.outcome/tool-use outcome)
                      :session/prompt-continue
