@@ -848,12 +848,18 @@
                    (str "Continuing step " step-name " with user answer")
                    (str "Executing step " step-name))}))
     (try
-      (let [result  (prompt-loop/run-agent-loop!
+      (let [session-id (or (:session-id step-session-ctx)
+                           (some-> (get-in step-session-ctx [:session-data-atom]) deref :session-id)
+                           (some->> (get-in step-session-ctx [:state*]) deref :agent-session :sessions keys first)
+                           (throw (ex-info "Missing session id for step session ctx"
+                                           {:step-name step-name
+                                            :run-id run-id})))
+            result  (prompt-loop/run-agent-loop!
                      nil
                      step-session-ctx
+                     session-id
                      agent-ctx
                      model
-                     [user-msg]
                      (cond-> {:turn-ctx-atom nil}
                        api-key (assoc :api-key api-key)))
             elapsed (- (now-ms) started)

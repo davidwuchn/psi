@@ -25,7 +25,7 @@
 (defn run-agent-loop!
   "Run a complete agent loop from current session state.
 
-   Callers are responsible for journaling `new-messages` before calling this
+   Callers are responsible for journaling user messages before calling this
    function. Drives turns until terminal, then finalizes the session statechart.
 
    Options (optional map):
@@ -33,9 +33,9 @@
      :progress-queue — LinkedBlockingQueue for TUI progress events
 
    Returns the final assistant message."
-  ([ai-ctx ctx session-id agent-ctx ai-model new-messages]
-   (run-agent-loop! ai-ctx ctx session-id agent-ctx ai-model new-messages nil))
-  ([ai-ctx ctx session-id agent-ctx ai-model _new-messages opts]
+  ([ai-ctx ctx session-id agent-ctx ai-model]
+   (run-agent-loop! ai-ctx ctx session-id agent-ctx ai-model nil))
+  ([ai-ctx ctx session-id agent-ctx ai-model opts]
    (let [result (try
                   (prompt-turn/run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
                                               (prompt-request/session->request-options

@@ -915,11 +915,14 @@
                  "/tmp"))))))
 
 (deftest run-step-agent-executor-arg-order-test
-  (testing "run-step-agent passes executor args in run-agent-loop order"
+  (testing "run-step-agent passes executor args in tightened run-agent-loop order"
     (let [captured          (atom nil)
           fake-agent-ctx    {:fake :agent-ctx}
-          fake-session-ctx  {:agent-ctx fake-agent-ctx
-                             :session-data-atom (atom {:tool-output-overrides {}})
+          fake-session-id   "step-session-1"
+          fake-session-ctx  {:session-id fake-session-id
+                             :agent-ctx fake-agent-ctx
+                             :session-data-atom (atom {:session-id fake-session-id
+                                                      :tool-output-overrides {}})
                              :tool-output-stats-atom (atom {:calls []
                                                             :aggregates {:total-context-bytes 0
                                                                          :by-tool {}
@@ -932,10 +935,10 @@
                                                   fake-session-ctx)
                     sut/update-workflow-progress! (fn [& _])
                     prompt-loop/run-agent-loop! (fn [& args]
-                                               (reset! captured args)
-                                               {:role "assistant"
-                                                :stop-reason :stop
-                                                :content [{:type :text :text "ok"}]})]
+                                                  (reset! captured args)
+                                                  {:role "assistant"
+                                                   :stop-reason :stop
+                                                   :content [{:type :text :text "ok"}]})]
         (let [result (#'sut/run-step-agent!
                       {:run-id "run-1"
                        :step-name "refine-task"
@@ -951,17 +954,20 @@
           (is (= 6 (count @captured)))
           (is (nil? (nth @captured 0)))
           (is (= fake-session-ctx (nth @captured 1)))
-          (is (= fake-agent-ctx (nth @captured 2)))
-          (is (= fake-model (nth @captured 3)))
-          (is (= "user" (get-in (nth @captured 4) [0 :role])))
+          (is (= fake-session-id (nth @captured 2)))
+          (is (= fake-agent-ctx (nth @captured 3)))
+          (is (= fake-model (nth @captured 4)))
           (is (= {:turn-ctx-atom nil} (nth @captured 5))))))))
 
 (deftest run-step-agent-resume-session-test
   (testing "run-step-agent reuses the pending asking session on resume"
     (let [captured         (atom nil)
           fake-agent-ctx   {:fake :agent-ctx}
-          fake-session-ctx {:agent-ctx fake-agent-ctx
-                            :session-data-atom (atom {:tool-output-overrides {}})
+          fake-session-id  "step-session-2"
+          fake-session-ctx {:session-id fake-session-id
+                            :agent-ctx fake-agent-ctx
+                            :session-data-atom (atom {:session-id fake-session-id
+                                                      :tool-output-overrides {}})
                             :tool-output-stats-atom (atom {:calls []
                                                            :aggregates {:total-context-bytes 0
                                                                         :by-tool {}
@@ -998,8 +1004,8 @@
           (is (:ok? result))
           (is (= 6 (count @captured)))
           (is (= fake-session-ctx (nth @captured 1)))
-          (is (= fake-agent-ctx (nth @captured 2)))
-          (is (= fake-model (nth @captured 3)))
-          (is (= "Create two follow-up tasks first."
-                 (get-in (nth @captured 4) [0 :content 0 :text])))
+          (is (= fake-session-id (nth @captured 2)))
+          (is (= fake-agent-ctx (nth @captured 3)))
+          (is (= fake-model (nth @captured 4)))
+          (is (= {:turn-ctx-atom nil} (nth @captured 5)))
           (is (= resume-session (:step-session result))))))))

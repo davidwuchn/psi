@@ -58,7 +58,7 @@
     (with-redefs [psi.agent-session.prompt-runtime/do-stream!
                   (stub-text-stream "response")]
       (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
       (let [session-id session-ctx-id
             msgs       (journal-messages session-ctx session-id)]
         (is (>= (count msgs) 2)
@@ -73,7 +73,7 @@
     (with-redefs [psi.agent-session.prompt-runtime/do-stream!
                   (stub-text-stream "ok")]
       (let [result (prompt-loop/run-agent-loop!
-                    nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
+                    nil session-ctx session-ctx-id agent-ctx stub-model)]
         (is (= "assistant" (:role result))))))
 
   (let [agent-ctx   (setup-agent-ctx!)
@@ -81,7 +81,7 @@
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream!
                   (stub-text-stream "hello world")]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
       (let [turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= "hello world" (:text-buffer td)))
@@ -99,7 +99,7 @@
                       (consume-fn {:type :start})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
       (is (= :high (:thinking-level @seen-opts))))))
 
 (deftest prompt-turn-reassembles-effective-system-prompt-from-canonical-layers-test
@@ -124,7 +124,7 @@
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
       (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
       (is (= "base\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
              (:system-prompt @seen-conv)))
       (is (not= "stale" (:system-prompt @seen-conv))))))
@@ -140,7 +140,7 @@
                       (consume-fn {:type :start})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
       (is (= 777 (:llm-stream-idle-timeout-ms @seen-opts))))))
 
 (deftest classify-turn-outcome-test
@@ -208,7 +208,7 @@
                       result)]
         ;; Caller is responsible for journaling before invoking the loop
         (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-        (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
+        (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model
                                                   {:api-key "k"})]
           (is (= :stop (:stop-reason result)))
           (is (= :body (ffirst @calls)))
@@ -607,7 +607,7 @@
       (with-redefs [psi.agent-session.prompt-runtime/do-stream!
                     (stub-text-stream "child response")]
         (ss/journal-append-in! scoped child-id (persist/message-entry user-msg))
-        (prompt-loop/run-agent-loop! nil scoped child-id agent-ctx stub-model [user-msg]))
+        (prompt-loop/run-agent-loop! nil scoped child-id agent-ctx stub-model))
       (testing "child journal contains both user and assistant messages"
         (let [child-journal  (journal-for-session session-ctx child-id)
               child-messages (->> child-journal
