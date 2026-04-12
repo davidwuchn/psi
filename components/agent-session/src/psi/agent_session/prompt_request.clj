@@ -87,6 +87,18 @@
    (:base-system-prompt session-data)
    (sorted-contributions session-data)))
 
+(defn build-provider-conversation
+  "Project canonical session prompt state, messages, and tools into the
+   provider-facing conversation shape used for prompt execution."
+  [session-data messages]
+  (let [cache-bps (set (or (:cache-breakpoints session-data) #{}))
+        tool-defs (or (:tool-defs session-data) [])]
+    (conv/agent-messages->ai-conversation
+     (effective-system-prompt session-data)
+     messages
+     tool-defs
+     {:cache-breakpoints cache-bps})))
+
 (defn build-prompt-layers
   "Return prompt layers for the prepared request.
 
@@ -152,16 +164,10 @@
         steering-messages  (queued-steering-messages session-data user-message)
         messages           (cond-> base-messages
                              (seq steering-messages) (into steering-messages))
-        tool-defs          (or (:tool-defs session-data) [])
         ai-options         (session->request-options ctx session-data (or runtime-opts {}))
         cache-bps          (set (or (:cache-breakpoints session-data) #{}))
         prompt-layers      (build-prompt-layers session-data opts)
-        system-prompt      (effective-system-prompt session-data)
-        provider-conv      (conv/agent-messages->ai-conversation
-                            system-prompt
-                            messages
-                            tool-defs
-                            {:cache-breakpoints cache-bps})
+        provider-conv      (build-provider-conversation session-data messages)
         runtime-model      (resolve-runtime-model (:model session-data))]
     {:prepared-request/id                       turn-id
      :prepared-request/session-id               session-id
@@ -175,7 +181,7 @@
                                                  :developer-prompt        (:developer-prompt session-data)
                                                  :developer-prompt-source (:developer-prompt-source session-data)}
      :prepared-request/prompt-layers            prompt-layers
-     :prepared-request/system-prompt            system-prompt
+     :prepared-request/system-prompt            (:system-prompt provider-conv)
      :prepared-request/system-prompt-blocks     (:system-prompt-blocks provider-conv)
      :prepared-request/messages                 (:messages provider-conv)
      :prepared-request/tools                    (:tools provider-conv)

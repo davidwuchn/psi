@@ -23,10 +23,6 @@
   [ctx session-id]
   (prompt-request/session->provider-messages ctx session-id))
 
-(defn session-tool-defs [session-data]
-  (or (:tool-defs session-data)
-      []))
-
 (def ^:dynamic llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
 (def ^:dynamic llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
 
@@ -63,11 +59,9 @@
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
   (let [sd               (session/get-session-data-in ctx session-id)
         turn-id          (str (java.util.UUID/randomUUID))
-        ai-conv          (conv-translate/agent-messages->ai-conversation
-                          (prompt-request/effective-system-prompt sd)
-                          (session-messages ctx session-id)
-                          (session-tool-defs sd)
-                          {:cache-breakpoints (:cache-breakpoints sd)})
+        ai-conv          (prompt-request/build-provider-conversation
+                          sd
+                          (session-messages ctx session-id))
         base-ai-options  (or extra-ai-options {})
         ai-options       (-> base-ai-options
                              (assoc :on-provider-request
