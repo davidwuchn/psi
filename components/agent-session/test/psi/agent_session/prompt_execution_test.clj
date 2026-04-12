@@ -1,5 +1,5 @@
-(ns psi.agent-session.executor-test
-  "Integration tests for the executor — lifecycle, session management, child sessions."
+(ns psi.agent-session.prompt-execution-test
+  "Integration tests for prompt execution — lifecycle, session management, child sessions."
   (:require
    [clojure.test :refer [deftest testing is]]
    [clojure.string :as str]
@@ -623,7 +623,7 @@
         user-msg    {:role "user"
                      :content [{:type :text :text "hi child"}]
                      :timestamp (java.time.Instant/now)}]
-    (testing "executor child session end-to-end"
+    (testing "prompt execution child session end-to-end"
       (with-redefs [psi.agent-session.prompt-turn/do-stream!
                     (stub-text-stream "child response")]
         (ss/journal-append-in! scoped child-id (persist/message-entry user-msg))
