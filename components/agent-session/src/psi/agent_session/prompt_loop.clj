@@ -21,7 +21,7 @@
   "Execute the turn loop, converting uncaught exceptions to error messages."
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
   (try
-    (prompt-turn/run-turn! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue)
+    (prompt-turn/run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue)
     (catch Throwable e
       (cond-> {:role          "assistant"
                :content       []

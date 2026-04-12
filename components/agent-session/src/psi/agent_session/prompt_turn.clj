@@ -53,11 +53,3 @@
 
       assistant-message)))
 
-(defn run-turn!
-  "Drive one complete agent interaction loop until the LLM produces a terminal response."
-  ([ai-ctx ctx session-id agent-ctx ai-model]
-   (run-turn! ai-ctx ctx session-id agent-ctx ai-model nil nil))
-  ([ai-ctx ctx session-id agent-ctx ai-model extra-ai-options]
-   (run-turn! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options nil))
-  ([ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-   (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue)))
