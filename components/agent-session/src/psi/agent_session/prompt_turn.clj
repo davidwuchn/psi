@@ -36,7 +36,7 @@
 (defn- now-ms []
   (prompt-stream/now-ms))
 
-(defn- do-stream!
+(defn do-stream!
   "Invoke the appropriate streaming fn depending on whether ai-ctx is provided."
   [ai-ctx ai-conv ai-model ai-options consume-fn]
   (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
