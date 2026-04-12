@@ -144,7 +144,10 @@ Bootstrapped on 2026-04-02.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 
 ## Suggested next step
-- Best next move: continue reducing remaining executor-only prompt semantics for shared-session paths.
+- Best next move: continue converging shared-session prompt semantics in the canonical prompt namespaces.
+- `psi.agent-session.executor` has been deleted; shared-session prompt execution now has one path:
+  - `prompt-turn` owns streaming + recursive turn progression
+  - `prompt-loop` owns loop lifecycle completion
 - Decision taken: keep extension/workflow-local ephemeral sessions executor-owned when they are intentionally isolated runtimes (for example workflow step-local sessions in `extensions/mcp_tasks_run.clj`) rather than forcing them into the shared session lifecycle.
 - The next convergence target should therefore be shared-session prompt semantics such as agent profile / skill injection in request preparation, not isolated workflow runtimes.
 - Keep LSP follow-on work as a secondary thread.

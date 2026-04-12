@@ -1,9 +1,8 @@
 (ns psi.agent-session.tool-batch
   "Dispatch-owned tool batch execution helpers.
 
-   Extracted so callers and tests can move off executor-private tool execution
-   helpers without disturbing the prompt/streaming seams that still couple to
-   executor internals."
+   Canonical home for shared-session tool batch execution ordering,
+   parallelism, and result recording."
   (:require
    [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.dispatch :as dispatch])

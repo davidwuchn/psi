@@ -1,8 +1,8 @@
 (ns psi.agent-session.prompt-loop
-  "Agent loop lifecycle helpers extracted from executor.
+  "Agent loop lifecycle helpers.
 
-   This mirrors executor lifecycle helpers so callers can migrate before the
-   executor façade is reduced."
+   Canonical home for shared-session prompt loop lifecycle orchestration and
+   terminal session-statechart completion."
   (:require
    [psi.agent-session.prompt-turn :as prompt-turn]
    [psi.agent-session.session-state :as session]

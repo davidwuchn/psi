@@ -1,8 +1,8 @@
 (ns psi.agent-session.prompt-turn
-  "Single-turn prompt execution helpers extracted from executor.
+  "Single-turn prompt execution helpers.
 
-   This namespace mirrors the current executor implementation so callers can
-   migrate incrementally before the executor façade is thinned."
+   Canonical home for provider-stream execution, turn accumulation, and
+   recursive tool-use turn progression in shared-session prompt paths."
   (:require
    [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.dispatch :as dispatch]
