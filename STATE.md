@@ -66,9 +66,9 @@ The bridge-removal plan is complete. Remaining work is follow-on cleanup / next 
 - retire remaining agent-core coupling in some consumers
 - configuration scoping
 - cache stability improvements
-- post-Wave-B façade thinning:
-  - reduce `psi.agent-session.executor` to a true compatibility façade
-  - migrate the remaining prompt/streaming test seams off executor-owned internals
+- post-Wave-B executor thinning is complete:
+  - `psi.agent-session.executor` has been deleted
+  - prompt/streaming ownership now lives in `prompt-turn` / `prompt-loop`
 
 Completed follow-on cleanup since Wave B:
 - `psi.ai.providers.openai.common` has been removed after migrating direct callers
