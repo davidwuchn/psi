@@ -81,10 +81,6 @@
      :last-progress-ms last-progress-ms
      :timed-out? timed-out?}))
 
-(defn- classify-execution-result
-  [assistant-msg]
-  (prompt-recording/classify-assistant-message assistant-msg))
-
 (defn make-provider-event-consumer
   "Build the canonical provider stream event consumer used by prompt execution
    paths. Handles timestamp refresh, accumulation callbacks, statechart events,
@@ -139,7 +135,7 @@
   "Wait for a live turn to finish and return the final assistant message.
 
    Supports both canonical prompt-stream timeout/aborted sentinels and the
-   prompt-turn compatibility sentinels used by targeted tests."
+   targeted-test compatibility sentinels used in focused prompt tests."
   [turn-ctx done-p last-progress-ms timed-out? {:keys [idle-timeout-ms wait-poll-ms abort-pred wait-fn]}]
   (let [wait!    (or wait-fn wait-for-turn-result)
         result   (wait! done-p last-progress-ms
@@ -212,7 +208,7 @@
                              :base-ai-options base-ai-options
                              :progress-queue  progress-queue
                              :turn-id         turn-id})
-        outcome        (classify-execution-result assistant-message)]
+        outcome        (prompt-recording/classify-assistant-message assistant-message)]
     {:execution-result/turn-id             turn-id
      :execution-result/session-id          session-id
      :execution-result/prepared-request-id turn-id

@@ -1,8 +1,9 @@
 (ns psi.agent-session.prompt-turn
-  "Single-turn prompt execution helpers.
+  "Direct-path prompt turn orchestration.
 
-   Canonical home for provider-stream execution, turn accumulation, and
-   recursive tool-use turn progression in shared-session prompt paths."
+   Owns assistant-message journaling and recursive tool-use progression while
+   delegating canonical request preparation and live turn execution to the
+   shared prompt runtime path."
   (:require
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-recording :as prompt-recording]
