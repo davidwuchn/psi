@@ -40,7 +40,7 @@
         (sc/send-event! sc-env sc-sid
                         :session/agent-event
                         {:pending-agent-event {:type     :agent-end
-                                               :messages (prompt-turn/session-messages ctx session-id)}}))))
+                                               :messages (prompt-request/session->provider-messages ctx session-id)}}))))
   result)
 
 (defn run-agent-loop!

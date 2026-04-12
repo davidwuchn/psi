@@ -12,7 +12,7 @@
    [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
-(defn- do-stream!
+(defn do-stream!
   [ai-ctx ai-conv ai-model ai-options consume-fn]
   (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
 

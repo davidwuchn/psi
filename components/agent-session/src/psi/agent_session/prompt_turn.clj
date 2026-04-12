@@ -13,11 +13,6 @@
    [psi.agent-session.tool-batch :as tool-batch]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
-(defn session-messages
-  "Derive LLM conversation messages from the persistence journal."
-  [ctx session-id]
-  (prompt-request/session->provider-messages ctx session-id))
-
 (def ^:dynamic llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
 (def ^:dynamic llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
 
@@ -52,7 +47,7 @@
         turn-id          (str (java.util.UUID/randomUUID))
         ai-conv          (prompt-request/build-provider-conversation
                           sd
-                          (session-messages ctx session-id))
+                          (prompt-request/session->provider-messages ctx session-id))
         base-ai-options  (or extra-ai-options {})
         {:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
         (prompt-runtime/create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
@@ -76,11 +71,6 @@
       (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
       assistant-msg)))
 
-(defn- classify-turn-outcome
-  "Classify a completed streamed message into :stop, :tool-use, or :error."
-  [assistant-msg]
-  (prompt-recording/classify-assistant-message assistant-msg))
-
 (defn execute-tool-calls!
   "Execute all tool calls from a tool-use outcome. Returns tool results."
   [ctx session-id outcome progress-queue]
@@ -91,7 +81,7 @@
   (let [assistant-msg (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
                                     extra-ai-options progress-queue)]
     {:assistant-message assistant-msg
-     :outcome           (classify-turn-outcome assistant-msg)}))
+     :outcome           (prompt-recording/classify-assistant-message assistant-msg)}))
 
 (defn run-turn-loop!
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
