@@ -10,7 +10,7 @@
 
    It does not own the next-step orchestration boundary after stream completion:
    tool execution, recurse-for-next-turn decisions, and agent-loop completion
-   remain in `psi.agent-session.executor`.
+   remain in `psi.agent-session.prompt-turn` / `psi.agent-session.prompt-loop`.
 
    States
    ──────
@@ -27,7 +27,7 @@
 
    Provider events → statechart events
    ────────────────────────────────────
-   (executor)      → :turn/start          {}
+   (prompt-turn)   → :turn/start          {}
    :text-delta     → :turn/text-delta     {:delta \"...\"}
    :toolcall-start → :turn/toolcall-start {:content-index n :tool-id \"...\" :tool-name \"...\"}
    :toolcall-delta → :turn/toolcall-delta {:content-index n :delta \"...\"}

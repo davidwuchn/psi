@@ -12,7 +12,7 @@
 
 (defn journal->provider-messages
   "Project persisted journal entries into agent/provider message maps.
-   Initial scaffold mirrors executor/session-messages behavior."
+   Initial scaffold mirrors prompt-turn/session-messages behavior."
   [journal]
   (into []
         (keep (fn [entry]
