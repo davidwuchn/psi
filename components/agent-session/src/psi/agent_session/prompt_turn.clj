@@ -7,6 +7,7 @@
    [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
@@ -67,7 +68,7 @@
   (let [sd               (session/get-session-data-in ctx session-id)
         turn-id          (str (java.util.UUID/randomUUID))
         ai-conv          (conv-translate/agent-messages->ai-conversation
-                          (:system-prompt sd)
+                          (prompt-request/effective-system-prompt sd)
                           (session-messages ctx session-id)
                           (session-tool-defs sd)
                           {:cache-breakpoints (:cache-breakpoints sd)})

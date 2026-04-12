@@ -100,6 +100,33 @@
       (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (is (= :high (:thinking-level @seen-opts))))))
 
+(deftest prompt-turn-reassembles-effective-system-prompt-from-canonical-layers-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+        _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
+                                               assoc
+                                               :base-system-prompt "base"
+                                               :system-prompt "stale"
+                                               :prompt-contributions [{:id "c1"
+                                                                       :ext-path "/ext/a"
+                                                                       :content "Hint A"
+                                                                       :priority 10
+                                                                       :enabled true
+                                                                       :created-at (java.time.Instant/now)
+                                                                       :updated-at (java.time.Instant/now)}])
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        seen-conv   (atom nil)
+        stream-fn   (fn [_ai-ctx conv _model _opts consume-fn]
+                      (reset! seen-conv conv)
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.prompt-turn/do-stream! stream-fn]
+      (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (is (= "base\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
+             (:system-prompt @seen-conv)))
+      (is (not= "stale" (:system-prompt @seen-conv))))))
+
 (deftest session-idle-timeout-config-is-forwarded-to-ai-options-test
   (let [agent-ctx   (setup-agent-ctx!)
         [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
