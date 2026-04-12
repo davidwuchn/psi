@@ -33,18 +33,11 @@
     (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
     assistant-msg))
 
-(defn execute-one-turn!
-  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-  (let [assistant-msg (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
-                                    extra-ai-options progress-queue)]
-    {:assistant-message assistant-msg
-     :outcome           (prompt-recording/classify-assistant-message assistant-msg)}))
-
 (defn run-turn-loop!
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-  (let [{:keys [assistant-message outcome]}
-        (execute-one-turn! ai-ctx ctx session-id agent-ctx ai-model
-                           extra-ai-options progress-queue)]
+  (let [assistant-message (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
+                                        extra-ai-options progress-queue)
+        outcome           (prompt-recording/classify-assistant-message assistant-message)]
     (case (:turn/outcome outcome)
       :turn.outcome/tool-use
       (do (tool-batch/execute-tool-calls! ctx session-id outcome progress-queue)

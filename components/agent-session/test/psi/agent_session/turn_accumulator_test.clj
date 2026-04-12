@@ -221,7 +221,7 @@
                       (consume-fn {:type :toolcall-end :content-index 1})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [{:keys [assistant-message]} (#'prompt-turn/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
+      (let [assistant-message (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
             events      (loop [acc []]
                           (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                             (recur (conj acc e))
@@ -254,7 +254,7 @@
                       (consume-fn {:type :toolcall-end :content-index 2})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [{:keys [assistant-message]} (#'prompt-turn/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
+      (let [assistant-message (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
             events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                        (recur (conj acc e))

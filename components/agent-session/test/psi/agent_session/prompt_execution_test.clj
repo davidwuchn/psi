@@ -238,44 +238,36 @@
           (is (= 1 (count (journal-messages session-ctx session-ctx-id)))))))))
 
 (deftest execute-one-turn-test
-  (testing "single-turn execution returns assistant message and explicit outcome"
+  (testing "single-turn execution returns assistant message and canonical classified outcome"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
       (agent/start-loop-in! agent-ctx [user-msg])
       (with-redefs [psi.agent-session.prompt-runtime/do-stream!
                     (stub-text-stream "one-turn")]
-        (let [result (#'prompt-turn/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
-          (is (= "assistant" (get-in result [:assistant-message :role])))
-          (is (= :turn.outcome/stop (get-in result [:outcome :turn/outcome])))
+        (let [assistant-msg (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)
+              outcome       (prompt-recording/classify-assistant-message assistant-msg)]
+          (is (= "assistant" (:role assistant-msg)))
+          (is (= :turn.outcome/stop (:turn/outcome outcome)))
           (is (= "one-turn"
                  (some #(when (= :text (:type %)) (:text %))
-                       (get-in result [:assistant-message :content])))))))))
+                       (:content assistant-msg)))))))))
 
 (deftest run-turn-loop-test
   (testing "multi-turn loop separates one-turn execution from recursive control"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           calls       (atom [])]
-      (with-redefs [psi.agent-session.prompt-turn/execute-one-turn!
+      (with-redefs [psi.agent-session.prompt-turn/stream-turn!
                     (fn [_ _ _ _ _ _ _]
                       (let [n (count @calls)]
                         (if (zero? n)
-                          {:assistant-message {:role "assistant"
-                                               :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
-                                               :stop-reason :tool_use}
-                           :outcome {:turn/outcome :turn.outcome/tool-use
-                                     :assistant-message {:role "assistant"
-                                                         :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
-                                                         :stop-reason :tool_use}
-                                     :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}]}}
-                          {:assistant-message {:role "assistant"
-                                               :content [{:type :text :text "done"}]
-                                               :stop-reason :stop}
-                           :outcome {:turn/outcome :turn.outcome/stop
-                                     :assistant-message {:role "assistant"
-                                                         :content [{:type :text :text "done"}]
-                                                         :stop-reason :stop}}})))
+                          {:role "assistant"
+                           :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}]
+                           :stop-reason :tool_use}
+                          {:role "assistant"
+                           :content [{:type :text :text "done"}]
+                           :stop-reason :stop})))
                     psi.agent-session.tool-batch/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! calls conj (:turn/outcome outcome))
@@ -292,28 +284,17 @@
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           turn-count   (atom 0)
           tool-batches (atom [])]
-      (with-redefs [psi.agent-session.prompt-turn/execute-one-turn!
+      (with-redefs [psi.agent-session.prompt-turn/stream-turn!
                     (fn [_ _ _ _ _ _ _]
                       (swap! turn-count inc)
                       (if (= 1 @turn-count)
-                        {:assistant-message {:role "assistant"
-                                             :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
-                                                       {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
-                                             :stop-reason :tool_use}
-                         :outcome {:turn/outcome :turn.outcome/tool-use
-                                   :assistant-message {:role "assistant"
-                                                       :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
-                                                                 {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
-                                                       :stop-reason :tool_use}
-                                   :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
-                                                {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}}
-                        {:assistant-message {:role "assistant"
-                                             :content [{:type :text :text "done"}]
-                                             :stop-reason :stop}
-                         :outcome {:turn/outcome :turn.outcome/stop
-                                   :assistant-message {:role "assistant"
-                                                       :content [{:type :text :text "done"}]
-                                                       :stop-reason :stop}}}))
+                        {:role "assistant"
+                         :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                   {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+                         :stop-reason :tool_use}
+                        {:role "assistant"
+                         :content [{:type :text :text "done"}]
+                         :stop-reason :stop}))
                     psi.agent-session.tool-batch/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! tool-batches conj (mapv :id (:tool-calls outcome)))
