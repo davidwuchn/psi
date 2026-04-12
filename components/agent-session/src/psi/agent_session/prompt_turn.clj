@@ -21,11 +21,7 @@
 (defn session-messages
   "Derive LLM conversation messages from the persistence journal."
   [ctx session-id]
-  (into []
-        (keep (fn [entry]
-                (when (= :message (:kind entry))
-                  (get-in entry [:data :message]))))
-        (sa/journal-state-in ctx session-id)))
+  (prompt-request/session->provider-messages ctx session-id))
 
 (defn session-tool-defs [session-data]
   (or (:tool-defs session-data)

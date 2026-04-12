@@ -12,14 +12,20 @@
    [psi.agent-session.system-prompt :as system-prompt]))
 
 (defn journal->provider-messages
-  "Project persisted journal entries into agent/provider message maps.
-   Initial scaffold mirrors prompt-turn/session-messages behavior."
+  "Project persisted journal entries into agent/provider message maps."
   [journal]
   (into []
         (keep (fn [entry]
                 (when (= :message (:kind entry))
                   (get-in entry [:data :message]))))
         journal))
+
+(defn session->provider-messages
+  "Project the persisted journal for `session-id` into provider-visible messages."
+  [ctx session-id]
+  (journal->provider-messages
+   (or (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal])
+       [])))
 
 (defn- resolve-api-key
   "Resolve API key: prefer explicit runtime-opts, fall back to session-stored
@@ -142,9 +148,9 @@
    - :runtime-opts"
   [ctx session-id {:keys [turn-id user-message runtime-opts] :as opts}]
   (let [session-data       (ss/get-session-data-in ctx session-id)
-        journal            (or (ss/get-state-value-in ctx [:agent-session :sessions session-id :persistence :journal]) [])
+        base-messages      (session->provider-messages ctx session-id)
         steering-messages  (queued-steering-messages session-data user-message)
-        messages           (cond-> (journal->provider-messages journal)
+        messages           (cond-> base-messages
                              (seq steering-messages) (into steering-messages))
         tool-defs          (or (:tool-defs session-data) [])
         ai-options         (session->request-options ctx session-data (or runtime-opts {}))
