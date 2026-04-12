@@ -247,12 +247,12 @@
                           {:role "assistant"
                            :content [{:type :text :text "done"}]
                            :stop-reason :stop})))
-                    psi.agent-session.tool-batch/execute-tool-calls!
-                    (fn [_ _ outcome _]
-                      (swap! calls conj (:turn/outcome outcome))
+                    psi.agent-session.tool-batch/run-tool-calls!
+                    (fn [_ _ tool-calls _]
+                      (swap! calls conj (mapv :id tool-calls))
                       [{:tool-call-id "call-1"}])]
         (let [result (#'prompt-turn/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
-          (is (= [":turn.outcome/tool-use"] (mapv str @calls)))
+          (is (= [["call-1"]] @calls))
           (is (= :stop (:stop-reason result)))
           (is (= "done"
                  (some #(when (= :text (:type %)) (:text %))
@@ -274,9 +274,9 @@
                         {:role "assistant"
                          :content [{:type :text :text "done"}]
                          :stop-reason :stop}))
-                    psi.agent-session.tool-batch/execute-tool-calls!
-                    (fn [_ _ outcome _]
-                      (swap! tool-batches conj (mapv :id (:tool-calls outcome)))
+                    psi.agent-session.tool-batch/run-tool-calls!
+                    (fn [_ _ tool-calls _]
+                      (swap! tool-batches conj (mapv :id tool-calls))
                       [{:tool-call-id "call-1"}
                        {:tool-call-id "call-2"}])]
         (let [result (#'prompt-turn/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
@@ -439,7 +439,7 @@
                       {:content (str "ok-" (:tool-call-id opts))
                        :is-error false
                        :details {:truncation {:truncated false}}})]
-        (let [results (#'tool-batch/execute-tool-calls! session-ctx session-ctx-id outcome nil)
+        (let [results (#'tool-batch/run-tool-calls! session-ctx session-ctx-id (:tool-calls outcome) nil)
               lifecycle (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events session-ctx-id))
               result-events (filterv #(= :tool-result (:event-kind %)) lifecycle)
               output-stats (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))
@@ -502,27 +502,6 @@
         (is (some? (:tool-batch-executor ctx)))
         (finally
           (session-core/shutdown-context! ctx))))))
-
-(deftest execute-tool-calls-test
-  (testing "execute-tool-calls! delegates batch execution while preserving outcome semantics"
-    (let [agent-ctx   (setup-agent-ctx!)
-          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
-          outcome     {:turn/outcome :turn.outcome/tool-use
-                       :assistant-message {:role "assistant"
-                                           :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
-                                                     {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
-                                           :stop-reason :tool_use}
-                       :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
-                                    {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}
-          calls       (atom [])]
-      (with-redefs [psi.agent-session.tool-batch/run-tool-calls!
-                    (fn [_ _ tool-calls _]
-                      (reset! calls (mapv :id tool-calls))
-                      [{:tool-call-id "call-1"}
-                       {:tool-call-id "call-2"}])]
-        (let [results (#'tool-batch/execute-tool-calls! session-ctx session-ctx-id outcome nil)]
-          (is (= ["call-1" "call-2"] @calls))
-          (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
 ;;; Child session infrastructure tests
 

@@ -106,7 +106,3 @@
                                       {:origin :core})))
               futures)))))
 
-(defn execute-tool-calls!
-  "Execute all tool calls from a tool-use outcome. Returns tool results."
-  [ctx session-id outcome progress-queue]
-  (run-tool-calls! ctx session-id (:tool-calls outcome) progress-queue))
