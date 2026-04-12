@@ -4,20 +4,15 @@
    Canonical home for provider-stream execution, turn accumulation, and
    recursive tool-use turn progression in shared-session prompt paths."
   (:require
-   [psi.agent-session.conversation :as conv-translate]
-   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
+   [psi.agent-session.tool-batch :as tool-batch]
    [psi.agent-session.turn-accumulator :as accum]
-   [psi.agent-session.turn-statechart :as turn-sc])
-  (:import
-   (java.util.concurrent Callable ExecutorService Future)
-   (java.util.concurrent ConcurrentHashMap)
-   (java.util.concurrent.locks ReentrantLock)))
+   [psi.agent-session.turn-statechart :as turn-sc]))
 
 (defn session-messages
   "Derive LLM conversation messages from the persistence journal."
@@ -150,106 +145,10 @@
   [assistant-msg]
   (prompt-recording/classify-assistant-message assistant-msg))
 
-(defn- run-tool-call!
-  "Dispatch one tool call through the runtime-effect boundary."
-  [ctx session-id tool-call progress-queue]
-  (dispatch/dispatch! ctx :session/tool-run
-                      {:session-id     session-id
-                       :tool-call      tool-call
-                       :parsed-args    (or (:parsed-args tool-call)
-                                           (conv-translate/parse-args (:arguments tool-call)))
-                       :progress-queue progress-queue}
-                      {:origin :core}))
-
-(defn- tool-batch-executor [ctx]
-  (or (:tool-batch-executor ctx)
-      (throw (ex-info "No tool batch executor configured on ctx"
-                      {:missing :tool-batch-executor}))))
-
-(defn- tool-call-file-key
-  "Return a canonical file-path key for a tool call, or nil if the call has no
-   file argument. Checks the most common argument spellings across built-in
-   tools (path, file, file_path) in both string and keyword forms."
-  [tool-call]
-  (let [args (or (:parsed-args tool-call)
-                 (conv-translate/parse-args (:arguments tool-call)))]
-    (some (fn [k] (when-let [v (get args k)]
-                    (when (string? v) (not-empty v))))
-          ["path" "file" "file_path" :path :file :file_path])))
-
-(defn- acquire-file-lock!
-  "Acquire the ReentrantLock for `file-key` from `lock-map`, creating one if absent."
-  ^ReentrantLock [^ConcurrentHashMap lock-map file-key]
-  (let [lock (or (.get lock-map file-key)
-                 (let [new-lock (ReentrantLock.)]
-                   (or (.putIfAbsent lock-map file-key new-lock) new-lock)))]
-    (.lock lock)
-    lock))
-
-(defn- make-tool-call-task
-  "Build a Callable for one tool call. When `file-key` is non-nil the task
-   acquires the corresponding per-file lock before executing and releases it
-   afterwards, serialising concurrent calls that target the same file."
-  [ctx session-id tool-call progress-queue file-key lock-map]
-  ^Callable
-  (fn []
-    (let [parsed-args (or (:parsed-args tool-call)
-                          (conv-translate/parse-args (:arguments tool-call)))]
-      (if file-key
-        (let [^ReentrantLock lk (acquire-file-lock! lock-map file-key)]
-          (try
-            (dispatch/dispatch! ctx :session/tool-execute-prepared
-                                {:session-id     session-id
-                                 :tool-call      tool-call
-                                 :parsed-args    parsed-args
-                                 :progress-queue progress-queue}
-                                {:origin :core})
-            (finally (.unlock lk))))
-        (dispatch/dispatch! ctx :session/tool-execute-prepared
-                            {:session-id     session-id
-                             :tool-call      tool-call
-                             :parsed-args    parsed-args
-                             :progress-queue progress-queue}
-                            {:origin :core})))))
-
-(defn- run-tool-calls!
-  "Execute a batch of tool calls and return tool results in tool-call order.
-
-   Tool calls that target the same file path are serialised via per-file locks
-   so that concurrent reads/writes to the same file cannot interleave. Calls
-   targeting different files (or no file at all) still execute in parallel up
-   to the configured batch parallelism limit."
-  [ctx session-id tool-calls progress-queue]
-  (let [tool-calls* (vec tool-calls)
-        task-count  (count tool-calls*)]
-    (cond
-      (zero? task-count)
-      []
-
-      (= 1 task-count)
-      [(run-tool-call! ctx session-id (first tool-calls*) progress-queue)]
-
-      :else
-      (let [executor  ^ExecutorService (tool-batch-executor ctx)
-            lock-map  (ConcurrentHashMap.)
-            tasks     (mapv (fn [tc]
-                              (make-tool-call-task ctx session-id tc progress-queue
-                                                   (tool-call-file-key tc) lock-map))
-                            tool-calls*)
-            futures   (.invokeAll executor ^java.util.Collection tasks)]
-        (mapv (fn [^Future future]
-                (let [shaped-result (.get future)]
-                  (dispatch/dispatch! ctx :session/tool-record-result
-                                      {:session-id     session-id
-                                       :shaped-result  shaped-result
-                                       :progress-queue progress-queue}
-                                      {:origin :core})))
-              futures)))))
-
 (defn execute-tool-calls!
   "Execute all tool calls from a tool-use outcome. Returns tool results."
   [ctx session-id outcome progress-queue]
-  (run-tool-calls! ctx session-id (:tool-calls outcome) progress-queue))
+  (tool-batch/execute-tool-calls! ctx session-id outcome progress-queue))
 
 (defn execute-one-turn!
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
