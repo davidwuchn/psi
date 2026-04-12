@@ -219,7 +219,7 @@
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
           calls       (atom [])]
-      (with-redefs [psi.agent-session.prompt-loop/run-agent-loop-body!
+      (with-redefs [psi.agent-session.prompt-turn/run-turn-loop!
                     (fn [_ _ _ _ _ extra-ai-options progress-queue]
                       (swap! calls conj [:body extra-ai-options progress-queue])
                       {:role "assistant" :content [{:type :text :text "done"}] :stop-reason :stop})

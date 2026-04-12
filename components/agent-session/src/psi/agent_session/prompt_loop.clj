@@ -17,19 +17,6 @@
    (session/get-session-data-in ctx session-id)
    runtime-opts))
 
-(defn run-agent-loop-body!
-  "Execute the turn loop, converting uncaught exceptions to error messages."
-  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-  (try
-    (prompt-turn/run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue)
-    (catch Throwable e
-      (cond-> {:role          "assistant"
-               :content       []
-               :stop-reason   :error
-               :error-message (or (ex-message e) (.getMessage e) (str e))
-               :timestamp     (java.time.Instant/now)}
-        (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))))
-
 (defn finish-agent-loop!
   "Send :agent-end to the session statechart (skipped for child sessions)."
   [ctx session-id _agent-ctx result]
@@ -58,6 +45,14 @@
    (run-agent-loop! ai-ctx ctx session-id agent-ctx ai-model new-messages nil))
   ([ai-ctx ctx session-id agent-ctx ai-model _new-messages opts]
    (let [extra-ai-options (agent-loop-options ctx session-id opts)
-         result           (run-agent-loop-body! ai-ctx ctx session-id agent-ctx ai-model
-                                                extra-ai-options (:progress-queue opts))]
+         result           (try
+                            (prompt-turn/run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
+                                                        extra-ai-options (:progress-queue opts))
+                            (catch Throwable e
+                              (cond-> {:role          "assistant"
+                                       :content       []
+                                       :stop-reason   :error
+                                       :error-message (or (ex-message e) (.getMessage e) (str e))
+                                       :timestamp     (java.time.Instant/now)}
+                                (:status (ex-data e)) (assoc :http-status (:status (ex-data e))))))]
      (finish-agent-loop! ctx session-id agent-ctx result))))
