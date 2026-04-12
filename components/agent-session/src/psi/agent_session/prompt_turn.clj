@@ -18,11 +18,6 @@
 (defn- now-ms []
   (prompt-stream/now-ms))
 
-(defn do-stream!
-  "Invoke the appropriate streaming fn depending on whether ai-ctx is provided."
-  [ai-ctx ai-conv ai-model ai-options consume-fn]
-  (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
-
 (defn- wait-for-turn-result
   "Wait for `done-p` with an idle timeout that resets on any stream progress."
   [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms abort-pred]}]
@@ -51,10 +46,10 @@
         {:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
         (prompt-runtime/create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
         ai-options       (prompt-runtime/capture-aware-ai-options ctx session-id turn-id base-ai-options)]
-    (do-stream! ai-ctx ai-conv ai-model ai-options
-                (prompt-runtime/make-provider-event-consumer
-                 turn-ctx actions-fn last-progress-ms timed-out?
-                 {:now-fn now-ms}))
+    (prompt-runtime/do-stream! ai-ctx ai-conv ai-model ai-options
+                               (prompt-runtime/make-provider-event-consumer
+                                turn-ctx actions-fn last-progress-ms timed-out?
+                                {:now-fn now-ms}))
     (let [assistant-msg (prompt-runtime/await-assistant-message!
                          turn-ctx done-p last-progress-ms timed-out?
                          {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
