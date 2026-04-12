@@ -1,15 +1,13 @@
 (ns psi.agent-session.prompt-turn
   "Direct-path prompt turn orchestration.
 
-   Owns assistant-message journaling and recursive tool-use progression while
-   delegating canonical request preparation and live turn execution to the
+   Owns recursive tool-use progression while delegating canonical request
+   preparation, live turn execution, and assistant-message journaling to the
    shared prompt runtime path."
   (:require
-   [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-runtime :as prompt-runtime]
-   [psi.agent-session.session-state :as session]
    [psi.agent-session.tool-batch :as tool-batch]))
 
 (defn stream-turn!
@@ -26,9 +24,8 @@
                            ai-model
                            (assoc :prepared-request/model ai-model))
         assistant-msg    (:execution-result/assistant-message
-                          (prompt-runtime/execute-prepared-request!
+                          (prompt-runtime/execute-prepared-request-and-journal!
                            ai-ctx ctx session-id agent-ctx prepared-request progress-queue))]
-    (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
     assistant-msg))
 
 (defn run-turn-loop!

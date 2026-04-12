@@ -5,6 +5,7 @@
    It now keeps only the prepared-request execution path and turn abort entry."
   (:require
    [psi.ai.models :as models]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as ss]
@@ -222,3 +223,12 @@
      :execution-result/error-message       (:error-message assistant-message)
      :execution-result/http-status         (:http-status assistant-message)
      :execution-result/stop-reason         (:stop-reason assistant-message)}))
+
+(defn execute-prepared-request-and-journal!
+  "Execute one prepared request and append the resulting assistant message to
+   the canonical session journal. Returns the shaped execution-result map."
+  [ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
+  (let [execution-result (execute-prepared-request! ai-ctx ctx session-id agent-ctx prepared-request progress-queue)
+        assistant-msg    (:execution-result/assistant-message execution-result)]
+    (ss/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
+    execution-result))
