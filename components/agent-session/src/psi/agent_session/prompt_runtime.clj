@@ -168,44 +168,61 @@
       :else
       result)))
 
+(defn execute-live-turn!
+  "Execute one live provider turn against an already prepared conversation.
+   Returns {:turn-id :model :assistant-message :ai-options :turn-ctx}."
+  [ai-ctx ctx session-id agent-ctx {:keys [ai-conv ai-model base-ai-options progress-queue turn-id]}]
+  (let [{:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
+        (create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
+        ai-options       (capture-aware-ai-options ctx session-id turn-id base-ai-options)
+        cancelled-pred   #(prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))
+        _stream-handle   (prompt-stream/mark-turn-stream-handle!
+                          turn-ctx
+                          (do-stream! ai-ctx ai-conv ai-model ai-options
+                                      (make-provider-event-consumer
+                                       turn-ctx actions-fn last-progress-ms timed-out?
+                                       {:cancelled-pred cancelled-pred
+                                        :now-fn prompt-stream/now-ms})))
+        assistant-msg    (await-assistant-message!
+                          turn-ctx done-p last-progress-ms timed-out?
+                          {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
+                           :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
+                           :abort-pred      cancelled-pred})
+        _                (swap! (:turn-data turn-ctx) dissoc :stream-handle)]
+    {:turn-id           turn-id
+     :model             ai-model
+     :ai-options        ai-options
+     :turn-ctx          turn-ctx
+     :assistant-message assistant-msg}))
+
 (defn execute-prepared-request!
   "Execute one prepared request through the existing turn-streaming runtime.
    Returns a shaped execution-result map."
   [ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
-  (let [turn-id          (:prepared-request/id prepared-request)
-        ai-conv          (:prepared-request/provider-conversation prepared-request)
-        ai-model         (or (:prepared-request/model prepared-request)
-                             (:model (ss/get-session-data-in ctx session-id))
-                             (models/get-model :sonnet-4.6))
-        base-ai-options  (or (:prepared-request/ai-options prepared-request) {})
-        {:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
-        (create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
-        ai-options       (capture-aware-ai-options ctx session-id turn-id base-ai-options)]
-    (let [stream-handle (prompt-stream/mark-turn-stream-handle!
-                         turn-ctx
-                         (do-stream! ai-ctx ai-conv ai-model ai-options
-                                     (make-provider-event-consumer
-                                      turn-ctx actions-fn last-progress-ms timed-out?
-                                      {:cancelled-pred #(prompt-stream/cancelled-stream-handle?
-                                                         (:stream-handle @(:turn-data turn-ctx)))
-                                       :now-fn prompt-stream/now-ms})))
-          assistant-msg (await-assistant-message!
-                         turn-ctx done-p last-progress-ms timed-out?
-                         {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
-                          :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
-                          :abort-pred      #(prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))})
-          _ (swap! (:turn-data turn-ctx) dissoc :stream-handle)
-          outcome       (classify-execution-result assistant-msg)]
-      {:execution-result/turn-id             turn-id
-       :execution-result/session-id          session-id
-       :execution-result/prepared-request-id turn-id
-       :execution-result/model               ai-model
-       :execution-result/assistant-message   assistant-msg
-       :execution-result/usage               (:usage assistant-msg)
-       :execution-result/provider-captures   {:request-captures []
-                                              :response-captures []}
-       :execution-result/turn-outcome        (:turn/outcome outcome)
-       :execution-result/tool-calls          (:tool-calls outcome)
-       :execution-result/error-message       (:error-message assistant-msg)
-       :execution-result/http-status         (:http-status assistant-msg)
-       :execution-result/stop-reason         (:stop-reason assistant-msg)})))
+  (let [turn-id         (:prepared-request/id prepared-request)
+        ai-conv         (:prepared-request/provider-conversation prepared-request)
+        ai-model        (or (:prepared-request/model prepared-request)
+                            (:model (ss/get-session-data-in ctx session-id))
+                            (models/get-model :sonnet-4.6))
+        base-ai-options (or (:prepared-request/ai-options prepared-request) {})
+        {:keys [assistant-message]}
+        (execute-live-turn! ai-ctx ctx session-id agent-ctx
+                            {:ai-conv         ai-conv
+                             :ai-model        ai-model
+                             :base-ai-options base-ai-options
+                             :progress-queue  progress-queue
+                             :turn-id         turn-id})
+        outcome        (classify-execution-result assistant-message)]
+    {:execution-result/turn-id             turn-id
+     :execution-result/session-id          session-id
+     :execution-result/prepared-request-id turn-id
+     :execution-result/model               ai-model
+     :execution-result/assistant-message   assistant-message
+     :execution-result/usage               (:usage assistant-message)
+     :execution-result/provider-captures   {:request-captures []
+                                            :response-captures []}
+     :execution-result/turn-outcome        (:turn/outcome outcome)
+     :execution-result/tool-calls          (:tool-calls outcome)
+     :execution-result/error-message       (:error-message assistant-message)
+     :execution-result/http-status         (:http-status assistant-message)
+     :execution-result/stop-reason         (:stop-reason assistant-message)}))
