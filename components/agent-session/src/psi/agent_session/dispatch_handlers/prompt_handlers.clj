@@ -48,15 +48,16 @@
    (fn [ctx {:keys [session-id]}]
      (let [sd      (session/get-session-data-in ctx session-id)
            contrib (session/list-prompt-contributions-in ctx session-id)
-           ;; When build opts are stored, rebuild from scratch with current mode
-           ;; and contributions inline (ordering: skills → contributions → context)
+           ;; When build opts are stored, rebuild the assembled base prompt first,
+           ;; then apply extension contributions as a distinct final layer so
+           ;; request preparation and introspection can observe the split.
            [base prompt]
            (if-let [build-opts (:system-prompt-build-opts sd)]
-             (let [full (sys-prompt/build-system-prompt
-                         (assoc build-opts
-                                :prompt-mode (:prompt-mode sd :lambda)
-                                :prompt-contributions contrib))]
-               [full full])
+             (let [base* (sys-prompt/build-system-prompt
+                          (assoc build-opts
+                                 :prompt-mode (:prompt-mode sd :lambda)
+                                 :prompt-contributions nil))]
+               [base* (sys-prompt/apply-prompt-contributions base* contrib)])
              (let [b (or (:base-system-prompt sd) (:system-prompt sd) "")]
                [b (sys-prompt/apply-prompt-contributions b contrib)]))]
        {:root-state-update (session/session-update session-id #(assoc %

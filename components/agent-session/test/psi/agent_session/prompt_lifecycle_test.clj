@@ -197,8 +197,34 @@
       (is (= "dev" (get-in prepared [:prepared-request/prompt-layers 1 :content])))
       (is (= :explicit (get-in prepared [:prepared-request/prompt-layers 1 :source])))
       (is (= "Hint A" (get-in prepared [:prepared-request/prompt-layers 2 :content])))
+      (is (= "sys\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
+             (:prepared-request/system-prompt prepared)))
       (is (= "dev" (get-in prepared [:prepared-request/session-snapshot :developer-prompt])))
       (is (= :explicit (get-in prepared [:prepared-request/session-snapshot :developer-prompt-source]))))))
+
+(deftest build-prepared-request-reassembles-effective-system-prompt-from-base-and-contributions-test
+  (let [[ctx session-id] (create-session-context {:persist? false})]
+    (dispatch/dispatch! ctx :session/bootstrap-prompt-state
+                        {:session-id session-id
+                         :system-prompt "base"}
+                        {:origin :core})
+    (dispatch/dispatch! ctx :session/register-prompt-contribution
+                        {:session-id session-id
+                         :ext-path "/ext/a"
+                         :id "c2"
+                         :contribution {:content "Hint B" :priority 20 :enabled true}}
+                        {:origin :core})
+    ;; Simulate stale cached :system-prompt state: request preparation should
+    ;; rebuild from canonical base + contribution layers instead.
+    (test-support/update-state! ctx :session-data assoc :system-prompt "stale")
+    (let [prepared (psi.agent-session.prompt-request/build-prepared-request
+                    ctx session-id {:turn-id "t2"
+                                    :user-message {:role "user"
+                                                   :content [{:type :text :text "hello"}]}})]
+      (is (= "base\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c2\" ext_path=\"/ext/a\">\nHint B\n</prompt_contribution>"
+             (:prepared-request/system-prompt prepared)))
+      (is (= (:prepared-request/system-prompt prepared)
+             (get-in prepared [:prepared-request/provider-conversation :system-prompt]))))))
 
 (deftest queued-steering-is-injected-into-continuation-prepared-request-test
   (let [[ctx session-id] (create-session-context {:persist? false})

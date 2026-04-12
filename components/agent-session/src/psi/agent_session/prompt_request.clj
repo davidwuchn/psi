@@ -8,7 +8,8 @@
    [psi.ai.models :as ai-models]
    [psi.agent-session.conversation :as conv]
    [psi.agent-session.oauth.core :as oauth]
-   [psi.agent-session.session-state :as ss]))
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.system-prompt :as system-prompt]))
 
 (defn journal->provider-messages
   "Project persisted journal entries into agent/provider message maps.
@@ -55,12 +56,27 @@
               model))
           ai-models/all-models)))
 
+(defn- sorted-contributions
+  [session-data]
+  (ss/sorted-prompt-contributions (:prompt-contributions session-data)))
+
+(defn effective-system-prompt
+  "Assemble the effective provider-visible system prompt from canonical
+   request-preparation inputs.
+
+   This makes request preparation the explicit home for the final
+   base-plus-contributions projection used for provider execution."
+  [session-data]
+  (system-prompt/apply-prompt-contributions
+   (:base-system-prompt session-data)
+   (sorted-contributions session-data)))
+
 (defn build-prompt-layers
   "Return prompt layers for the prepared request.
 
    Current shape makes the main assembled layers explicit for introspection while
-   still projecting the already-composed effective system prompt as the provider
-   system prompt.
+   request preparation assembles the effective provider system prompt from those
+   canonical session-owned layers.
 
    Layers currently surfaced:
    - :system/base          assembled base system prompt
@@ -69,13 +85,7 @@
   [session-data _opts]
   (let [base    (:base-system-prompt session-data)
         dev     (:developer-prompt session-data)
-        contrib (->> (or (:prompt-contributions session-data) [])
-                     (filter map?)
-                     (filter #(not (false? (:enabled %))))
-                     (sort-by (fn [{:keys [priority ext-path id]}]
-                                [(or priority 1000)
-                                 (or ext-path "")
-                                 (or id "")]))
+        contrib (->> (sorted-contributions session-data)
                      (map :content)
                      (remove str/blank?)
                      (str/join "\n\n"))]
@@ -130,7 +140,7 @@
         ai-options         (session->request-options ctx session-data (or runtime-opts {}))
         cache-bps          (set (or (:cache-breakpoints session-data) #{}))
         prompt-layers      (build-prompt-layers session-data opts)
-        system-prompt      (:system-prompt session-data)
+        system-prompt      (effective-system-prompt session-data)
         provider-conv      (conv/agent-messages->ai-conversation
                             system-prompt
                             messages
