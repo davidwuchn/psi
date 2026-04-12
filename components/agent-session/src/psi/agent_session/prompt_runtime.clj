@@ -12,9 +12,26 @@
    [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
+(def ^:dynamic llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
+(def ^:dynamic llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
+
 (defn do-stream!
   [ai-ctx ai-conv ai-model ai-options consume-fn]
   (prompt-stream/do-stream! ai-ctx ai-conv ai-model ai-options consume-fn))
+
+(defn wait-for-turn-result
+  "Wait for `done-p` with an idle timeout that resets on any stream progress."
+  [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms abort-pred]}]
+  (let [opts   (cond-> {:idle-timeout-ms llm-stream-idle-timeout-ms
+                        :wait-poll-ms    llm-stream-wait-poll-ms}
+                 idle-timeout-ms (assoc :idle-timeout-ms idle-timeout-ms)
+                 wait-poll-ms    (assoc :wait-poll-ms wait-poll-ms)
+                 abort-pred      (assoc :abort-pred abort-pred))
+        result (prompt-stream/wait-for-turn-result done-p last-progress-ms opts)]
+    (case result
+      ::prompt-stream/timeout ::timeout
+      ::prompt-stream/aborted ::aborted
+      result)))
 
 (defn abort-active-turn-in!
   "Abort the currently active prepared-request turn for `session-id`, if any.
@@ -124,7 +141,7 @@
    Supports both canonical prompt-stream timeout/aborted sentinels and the
    prompt-turn compatibility sentinels used by targeted tests."
   [turn-ctx done-p last-progress-ms timed-out? {:keys [idle-timeout-ms wait-poll-ms abort-pred wait-fn]}]
-  (let [wait!    (or wait-fn prompt-stream/wait-for-turn-result)
+  (let [wait!    (or wait-fn wait-for-turn-result)
         result   (wait! done-p last-progress-ms
                         (cond-> {:idle-timeout-ms idle-timeout-ms
                                  :wait-poll-ms    wait-poll-ms}

@@ -12,25 +12,8 @@
    [psi.agent-session.session-state :as session]
    [psi.agent-session.tool-batch :as tool-batch]))
 
-(def ^:dynamic llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
-(def ^:dynamic llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
-
 (defn- now-ms []
   (prompt-stream/now-ms))
-
-(defn- wait-for-turn-result
-  "Wait for `done-p` with an idle timeout that resets on any stream progress."
-  [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms abort-pred]}]
-  (let [opts   (cond-> {:idle-timeout-ms llm-stream-idle-timeout-ms
-                        :wait-poll-ms    llm-stream-wait-poll-ms}
-                 idle-timeout-ms (assoc :idle-timeout-ms idle-timeout-ms)
-                 wait-poll-ms    (assoc :wait-poll-ms wait-poll-ms)
-                 abort-pred      (assoc :abort-pred abort-pred))
-        result (prompt-stream/wait-for-turn-result done-p last-progress-ms opts)]
-    (case result
-      ::prompt-stream/timeout ::timeout
-      ::prompt-stream/aborted ::aborted
-      result)))
 
 (defn stream-turn!
   "Stream one LLM response into agent-core via the per-turn statechart.
@@ -53,8 +36,7 @@
     (let [assistant-msg (prompt-runtime/await-assistant-message!
                          turn-ctx done-p last-progress-ms timed-out?
                          {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
-                          :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
-                          :wait-fn         wait-for-turn-result})]
+                          :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)})]
       (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
       assistant-msg)))
 

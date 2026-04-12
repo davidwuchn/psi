@@ -422,8 +422,8 @@
                         (Thread/sleep 120)
                         (consume-fn {:type :done :reason :stop})))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn
-                  psi.agent-session.prompt-turn/llm-stream-idle-timeout-ms 200
-                  psi.agent-session.prompt-turn/llm-stream-wait-poll-ms 20]
+                  psi.agent-session.prompt-runtime/llm-stream-idle-timeout-ms 200
+                  psi.agent-session.prompt-runtime/llm-stream-wait-poll-ms 20]
       (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= :stop (:stop-reason result)))))))
 
@@ -437,8 +437,8 @@
                         (Thread/sleep 260)
                         (consume-fn {:type :done :reason :stop})))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn
-                  psi.agent-session.prompt-turn/llm-stream-idle-timeout-ms 120
-                  psi.agent-session.prompt-turn/llm-stream-wait-poll-ms 20]
+                  psi.agent-session.prompt-runtime/llm-stream-idle-timeout-ms 120
+                  psi.agent-session.prompt-runtime/llm-stream-wait-poll-ms 20]
       (let [result   (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
             turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
