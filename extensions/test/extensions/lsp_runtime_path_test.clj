@@ -7,8 +7,8 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.tool-batch :as tool-batch]
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.services :as services]
@@ -266,7 +266,7 @@
                       agent/emit-tool-start-in! (fn [_ _] nil)
                       agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                       agent/record-tool-result-in! (fn [_ msg] (reset! recorded msg) nil)]
-          (#'executor/run-tool-call! ctx session-id tc nil)
+          (#'tool-batch/run-tool-call! ctx session-id tc nil)
           (is (some? @recorded))
           (is (= "call-live-lsp" (:tool-call-id @recorded)))
           (is (str/includes? (:result-text @recorded)

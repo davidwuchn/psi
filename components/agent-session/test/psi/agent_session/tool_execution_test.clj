@@ -5,8 +5,8 @@
    [clojure.test :refer [deftest testing is]]
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.tool-batch :as tool-batch]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-execution :as tool-exec]
@@ -87,7 +87,7 @@
                     agent/emit-tool-start-in! (fn [_ _] nil)
                     agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ _] nil)]
-        (#'executor/run-tool-call! session-ctx session-ctx-id tc nil)
+        (#'tool-batch/run-tool-call! session-ctx session-ctx-id tc nil)
         (let [stats (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))
               call  (first (:calls stats))]
           (is (= "call-1" (:tool-call-id call)))
@@ -115,7 +115,7 @@
                     agent/emit-tool-start-in! (fn [_ _] nil)
                     agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ _] nil)]
-        (#'executor/run-tool-call! session-ctx session-ctx-id tc nil)
+        (#'tool-batch/run-tool-call! session-ctx session-ctx-id tc nil)
         (let [call (first (:calls (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))))]
           (is (= (count (.getBytes shaped "UTF-8"))
                  (:context-bytes-added call)))
@@ -141,7 +141,7 @@
                     (fn [_ msg]
                       (reset! results msg)
                       nil)]
-        (#'executor/run-tool-call! session-ctx session-ctx-id tc q)
+        (#'tool-batch/run-tool-call! session-ctx session-ctx-id tc q)
         (let [events   (loop [acc []]
                          (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                            (recur (conj acc e))
@@ -169,7 +169,7 @@
                     agent/emit-tool-start-in! (fn [_ _] nil)
                     agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ _] nil)]
-        (#'executor/run-tool-call! session-ctx session-ctx-id tc nil)
+        (#'tool-batch/run-tool-call! session-ctx session-ctx-id tc nil)
         (let [events (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events session-ctx-id))
               lifecycle (filterv #(contains? #{:tool-start :tool-executing :tool-execution-update :tool-result}
                                              (:event-kind %))
@@ -228,7 +228,7 @@
                       (fn [ctx event-type event-data opts]
                         (swap! events conj event-type)
                         (orig ctx event-type event-data opts)))]
-        (let [result (#'executor/run-tool-call! session-ctx session-ctx-id tc q)]
+        (let [result (#'tool-batch/run-tool-call! session-ctx session-ctx-id tc q)]
           (is (= "call-dispatch" (:tool-call-id result)))
           (is (some #{:session/tool-run} @events))
           (is (some #{:session/tool-execute-prepared} @events))
@@ -266,7 +266,7 @@
                     (fn [_ msg]
                       (reset! recorded msg)
                       nil)]
-        (#'executor/run-tool-call! session-ctx session-ctx-id tc q)
+        (#'tool-batch/run-tool-call! session-ctx session-ctx-id tc q)
         (is (= [{:type :text
                  :text (str "Successfully wrote 10 bytes to /tmp/example.clj"
                             "\nLSP diagnostics for /tmp/example.clj:\n- unresolved symbol foo")}]
