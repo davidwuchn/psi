@@ -157,8 +157,9 @@
    Input opts:
    - :turn-id
    - :user-message
-   - :runtime-opts"
-  [ctx session-id {:keys [turn-id user-message runtime-opts] :as opts}]
+   - :runtime-opts
+   - :runtime-model"
+  [ctx session-id {:keys [turn-id user-message runtime-opts runtime-model] :as opts}]
   (let [session-data       (ss/get-session-data-in ctx session-id)
         base-messages      (session->provider-messages ctx session-id)
         steering-messages  (queued-steering-messages session-data user-message)
@@ -168,7 +169,8 @@
         cache-bps          (set (or (:cache-breakpoints session-data) #{}))
         prompt-layers      (build-prompt-layers session-data opts)
         provider-conv      (build-provider-conversation session-data messages)
-        runtime-model      (resolve-runtime-model (:model session-data))]
+        runtime-model      (or runtime-model
+                               (resolve-runtime-model (:model session-data)))]
     {:prepared-request/id                       turn-id
      :prepared-request/session-id               session-id
      :prepared-request/user-message             user-message

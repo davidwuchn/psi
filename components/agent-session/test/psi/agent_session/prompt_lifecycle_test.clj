@@ -226,6 +226,16 @@
       (is (= (:prepared-request/system-prompt prepared)
              (get-in prepared [:prepared-request/provider-conversation :system-prompt]))))))
 
+(deftest build-prepared-request-allows-explicit-runtime-model-override-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        runtime-model    {:provider "stub" :id "override-model" :context-window 1234}
+        prepared         (psi.agent-session.prompt-request/build-prepared-request
+                          ctx session-id {:turn-id "t-override"
+                                          :user-message {:role "user"
+                                                         :content [{:type :text :text "hello"}]}
+                                          :runtime-model runtime-model})]
+    (is (= runtime-model (:prepared-request/model prepared)))))
+
 (deftest queued-steering-is-injected-into-continuation-prepared-request-test
   (let [[ctx session-id] (create-session-context {:persist? false})
         assistant-msg    {:role "assistant"

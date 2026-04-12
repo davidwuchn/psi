@@ -15,18 +15,16 @@
    Blocks until the statechart reaches :done or :error.
    Stores turn context in canonical state for nREPL introspection."
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-  (let [turn-id          (str (java.util.UUID/randomUUID))
-        prepared-request (cond-> (prompt-request/build-prepared-request
-                                  ctx session-id
-                                  {:turn-id      turn-id
-                                   :user-message nil
-                                   :runtime-opts extra-ai-options})
-                           ai-model
-                           (assoc :prepared-request/model ai-model))
-        assistant-msg    (:execution-result/assistant-message
-                          (prompt-runtime/execute-prepared-request-and-journal!
-                           ai-ctx ctx session-id agent-ctx prepared-request progress-queue))]
-    assistant-msg))
+  (:execution-result/assistant-message
+   (prompt-runtime/execute-prepared-request-and-journal!
+    ai-ctx ctx session-id agent-ctx
+    (prompt-request/build-prepared-request
+     ctx session-id
+     {:turn-id       (str (java.util.UUID/randomUUID))
+      :user-message  nil
+      :runtime-opts  extra-ai-options
+      :runtime-model ai-model})
+    progress-queue)))
 
 (defn run-turn-loop!
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
