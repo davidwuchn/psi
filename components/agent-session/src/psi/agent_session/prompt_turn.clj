@@ -10,8 +10,7 @@
    [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.session-state :as session]
-   [psi.agent-session.tool-batch :as tool-batch]
-   [psi.agent-session.turn-statechart :as turn-sc]))
+   [psi.agent-session.tool-batch :as tool-batch]))
 
 (def ^:dynamic llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
 (def ^:dynamic llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
@@ -56,18 +55,11 @@
                 (prompt-runtime/make-provider-event-consumer
                  turn-ctx actions-fn last-progress-ms timed-out?
                  {:now-fn now-ms}))
-    (let [result (wait-for-turn-result done-p last-progress-ms
-                                       {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
-                                        :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)})
-          assistant-msg (if (= result ::timeout)
-                          (do (reset! timed-out? true)
-                              (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
-                              {:role          "assistant"
-                               :content       [{:type :error :text "Timeout waiting for LLM response"}]
-                               :stop-reason   :error
-                               :error-message "Timeout waiting for LLM response"
-                               :timestamp     (java.time.Instant/now)})
-                          result)]
+    (let [assistant-msg (prompt-runtime/await-assistant-message!
+                         turn-ctx done-p last-progress-ms timed-out?
+                         {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
+                          :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
+                          :wait-fn         wait-for-turn-result})]
       (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
       assistant-msg)))
 

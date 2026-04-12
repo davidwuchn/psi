@@ -118,6 +118,39 @@
                                                            (:http-status event) (assoc :http-status (:http-status event))))
           nil)))))
 
+(defn await-assistant-message!
+  "Wait for a live turn to finish and return the final assistant message.
+
+   Supports both canonical prompt-stream timeout/aborted sentinels and the
+   prompt-turn compatibility sentinels used by targeted tests."
+  [turn-ctx done-p last-progress-ms timed-out? {:keys [idle-timeout-ms wait-poll-ms abort-pred wait-fn]}]
+  (let [wait!    (or wait-fn prompt-stream/wait-for-turn-result)
+        result   (wait! done-p last-progress-ms
+                        (cond-> {:idle-timeout-ms idle-timeout-ms
+                                 :wait-poll-ms    wait-poll-ms}
+                          abort-pred (assoc :abort-pred abort-pred)))
+        timeout? (or (contains? #{::prompt-stream/timeout ::timeout} result)
+                     (and (keyword? result) (= "timeout" (name result))))
+        aborted? (or (contains? #{::prompt-stream/aborted ::aborted} result)
+                     (and (keyword? result) (= "aborted" (name result))))]
+    (cond
+      timeout?
+      (do (reset! timed-out? true)
+          (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
+          {:role          "assistant"
+           :content       [{:type :error :text "Timeout waiting for LLM response"}]
+           :stop-reason   :error
+           :error-message "Timeout waiting for LLM response"
+           :timestamp     (java.time.Instant/now)})
+
+      aborted?
+      (do
+        (prompt-stream/abort-turn! turn-ctx)
+        (:final-message @(:turn-data turn-ctx)))
+
+      :else
+      result)))
+
 (defn execute-prepared-request!
   "Execute one prepared request through the existing turn-streaming runtime.
    Returns a shaped execution-result map."
@@ -138,40 +171,24 @@
                                       turn-ctx actions-fn last-progress-ms timed-out?
                                       {:cancelled-pred #(prompt-stream/cancelled-stream-handle?
                                                          (:stream-handle @(:turn-data turn-ctx)))
-                                       :now-fn prompt-stream/now-ms})))]
-      (let [assistant-msg (let [result (prompt-stream/wait-for-turn-result done-p last-progress-ms
-                                                                           {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
-                                                                            :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
-                                                                            :abort-pred      #(prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))})]
-                            (cond
-                              (= result ::prompt-stream/timeout)
-                              (do (reset! timed-out? true)
-                                  (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
-                                  {:role          "assistant"
-                                   :content       [{:type :error :text "Timeout waiting for LLM response"}]
-                                   :stop-reason   :error
-                                   :error-message "Timeout waiting for LLM response"
-                                   :timestamp     (java.time.Instant/now)})
-
-                              (= result ::prompt-stream/aborted)
-                              (do
-                                (prompt-stream/abort-turn! turn-ctx)
-                                (:final-message @(:turn-data turn-ctx)))
-
-                              :else
-                              result))
-            _ (swap! (:turn-data turn-ctx) dissoc :stream-handle)
-            outcome       (classify-execution-result assistant-msg)]
-        {:execution-result/turn-id             turn-id
-         :execution-result/session-id          session-id
-         :execution-result/prepared-request-id turn-id
-         :execution-result/model               ai-model
-         :execution-result/assistant-message   assistant-msg
-         :execution-result/usage               (:usage assistant-msg)
-         :execution-result/provider-captures   {:request-captures []
-                                                :response-captures []}
-         :execution-result/turn-outcome        (:turn/outcome outcome)
-         :execution-result/tool-calls          (:tool-calls outcome)
-         :execution-result/error-message       (:error-message assistant-msg)
-         :execution-result/http-status         (:http-status assistant-msg)
-         :execution-result/stop-reason         (:stop-reason assistant-msg)}))))
+                                       :now-fn prompt-stream/now-ms})))
+          assistant-msg (await-assistant-message!
+                         turn-ctx done-p last-progress-ms timed-out?
+                         {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
+                          :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)
+                          :abort-pred      #(prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))})
+          _ (swap! (:turn-data turn-ctx) dissoc :stream-handle)
+          outcome       (classify-execution-result assistant-msg)]
+      {:execution-result/turn-id             turn-id
+       :execution-result/session-id          session-id
+       :execution-result/prepared-request-id turn-id
+       :execution-result/model               ai-model
+       :execution-result/assistant-message   assistant-msg
+       :execution-result/usage               (:usage assistant-msg)
+       :execution-result/provider-captures   {:request-captures []
+                                              :response-captures []}
+       :execution-result/turn-outcome        (:turn/outcome outcome)
+       :execution-result/tool-calls          (:tool-calls outcome)
+       :execution-result/error-message       (:error-message assistant-msg)
+       :execution-result/http-status         (:http-status assistant-msg)
+       :execution-result/stop-reason         (:stop-reason assistant-msg)})))
