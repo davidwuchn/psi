@@ -16,20 +16,17 @@
    Blocks until the statechart reaches :done or :error.
    Stores turn context in canonical state for nREPL introspection."
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-  (let [sd               (session/get-session-data-in ctx session-id)
-        turn-id          (str (java.util.UUID/randomUUID))
-        ai-conv          (prompt-request/build-provider-conversation
-                          sd
-                          (prompt-request/session->provider-messages ctx session-id))
-        base-ai-options  (or extra-ai-options {})
-        assistant-msg    (:assistant-message
-                          (prompt-runtime/execute-live-turn!
-                           ai-ctx ctx session-id agent-ctx
-                           {:ai-conv         ai-conv
-                            :ai-model        ai-model
-                            :base-ai-options base-ai-options
-                            :progress-queue  progress-queue
-                            :turn-id         turn-id}))]
+  (let [turn-id          (str (java.util.UUID/randomUUID))
+        prepared-request (cond-> (prompt-request/build-prepared-request
+                                  ctx session-id
+                                  {:turn-id      turn-id
+                                   :user-message nil
+                                   :runtime-opts extra-ai-options})
+                           ai-model
+                           (assoc :prepared-request/model ai-model))
+        assistant-msg    (:execution-result/assistant-message
+                          (prompt-runtime/execute-prepared-request!
+                           ai-ctx ctx session-id agent-ctx prepared-request progress-queue))]
     (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
     assistant-msg))
 
