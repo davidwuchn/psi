@@ -30,8 +30,8 @@
   (or (:tool-defs session-data)
       []))
 
-(def ^:dynamic ^:private llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
-(def ^:dynamic ^:private llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
+(def ^:dynamic llm-stream-idle-timeout-ms prompt-stream/llm-stream-idle-timeout-ms)
+(def ^:dynamic llm-stream-wait-poll-ms prompt-stream/llm-stream-wait-poll-ms)
 
 (defn- now-ms []
   (prompt-stream/now-ms))
@@ -266,10 +266,30 @@
                                       {:origin :core})))
               futures)))))
 
-(defn- execute-tool-calls!
+(defn execute-tool-calls!
   "Execute all tool calls from a tool-use outcome. Returns tool results."
   [ctx session-id outcome progress-queue]
   (run-tool-calls! ctx session-id (:tool-calls outcome) progress-queue))
+
+(defn execute-one-turn!
+  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
+  (let [assistant-msg (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
+                                    extra-ai-options progress-queue)]
+    {:assistant-message assistant-msg
+     :outcome           (classify-turn-outcome assistant-msg)}))
+
+(defn run-turn-loop!
+  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
+  (let [{:keys [assistant-message outcome]}
+        (execute-one-turn! ai-ctx ctx session-id agent-ctx ai-model
+                           extra-ai-options progress-queue)]
+    (case (:turn/outcome outcome)
+      :turn.outcome/tool-use
+      (do (execute-tool-calls! ctx session-id outcome progress-queue)
+          (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
+                          extra-ai-options progress-queue))
+
+      assistant-message)))
 
 (defn run-turn!
   "Drive one complete agent interaction loop until the LLM produces a terminal response."
@@ -278,13 +298,4 @@
   ([ai-ctx ctx session-id agent-ctx ai-model extra-ai-options]
    (run-turn! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options nil))
   ([ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-   (loop []
-     (let [assistant-msg (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
-                                       extra-ai-options progress-queue)
-           outcome       (classify-turn-outcome assistant-msg)]
-       (case (:turn/outcome outcome)
-         :turn.outcome/tool-use
-         (do (execute-tool-calls! ctx session-id outcome progress-queue)
-             (recur))
-
-         assistant-msg)))))
+   (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue)))
