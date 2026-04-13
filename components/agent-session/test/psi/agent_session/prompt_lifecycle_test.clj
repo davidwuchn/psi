@@ -112,7 +112,7 @@
                      :execution-result/tool-calls []
                      :execution-result/stop-reason :stop})]
       (session/prompt-in! ctx session-id "hello"))
-    (let [result (session/query-in ctx [:psi.agent-session/last-prepared-turn-id
+    (let [result (session/query-in ctx session-id [:psi.agent-session/last-prepared-turn-id
                                         :psi.agent-session/last-prepared-message-count
                                         :psi.agent-session/last-execution-turn-id
                                         :psi.agent-session/last-execution-turn-outcome

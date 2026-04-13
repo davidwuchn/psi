@@ -460,24 +460,25 @@
                     :file-path "/review.md"}]
         ctx     (session-core/create-context
              {:session-defaults {:prompt-templates templates}})
-        _       (session-core/new-session-in! ctx nil {})]
+        sd      (session-core/new-session-in! ctx nil {})
+        session-id (:session-id sd)]
 
     (testing "query template count via EQL"
-      (let [result (session-core/query-in ctx [:psi.prompt-template/count])]
+      (let [result (session-core/query-in ctx session-id [:psi.prompt-template/count])]
         (is (= 2 (:psi.prompt-template/count result)))))
 
     (testing "query template names via EQL"
-      (let [result (session-core/query-in ctx [:psi.prompt-template/names])]
+      (let [result (session-core/query-in ctx session-id [:psi.prompt-template/names])]
         (is (= ["greet" "review"] (:psi.prompt-template/names result)))))
 
     (testing "query template summary via EQL"
-      (let [result  (session-core/query-in ctx [:psi.prompt-template/summary])
+      (let [result  (session-core/query-in ctx session-id [:psi.prompt-template/summary])
             summary (:psi.prompt-template/summary result)]
         (is (= 2 (:template-count summary)))
         (is (= 2 (count (:templates summary))))))
 
     (testing "query templates by source via EQL"
-      (let [result   (session-core/query-in ctx [:psi.prompt-template/by-source])
+      (let [result   (session-core/query-in ctx session-id [:psi.prompt-template/by-source])
             grouped  (:psi.prompt-template/by-source result)]
         (is (= 1 (count (:user grouped))))
         (is (= 1 (count (:project grouped))))))))
@@ -492,12 +493,14 @@
                     :file-path "/greet.md"}]
         ctx (session-core/create-context
              {:session-defaults {:prompt-templates templates}})
-        _   (session-core/new-session-in! ctx nil {})
+        sd  (session-core/new-session-in! ctx nil {})
         env (pci/register resolvers/all-resolvers)
-        result (p.eql/process env
-                              {:psi/agent-session-ctx ctx
-                               :psi.prompt-template/name "greet"}
-                              [:psi.prompt-template/detail])
+        result (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
+                 (p.eql/process env
+                                {:psi/agent-session-ctx ctx
+                                 :psi.agent-session/session-id (:session-id sd)
+                                 :psi.prompt-template/name "greet"}
+                                [:psi.prompt-template/detail]))
         detail (:psi.prompt-template/detail result)]
     (testing "detail includes enriched fields"
       (is (= "greet" (:name detail)))
@@ -506,10 +509,12 @@
       (is (= 2 (:placeholder-count detail))))
 
     (testing "detail for unknown template is nil"
-      (let [r (p.eql/process env
-                             {:psi/agent-session-ctx ctx
-                              :psi.prompt-template/name "unknown"}
-                             [:psi.prompt-template/detail])]
+      (let [r (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
+                (p.eql/process env
+                               {:psi/agent-session-ctx ctx
+                                :psi.agent-session/session-id (:session-id sd)
+                                :psi.prompt-template/name "unknown"}
+                               [:psi.prompt-template/detail]))]
         (is (nil? (:psi.prompt-template/detail r)))))))
 
 ;; ============================================================

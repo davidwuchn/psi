@@ -505,31 +505,32 @@
                      :disable-model-invocation true}]
         ctx     (session-core/create-context
                  {:session-defaults {:skills all-skills}})
-        _       (session-core/new-session-in! ctx nil {})]
+        sd      (session-core/new-session-in! ctx nil {})
+        session-id (:session-id sd)]
 
     (testing "query skill count via EQL"
-      (let [result (session-core/query-in ctx [:psi.skill/count])]
+      (let [result (session-core/query-in ctx session-id [:psi.skill/count])]
         (is (= 2 (:psi.skill/count result)))))
 
     (testing "query visible/hidden counts via EQL"
-      (let [result (session-core/query-in ctx [:psi.skill/visible-count
+      (let [result (session-core/query-in ctx session-id [:psi.skill/visible-count
                                                :psi.skill/hidden-count])]
         (is (= 1 (:psi.skill/visible-count result)))
         (is (= 1 (:psi.skill/hidden-count result)))))
 
     (testing "query skill names via EQL"
-      (let [result (session-core/query-in ctx [:psi.skill/names])]
+      (let [result (session-core/query-in ctx session-id [:psi.skill/names])]
         (is (= ["alpha" "beta"] (:psi.skill/names result)))))
 
     (testing "query skill summary via EQL"
-      (let [result  (session-core/query-in ctx [:psi.skill/summary])
+      (let [result  (session-core/query-in ctx session-id [:psi.skill/summary])
             summary (:psi.skill/summary result)]
         (is (= 2 (:skill-count summary)))
         (is (= 1 (:visible-count summary)))
         (is (= 1 (:hidden-count summary)))))
 
     (testing "query skills by source via EQL"
-      (let [result  (session-core/query-in ctx [:psi.skill/by-source])
+      (let [result  (session-core/query-in ctx session-id [:psi.skill/by-source])
             grouped (:psi.skill/by-source result)]
         (is (= 1 (count (:user grouped))))
         (is (= 1 (count (:project grouped))))))))
@@ -543,12 +544,14 @@
                      :disable-model-invocation false}]
         ctx     (session-core/create-context
                  {:session-defaults {:skills all-skills}})
-        _       (session-core/new-session-in! ctx nil {})
+        sd      (session-core/new-session-in! ctx nil {})
         env     (pci/register resolvers/all-resolvers)
-        result  (p.eql/process env
-                               {:psi/agent-session-ctx ctx
-                               :psi.skill/name "alpha"}
-                              [:psi.skill/detail])
+        result  (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
+                  (p.eql/process env
+                                 {:psi/agent-session-ctx ctx
+                                  :psi.agent-session/session-id (:session-id sd)
+                                  :psi.skill/name "alpha"}
+                                [:psi.skill/detail]))
         detail (:psi.skill/detail result)]
 
     (testing "detail includes enriched fields"
@@ -557,10 +560,12 @@
       (is (true? (:is-available-to-model detail))))
 
     (testing "detail for unknown skill is nil"
-      (let [r (p.eql/process env
-                             {:psi/agent-session-ctx ctx
-                              :psi.skill/name "unknown"}
-                             [:psi.skill/detail])]
+      (let [r (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
+                (p.eql/process env
+                               {:psi/agent-session-ctx ctx
+                                :psi.agent-session/session-id (:session-id sd)
+                                :psi.skill/name "unknown"}
+                               [:psi.skill/detail]))]
         (is (nil? (:psi.skill/detail r)))))))
 
 ;; ============================================================
@@ -571,8 +576,8 @@
   (testing "system prompt stored in session data is queryable"
     (let [ctx     (session-core/create-context
                    {:session-defaults {:system-prompt "Test system prompt with skills"}})
-          _       (session-core/new-session-in! ctx nil {})
-          result  (session-core/query-in ctx [:psi.agent-session/system-prompt])]
+          sd      (session-core/new-session-in! ctx nil {})
+          result  (session-core/query-in ctx (:session-id sd) [:psi.agent-session/system-prompt])]
       (is (= "Test system prompt with skills"
              (:psi.agent-session/system-prompt result))))))
 

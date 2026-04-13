@@ -693,7 +693,7 @@
                           {:origin :core})
       (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-resolve-1"))))
       ;; Querying background-jobs should reconcile and expose terminal status.
-      (let [resp (session/query-in ctx [:psi.agent-session/background-jobs])
+      (let [resp (session/query-in ctx session-id [:psi.agent-session/background-jobs])
             jobs (:psi.agent-session/background-jobs resp)
             job  (first (filter #(= "job-resolve-1" (:psi.background-job/id %)) jobs))]
         (is (= :completed (:psi.background-job/status job))))

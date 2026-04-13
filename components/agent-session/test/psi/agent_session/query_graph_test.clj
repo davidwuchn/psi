@@ -46,10 +46,13 @@
     (let [[session-ctx _] (create-session-context)
           qctx            (query/create-query-context)]
       (session/register-resolvers-in! qctx)
-      (let [result (query/query-in qctx
-                                   {:psi/agent-session-ctx session-ctx}
-                                   [:psi.agent-session/session-id
-                                    :psi.agent-session/phase])]
+      (let [session-id (->> (ss/list-context-sessions-in session-ctx) first :session-id)
+            result (binding [psi.agent-session.resolvers.support/*session-id* session-id]
+                     (query/query-in qctx
+                                     {:psi/agent-session-ctx session-ctx
+                                      :psi.agent-session/session-id session-id}
+                                     [:psi.agent-session/session-id
+                                      :psi.agent-session/phase]))]
         (is (string? (:psi.agent-session/session-id result)))
         (is (= :idle (:psi.agent-session/phase result)))))))
 
@@ -121,7 +124,7 @@
     (is (contains? (query/mutation-syms-in qctx) 'psi.extension/set-rpc-trace))
     (is (= {:psi.agent-session/rpc-trace-enabled false
             :psi.agent-session/rpc-trace-file nil}
-           (session/query-in ctx [:psi.agent-session/rpc-trace-enabled
+           (session/query-in ctx session-id [:psi.agent-session/rpc-trace-enabled
                                   :psi.agent-session/rpc-trace-file])))
 
     (let [r1 (mutate 'psi.extension/set-rpc-trace
@@ -180,7 +183,8 @@
                                    (ele/final {:id :done}))
           mutate (fn [op params]
                    (get (query/query-in qctx
-                                        {:psi/agent-session-ctx ctx}
+                                        {:psi/agent-session-ctx ctx
+                                         :psi.agent-session/session-id session-id}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
                                                     (not (contains? params :session-id))
                                                     (assoc :session-id session-id)))])
@@ -236,12 +240,14 @@
                                                                                      :data {:result (get-in data [:_event :data :result])}}])})))
                                    (ele/final {:id :done}))
           mutate (fn [op params]
-                   (get (query/query-in qctx
-                                        {:psi/agent-session-ctx ctx}
-                                        [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                                                    (not (contains? params :session-id))
-                                                    (assoc :session-id session-id)))])
-                        op))]
+                   (let [ctx* (assoc ctx :psi.agent-session/session-id session-id)]
+                     (get (query/query-in qctx
+                                          {:psi/agent-session-ctx ctx*
+                                           :psi.agent-session/session-id session-id}
+                                          [(list op (cond-> (assoc params :psi/agent-session-ctx ctx*)
+                                                      (not (contains? params :session-id))
+                                                      (assoc :session-id session-id)))])
+                          op)))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
 
@@ -377,7 +383,7 @@
                              :track-background-job? true
                              :input {:tool-call-id "tc-slice-1"}})
             _       (bg-rt/reconcile-workflow-background-jobs-in! ctx)
-            resp    (session/query-in ctx
+            resp    (session/query-in ctx session-id
                                       [{:psi.extension/workflows
                                         [:psi.extension/path
                                          :psi.extension.workflow/id

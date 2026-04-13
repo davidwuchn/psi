@@ -179,7 +179,7 @@
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)
                     runtime/resolve-api-key-in (fn [_ctx _session-id _model] nil)
                     prompt-runtime/execute-prepared-request!
-                    (fn [_ai-ctx _ctx session-id _agent-ctx prepared _pq]
+                    (fn [_ai-ctx _ctx session-id prepared _pq]
                       (reset! lifecycle-used? true)
                       {:execution-result/turn-id (:prepared-request/id prepared)
                        :execution-result/session-id session-id

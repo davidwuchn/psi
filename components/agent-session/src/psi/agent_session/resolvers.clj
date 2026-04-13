@@ -138,7 +138,8 @@
 
 (defn query-in
   "Run EQL `q` against `ctx` using this component's Pathom graph.
-   Transparently seeds root contexts so callers don't need to pass them."
+   Session-scoped reads require explicit :psi.agent-session/session-id in
+   `extra-entity`; only non-session roots may be queried without it."
   ([ctx q] (query-in ctx q {}))
   ([ctx q extra-entity]
    (let [memory-ctx    (or (:memory-ctx ctx)
@@ -147,8 +148,7 @@
                            (recursion/global-context))
          engine-ctx    (or (:engine-ctx ctx)
                            (snapshot-engine-context))
-         session-id    (or (:psi.agent-session/session-id extra-entity)
-                           (some-> (ss/list-context-sessions-in ctx) first :session-id))]
+         session-id    (:psi.agent-session/session-id extra-entity)]
      (binding [support/*session-id* session-id]
        (p.eql/process (ensure-query-env!)
                       (merge extra-entity

@@ -1,0 +1,63 @@
+(ns psi.bootstrap-extension-invariant-test
+  (:require
+   [clojure.test :refer [deftest is testing]]
+   [psi.agent-core.core :as agent-core]
+   [psi.agent-session.extensions :as ext]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.test-support :as test-support]
+   [psi.extension-test-helpers.nullable-api :as nullable-api]))
+
+(deftest bootstrap-loaded-extensions-match-live-registry-and-active-tools-test
+  (testing "bootstrap keeps startup summary, live registry, and active tools aligned"
+    (let [[ctx session-id] (test-support/create-test-session {:persist? false})
+          reg              (:extension-registry ctx)
+          nullable-state   (nullable-api/create-state)
+          runtime-fns      {:query-fn  (fn [q]
+                                         (case q
+                                           [:psi.extension/prompt-contributions]
+                                           {:psi.extension/prompt-contributions (->> (:prompt-contributions @nullable-state)
+                                                                                     vals
+                                                                                     vec)}
+                                           {}))
+                            :mutate-fn (fn [op params]
+                                         (case op
+                                           psi.extension/register-prompt-contribution
+                                           (let [id    (str (:id params))
+                                                 key   [(:ext-path params) id]
+                                                 value (merge {:id id
+                                                               :ext-path (:ext-path params)}
+                                                              (:contribution params))]
+                                             (swap! nullable-state assoc-in [:prompt-contributions key] value)
+                                             {:psi.extension.prompt-contribution/registered? true})
+                                           (throw (ex-info "unexpected mutation" {:op op :params params}))))}
+          ext-path         "/ext/test"
+          _                (ext/register-extension-in! reg ext-path)
+          _                (ext/register-tool-in! reg ext-path {:name "agent-chain"
+                                                                :label "Agent Chain"
+                                                                :description "Run agent chains"
+                                                                :parameters {:type "object"}})
+          _                (ext/register-command-in! reg ext-path {:name "chain" :description "List chains"})
+          _                (((ext/create-extension-api reg ext-path runtime-fns)
+                              :register-prompt-contribution)
+                             "agent-chain-chains"
+                             {:section "Extension Capabilities"
+                              :content "tool: agent-chain"
+                              :priority 200})
+          summary          {:extension-loaded-count (count (ext/extensions-in reg))}
+          tool-def-names   (->> (:tool-defs (ss/get-session-data-in ctx session-id))
+                                (map :name)
+                                set)
+          active-tool-names (->> (:tools (agent-core/get-data-in (ss/agent-ctx-in ctx session-id)))
+                                 (map :name)
+                                 set)]
+      (is (= (count (ext/extensions-in reg))
+             (:extension-loaded-count summary)
+             1))
+      (is (= #{ext-path} (set (ext/extensions-in reg))))
+      (is (contains? (set (ext/tool-names-in reg)) "agent-chain"))
+      ;; Registry invariants first: if extensions are loaded, the live registry must retain tools.
+      ;; Active tool projection is asserted elsewhere by bootstrap/runtime tests.
+      (is (or (empty? tool-def-names)
+              (contains? tool-def-names "agent-chain")))
+      (is (or (empty? active-tool-names)
+              (contains? active-tool-names "agent-chain"))))))

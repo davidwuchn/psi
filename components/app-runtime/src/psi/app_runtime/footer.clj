@@ -26,19 +26,11 @@
    :psi.ui/statuses])
 
 (defn footer-data
-  ([ctx]
-   (try
-     (or (session/query-in ctx footer-query) {})
-     (catch Throwable _
-       {})))
-  ([ctx session-id]
-   (try
-     (or (if session-id
-           (session/query-in ctx session-id footer-query)
-           (session/query-in ctx footer-query))
-         {})
-     (catch Throwable _
-       {}))))
+  [ctx session-id]
+  (try
+    (or (session/query-in ctx session-id footer-query) {})
+    (catch Throwable _
+      {})))
 
 (defn- format-token-count
   [n]
@@ -220,9 +212,6 @@
                      :status-line (when (seq status-line) status-line)}})))
 
 (defn footer-model
-  ([ctx]
-   (footer-model-from-data (footer-data ctx)))
-  ([ctx session-id]
-   (footer-model-from-data (footer-data ctx session-id)
-                           {:cwd (when session-id
-                                   (ss/effective-cwd-in ctx session-id))})))
+  [ctx session-id]
+  (footer-model-from-data (footer-data ctx session-id)
+                          {:cwd (ss/effective-cwd-in ctx session-id)}))

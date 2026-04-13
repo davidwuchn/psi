@@ -164,12 +164,9 @@
           :model-text  (get-in model [:footer/model :text])}))
 
 (defn footer-updated-payload
-  ([ctx]
-   (let [model (footer/footer-model ctx)]
-     (footer-event-payload model)))
-  ([ctx session-id]
-   (let [model (footer/footer-model ctx session-id)]
-     (footer-event-payload model))))
+  [ctx session-id]
+  (let [model (footer/footer-model ctx session-id)]
+    (footer-event-payload model)))
 
 (defn progress-event->rpc-event
   [progress-event]

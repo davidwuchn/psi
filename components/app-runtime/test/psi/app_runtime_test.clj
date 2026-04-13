@@ -55,13 +55,6 @@
       (is (str/includes? error "OPENAI_API_KEY"))
       (is (str/includes? error "anthropic")))))
 
-(defn- active-session-id
-  [ctx]
-  (or (->> (ss/list-context-sessions-in ctx)
-           (map :session-id)
-           first)
-      (->> (keys (ss/get-sessions-map-in ctx))
-           first)))
 
 (defn- with-main-bootstrap-stubs
   [f]
@@ -109,7 +102,7 @@
                                                      nil)))]
             (app-runtime/run-session :ignored)
             (let [ctx        (:ctx @app-runtime/session-state)
-                  session-id (active-session-id ctx)
+                  session-id (-> @app-runtime/session-state :ctx ss/list-context-sessions-in first :session-id)
                   sd         (ss/get-session-data-in ctx session-id)]
               (is (some? ctx))
               (is (string? (:session-file sd)))
@@ -130,7 +123,7 @@
                                                      nil)))]
             (app-runtime/run-session :ignored)
             (let [ctx        (:ctx @app-runtime/session-state)
-                  session-id (active-session-id ctx)
+                  session-id (-> @app-runtime/session-state :ctx ss/list-context-sessions-in first :session-id)
                   msg-texts  (->> (persist/all-entries-in ctx session-id)
                                   (filter #(= :message (:kind %)))
                                   (map #(get-in % [:data :message :content 0 :text]))
@@ -153,8 +146,9 @@
             (is (string? (:current-session-file @captured)))
             (is (fn? (:dispatch-fn @captured)))
             (is (fn? (:on-interrupt-fn! @captured)))
-            (let [ctx (:ctx @app-runtime/session-state)]
-              (is (= :tui (:ui-type (ss/get-session-data-in ctx (active-session-id ctx)))))))))
+            (let [ctx (:ctx @app-runtime/session-state)
+                  session-id (-> @app-runtime/session-state :ctx ss/list-context-sessions-in first :session-id)]
+              (is (= :tui (:ui-type (ss/get-session-data-in ctx session-id))))))))
       (finally
         (reset! app-runtime/session-state orig-state)))))
 
@@ -168,7 +162,7 @@
                                   :ok)]
             (is (= :ok (app-runtime/start-tui-runtime! mock-tui-start! :ignored {} {})))
             (let [ctx        (:ctx @app-runtime/session-state)
-                  session-id (active-session-id ctx)
+                  session-id (-> @app-runtime/session-state :ctx ss/list-context-sessions-in first :session-id)
                   msg-texts  (->> (persist/all-entries-in ctx session-id)
                                   (filter #(= :message (:kind %)))
                                   (map #(get-in % [:data :message :content 0 :text]))
@@ -203,7 +197,7 @@
                                                      nil)))]
             (app-runtime/run-session :ignored)
             (let [ctx        (:ctx @app-runtime/session-state)
-                  session-id (active-session-id ctx)
+                  session-id (-> @app-runtime/session-state :ctx ss/list-context-sessions-in first :session-id)
                   entries    (dispatch/event-log-entries)
                   roles      (->> (persist/all-entries-in ctx session-id)
                                   (filter #(= :message (:kind %)))
@@ -244,7 +238,7 @@
                               (.poll queue 2000 java.util.concurrent.TimeUnit/MILLISECONDS)))
                           :ignored {} {})
                   ctx     (:ctx @app-runtime/session-state)
-                  sid     (active-session-id ctx)
+                  sid     (-> @app-runtime/session-state :ctx ss/list-context-sessions-in first :session-id)
                   entries (dispatch/event-log-entries)
                   roles   (->> (persist/all-entries-in ctx sid)
                                (filter #(= :message (:kind %)))
@@ -384,7 +378,7 @@
                           :name "Test Model"
                           :supports-reasoning false}
                          {})
-          session-id (active-session-id ctx)
+          session-id (-> (ss/list-context-sessions-in ctx) first :session-id)
           sd         (ss/get-session-data-in ctx session-id)
           sessions   (ss/get-sessions-map-in ctx)]
       (is (= 1 (count sessions)))
@@ -438,7 +432,7 @@
                           :name "Test Model"
                           :supports-reasoning false}
                          {})
-          sid    (active-session-id ctx)
+          sid    (-> (ss/list-context-sessions-in ctx) first :session-id)
           prompt (:psi.agent-session/system-prompt
                   (session/query-in ctx sid [:psi.agent-session/system-prompt]))]
       ;; Lambda mode is default — graph capabilities appear after lambda graph discovery
@@ -576,7 +570,7 @@
                             :name "Claude Sonnet 4.6"
                             :supports-reasoning true}
                            {:cwd cwd})
-            session-id      (active-session-id ctx)
+            session-id      (-> (ss/list-context-sessions-in ctx) first :session-id)
             sd              (ss/get-session-data-in ctx session-id)]
         (is (= "openai" (get-in sd [:model :provider])))
         (is (= "gpt-5.3-codex" (get-in sd [:model :id])))
@@ -607,7 +601,7 @@
                             :name "Claude Sonnet 4.6"
                             :supports-reasoning false}
                            {:cwd cwd})
-            session-id      (active-session-id ctx)
+            session-id      (-> (ss/list-context-sessions-in ctx) first :session-id)
             sd              (ss/get-session-data-in ctx session-id)]
         (is (= "anthropic" (get-in sd [:model :provider])))
         (is (= "claude-sonnet-4-6" (get-in sd [:model :id])))

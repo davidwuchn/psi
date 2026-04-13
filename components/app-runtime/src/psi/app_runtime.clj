@@ -208,10 +208,11 @@ Available: " (str/join ", " (map name (keys models/all-models))))
     (output/print-assistant-message assistant-message)))
 
 (defn- graph-capabilities-in
-  "Best-effort read of current capability summaries from the live graph."
-  [ctx]
+  "Best-effort read of current capability summaries from the live graph.
+   Requires explicit session-id for session-scoped query resolution."
+  [ctx session-id]
   (try
-    (or (:psi.graph/capabilities (session/query-in ctx [:psi.graph/capabilities]))
+    (or (:psi.graph/capabilities (session/query-in ctx session-id [:psi.graph/capabilities]))
         [])
     (catch Exception e
       (timbre/warn e "Unable to query :psi.graph/capabilities for system prompt enrichment")
@@ -355,7 +356,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                             :skills                 skills
                             :extension-paths        ext-paths})
          _                (bootstrap/register-all-domains!)
-         graph-caps       (graph-capabilities-in ctx)
+         graph-caps       (graph-capabilities-in ctx session-id)
          build-opts       (assoc base-prompt-opts :graph-capabilities graph-caps)
          system-prompt    (sys-prompt/build-system-prompt build-opts)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt system-prompt} {:origin :core})

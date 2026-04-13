@@ -253,7 +253,7 @@
 
 (defn- memory-ready?
   [ctx]
-  (= :ready (:psi.memory/status (session/query-in ctx [:psi.memory/status]))))
+  (= :ready (:psi.memory/status (session/query-in ctx [:psi.memory/status] {}))))
 
 (defn- remember-provenance
   [ctx session-id]

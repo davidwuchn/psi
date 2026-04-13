@@ -24,7 +24,7 @@
                      :cwd "/tmp"
                      :transport :stdio}
               :ext-path "/ext/lsp.clj"})
-          result (session/query-in ctx [:psi.service/count
+          result (session/query-in ctx session-id [:psi.service/count
                                         :psi.service/keys
                                         {:psi.service/services
                                          [:psi.service/key
@@ -69,7 +69,7 @@
                       :effects []
                       :enrichments []}
         :worktree-path "/repo"})
-      (let [result (session/query-in ctx [:psi.post-tool-processor/count
+      (let [result (session/query-in ctx session-id [:psi.post-tool-processor/count
                                           {:psi.post-tool-processors
                                            [:psi.post-tool-processor/name
                                             :psi.post-tool-processor/ext-path

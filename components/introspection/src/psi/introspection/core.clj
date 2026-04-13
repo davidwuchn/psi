@@ -46,6 +46,8 @@
    [psi.query.core :as query]
    [psi.query.registry :as registry]
    [psi.memory.core :as memory]
+   [psi.agent-session.resolvers.support :as agent-session-support]
+   [psi.agent-session.session-state :as session-state]
    [psi.system-bootstrap.core :as bootstrap]))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
@@ -228,12 +230,18 @@
 
 (defn query-agent-session-in
   "Run EQL query `q` over the live graph using `ctx`.
-   Requires ctx to have been created with an :agent-session-ctx option.
-   Also seeds :psi/memory-ctx so :psi.memory/* attrs are queryable in-session."
+   Requires ctx to have been created with an :agent-session-ctx option and a
+   live session. Also seeds :psi/memory-ctx so :psi.memory/* attrs are queryable
+   in-session."
   [ctx q]
   (let [{:keys [agent-session-ctx memory-ctx query-ctx]} ctx]
     (when-not agent-session-ctx
       (throw (ex-info "No :agent-session-ctx in introspection context" {})))
-    (query/query-in query-ctx {:psi/agent-session-ctx agent-session-ctx
-                               :psi/memory-ctx memory-ctx}
-                    q)))
+    (let [session-id (some-> (session-state/list-context-sessions-in agent-session-ctx)
+                             first
+                             :session-id)]
+      (binding [agent-session-support/*session-id* session-id]
+        (query/query-in query-ctx {:psi/agent-session-ctx agent-session-ctx
+                                   :psi.agent-session/session-id session-id
+                                   :psi/memory-ctx memory-ctx}
+                        q)))))

@@ -15,6 +15,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]))
 
 (def ^:private shared-ctx
@@ -23,7 +24,10 @@
 (defn- q
   "Run EQL query against a shared session context."
   [eql]
-  (session/query-in @shared-ctx eql))
+  (let [session-id (some-> (ss/list-context-sessions-in @shared-ctx)
+                           first
+                           :session-id)]
+    (session/query-in @shared-ctx session-id eql)))
 
 (defn- join-attr?
   [x]

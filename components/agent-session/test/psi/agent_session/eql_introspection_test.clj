@@ -30,12 +30,12 @@
 (deftest eql-introspection-test
   (testing "query-in resolves :psi.agent-session/session-id"
     (let [[ctx session-id] (create-session-context)
-          result (session/query-in ctx [:psi.agent-session/session-id])]
+          result (session/query-in ctx session-id [:psi.agent-session/session-id])]
       (is (string? (:psi.agent-session/session-id result)))))
 
   (testing "query-in resolves phase"
     (let [[ctx session-id] (create-session-context)
-          result (session/query-in ctx [:psi.agent-session/phase
+          result (session/query-in ctx session-id [:psi.agent-session/phase
                                         :psi.agent-session/is-idle])]
       (is (= :idle (:psi.agent-session/phase result)))
       (is (true? (:psi.agent-session/is-idle result)))))
@@ -44,14 +44,14 @@
     (let [[ctx session-id] (create-session-context)
           model {:provider "x" :id "y" :reasoning false}]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
-      (let [result (session/query-in ctx [:psi.agent-session/model])]
+      (let [result (session/query-in ctx session-id [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
 
   (testing "set-system-prompt-in! updates session + agent-core prompt state"
     (let [[ctx session-id] (create-session-context)
           prompt     "graph-aware system prompt"
           _          (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt prompt} {:origin :core})
-          result     (session/query-in ctx [:psi.agent-session/system-prompt])]
+          result     (session/query-in ctx session-id [:psi.agent-session/system-prompt])]
       (is (= prompt (:psi.agent-session/system-prompt result)))
       (is (= prompt (:system-prompt (agent-core/get-data-in (ss/agent-ctx-in ctx session-id)))))))
 
@@ -74,7 +74,7 @@
 
   (testing "query-in resolves graph capabilities via agent-session bridge"
     (let [[ctx session-id] (create-session-context)
-          result (session/query-in ctx [:psi.graph/capabilities])]
+          result (session/query-in ctx session-id [:psi.graph/capabilities])]
       (is (vector? (:psi.graph/capabilities result)))
       (is (seq (:psi.graph/capabilities result)))
       (is (some #(= :agent-session (:domain %))
@@ -83,7 +83,7 @@
   (testing "query-in resolves developer prompt"
     (let [[ctx session-id] (create-session-context {:session-defaults {:developer-prompt "dev layer"
                                                                       :developer-prompt-source :explicit}})
-          result (session/query-in ctx [:psi.agent-session/developer-prompt
+          result (session/query-in ctx session-id [:psi.agent-session/developer-prompt
                                         :psi.agent-session/developer-prompt-source
                                         :psi.agent-session/prompt-layers])]
       (is (= "dev layer" (:psi.agent-session/developer-prompt result)))
@@ -110,7 +110,7 @@
                                                                   :stop-reason :stop
                                                                   :tool-call-count 1
                                                                   :recorded-at recorded-at})
-      (let [result (session/query-in ctx [:psi.agent-session/last-prepared-request-summary
+      (let [result (session/query-in ctx session-id [:psi.agent-session/last-prepared-request-summary
                                           :psi.agent-session/last-prepared-turn-id
                                           :psi.agent-session/last-prepared-message-count
                                           :psi.agent-session/last-prepared-tool-count
@@ -148,13 +148,13 @@
   (testing "query-in resolves context fraction"
     (let [[ctx session-id] (create-session-context)]
       (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 4000 :window 10000} {:origin :core})
-      (let [result (session/query-in ctx [:psi.agent-session/context-fraction])]
+      (let [result (session/query-in ctx session-id [:psi.agent-session/context-fraction])]
         (is (= 0.4 (:psi.agent-session/context-fraction result))))))
 
   (testing "query-in resolves extension-summary"
     (let [[ctx session-id] (create-session-context)]
       (ext/register-extension-in! (:extension-registry ctx) "/ext/a")
-      (let [result (session/query-in ctx [:psi.agent-session/extension-summary])]
+      (let [result (session/query-in ctx session-id [:psi.agent-session/extension-summary])]
         (is (= 1 (get-in result [:psi.agent-session/extension-summary :extension-count]))))))
 
   (testing "query-in resolves prompt contribution attrs"
@@ -163,7 +163,7 @@
                           {:session-id session-id :ext-path "/ext/a" :id "c1"
                            :contribution {:content "Hint" :priority 10 :enabled true}}
                           {:origin :core})
-      (let [result (session/query-in ctx [:psi.agent-session/base-system-prompt
+      (let [result (session/query-in ctx session-id [:psi.agent-session/base-system-prompt
                                           :psi.agent-session/prompt-contributions
                                           :psi.extension/prompt-contribution-count])]
         (is (= "" (:psi.agent-session/base-system-prompt result)))
@@ -172,7 +172,7 @@
 
   (testing "query-in resolves stats"
     (let [[ctx session-id] (create-session-context)
-          result (session/query-in ctx [:psi.agent-session/stats])]
+          result (session/query-in ctx session-id [:psi.agent-session/stats])]
       (is (map? (:psi.agent-session/stats result)))
       (is (contains? (:psi.agent-session/stats result) :session-id))))
 
@@ -184,12 +184,12 @@
                     :psi.agent-session/executed-tool-count
                     :psi.agent-session/start-time
                     :psi.agent-session/current-time]]
-        (let [result (session/query-in ctx [attr])]
+        (let [result (session/query-in ctx session-id [attr])]
           (is (contains? result attr))
           (is (not (contains? result :com.wsscode.pathom3.connect.runner/attribute-errors))))))
 
     (let [[ctx session-id] (create-session-context)
-          result (session/query-in ctx [:psi.agent-session/messages-count
+          result (session/query-in ctx session-id [:psi.agent-session/messages-count
                                         :psi.agent-session/ai-call-count
                                         :psi.agent-session/tool-call-count
                                         :psi.agent-session/executed-tool-count
@@ -228,7 +228,7 @@
                                   into
                                   [(persist/message-entry assistant-1)
                                    (persist/message-entry assistant-2)])
-      (let [result (session/query-in ctx [:psi.agent-session/usage-input
+      (let [result (session/query-in ctx session-id [:psi.agent-session/usage-input
                                           :psi.agent-session/usage-output
                                           :psi.agent-session/usage-cache-read
                                           :psi.agent-session/usage-cache-write
@@ -244,7 +244,7 @@
     (let [[ctx session-id] (create-session-context)
           model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
-      (let [result (session/query-in ctx [:psi.agent-session/model-provider
+      (let [result (session/query-in ctx session-id [:psi.agent-session/model-provider
                                           :psi.agent-session/model-id
                                           :psi.agent-session/model-reasoning
                                           :psi.agent-session/effective-reasoning-effort
@@ -261,7 +261,7 @@
     (let [[ctx session-id] (create-session-context)
           tool {:name "foo" :label "Foo" :description "Bar" :parameters "{}"}]
       (agent-core/set-tools-in! (ss/agent-ctx-in ctx session-id) [tool])
-      (let [summary (session/query-in ctx [:psi.tool/count :psi.tool/names :psi.tool/summary])]
+      (let [summary (session/query-in ctx session-id [:psi.tool/count :psi.tool/names :psi.tool/summary])]
         (is (= 1 (:psi.tool/count summary)))
         (is (= ["foo"] (:psi.tool/names summary)))
         (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name]))))))
@@ -278,7 +278,7 @@
                                                                               :id "gpt-5.3-codex"
                                                                               :reasoning true}
                                                                       :thinking-level :high}})
-          result (session/query-in ctx [:psi.agent-session/model-reasoning
+          result (session/query-in ctx session-id [:psi.agent-session/model-reasoning
                                         :psi.agent-session/effective-reasoning-effort])]
       (is (true? (:psi.agent-session/model-reasoning result)))
       (is (= "high" (:psi.agent-session/effective-reasoning-effort result))))))
@@ -288,7 +288,7 @@
     (let [[ctx session-id] (create-session-context {:session-defaults
                                                     {:tool-output-overrides
                                                      {"bash" {:max-lines 77 :max-bytes 2048}}}})
-          result (session/query-in ctx [:psi.tool-output/default-max-lines
+          result (session/query-in ctx session-id [:psi.tool-output/default-max-lines
                                         :psi.tool-output/default-max-bytes
                                         :psi.tool-output/overrides])]
       (is (= 1000 (:psi.tool-output/default-max-lines result)))
@@ -311,7 +311,7 @@
                                 :aggregates {:total-context-bytes 64
                                              :by-tool {"bash" 64}
                                              :limit-hits-by-tool {"bash" 1}}})
-      (let [result (session/query-in ctx [{:psi.tool-output/calls
+      (let [result (session/query-in ctx session-id [{:psi.tool-output/calls
                                            [:psi.tool-output.call/tool-call-id
                                             :psi.tool-output.call/tool-name
                                             :psi.tool-output.call/limit-hit?
@@ -402,7 +402,7 @@
       ;; Only call-1 has a committed toolResult; call-2 is unmatched.
       (inject-messages! ctx session-id [(make-tool-result-msg "call-1" "bash" "ok")])
 
-      (let [r        (session/query-in ctx
+      (let [r        (session/query-in ctx session-id
                                        [:psi.agent-session/tool-call-attempt-count
                                         :psi.agent-session/tool-call-attempt-unmatched-count
                                         {:psi.agent-session/tool-call-attempts
@@ -461,7 +461,7 @@
                                     :tool-id "call-life-2"
                                     :tool-name "read"
                                     :timestamp t1}])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [:psi.agent-session/tool-call-count
                                  :psi.agent-session/executed-tool-count
                                  :psi.agent-session/tool-lifecycle-summary-count])]
@@ -492,7 +492,7 @@
                                     :result-text "ok"
                                     :is-error false
                                     :timestamp t2}])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [:psi.agent-session/tool-lifecycle-event-count
                                  :psi.agent-session/tool-lifecycle-summary-count
                                  {:psi.agent-session/tool-lifecycle-events
@@ -538,17 +538,19 @@
 
         (let [qctx (query/create-query-context)
               _    (session/register-resolvers-in! qctx false)
-              lookup (query/query-in qctx {:psi/agent-session-ctx ctx
-                                           :psi.agent-session/lookup-tool-id "call-1"}
-                                     [{:psi.agent-session/tool-lifecycle-summary-for-tool-id
-                                       [:psi.tool-lifecycle.summary/tool-id
-                                        :psi.tool-lifecycle.summary/tool-name
-                                        :psi.tool-lifecycle.summary/event-count
-                                        :psi.tool-lifecycle.summary/last-event-kind
-                                        :psi.tool-lifecycle.summary/completed?
-                                        :psi.tool-lifecycle.summary/result-text
-                                        :psi.tool-lifecycle.summary/arguments
-                                        :psi.tool-lifecycle.summary/parsed-args]}])
+              lookup (binding [psi.agent-session.resolvers.support/*session-id* session-id]
+                       (query/query-in qctx {:psi/agent-session-ctx ctx
+                                             :psi.agent-session/session-id session-id
+                                             :psi.agent-session/lookup-tool-id "call-1"}
+                                       [{:psi.agent-session/tool-lifecycle-summary-for-tool-id
+                                         [:psi.tool-lifecycle.summary/tool-id
+                                          :psi.tool-lifecycle.summary/tool-name
+                                          :psi.tool-lifecycle.summary/event-count
+                                          :psi.tool-lifecycle.summary/last-event-kind
+                                          :psi.tool-lifecycle.summary/completed?
+                                          :psi.tool-lifecycle.summary/result-text
+                                          :psi.tool-lifecycle.summary/arguments
+                                          :psi.tool-lifecycle.summary/parsed-args]}]))
               looked-up (:psi.agent-session/tool-lifecycle-summary-for-tool-id lookup)]
           (is (= "call-1" (:psi.tool-lifecycle.summary/tool-id looked-up)))
           (is (= "read" (:psi.tool-lifecycle.summary/tool-name looked-up)))
@@ -602,7 +604,7 @@
                                            :error-message "Error (status 400) [request-id req_ant_1]"
                                            :http-status 400}})
 
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [:psi.agent-session/provider-request-count
                                  :psi.agent-session/provider-reply-count
                                  {:psi.agent-session/provider-last-request
@@ -700,12 +702,14 @@
                                              :error-message "Error (status 400) [request-id req_lookup]"
                                              :http-status 400}})
 
-        (let [req ((resolve 'psi.agent-session.resolvers.telemetry/provider-request-by-turn-id)
-                   {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
-                    :psi/agent-session-ctx ctx})
-              reply ((resolve 'psi.agent-session.resolvers.telemetry/provider-reply-by-turn-id)
+        (let [req (binding [psi.agent-session.resolvers.support/*session-id* session-id]
+                    ((resolve 'psi.agent-session.resolvers.telemetry/provider-request-by-turn-id)
                      {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
-                      :psi/agent-session-ctx ctx})]
+                      :psi/agent-session-ctx ctx}))
+              reply (binding [psi.agent-session.resolvers.support/*session-id* session-id]
+                      ((resolve 'psi.agent-session.resolvers.telemetry/provider-reply-by-turn-id)
+                       {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                        :psi/agent-session-ctx ctx}))]
           (is (= :anthropic
                  (get-in req [:psi.agent-session/provider-request-for-turn-id
                               :psi.provider-request/provider])))
@@ -730,7 +734,7 @@
     (let [[ctx session-id] (create-session-context)]
       (inject-messages! ctx session-id [(make-user-msg "hello")
                                         (make-assistant-msg "world")])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/request-shape
                                   [:psi.request-shape/message-count
                                    :psi.request-shape/estimated-tokens
@@ -745,14 +749,14 @@
   (testing "headroom decreases as context grows"
     (let [[ctx session-id] (create-session-context)]
       (inject-messages! ctx session-id [(make-user-msg "a")])
-      (let [r1 (session/query-in ctx
+      (let [r1 (session/query-in ctx session-id
                                  [{:psi.agent-session/request-shape
                                    [:psi.request-shape/headroom-tokens]}])
             h1 (-> r1 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]
         ;; Add more messages
         (inject-messages! ctx session-id [(make-assistant-msg (apply str (repeat 1000 "x")))
                                           (make-user-msg "b")])
-        (let [r2 (session/query-in ctx
+        (let [r2 (session/query-in ctx session-id
                                    [{:psi.agent-session/request-shape
                                      [:psi.request-shape/headroom-tokens]}])
               h2 (-> r2 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]

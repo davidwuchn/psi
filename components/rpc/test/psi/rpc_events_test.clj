@@ -14,9 +14,10 @@
   (testing "footer payload mirrors default footer path/stats/status composition"
     (let [home    (System/getProperty "user.home")
           cwd     (str home "/projects/hugoduncan/psi/psi-main")
-          [ctx _] (support/create-session-context {:cwd cwd})
+          [ctx session-id] (support/create-session-context {:cwd cwd})
           payload (with-redefs [session/query-in
-                                (fn [_ctx q]
+                                (fn [_ctx sid q]
+                                  (is (= session-id sid))
                                   (is (= @#'rpc.events/footer-query q))
                                   {:psi.agent-session/cwd cwd
                                    :psi.agent-session/git-branch "master"
@@ -37,7 +38,7 @@
                                    :psi.agent-session/effective-reasoning-effort "high"
                                    :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
                                                      {:extension-id "a" :text "Clojure-LSP\nclojure-lsp"}]})]
-                    (rpc.events/footer-updated-payload ctx))]
+                    (rpc.events/footer-updated-payload ctx session-id))]
       (is (= "~/projects/hugoduncan/psi/psi-main (master) • xhig"
              (:path-line payload)))
       (is (= ["↑172k" "↓17k" "CR5.2M" "CW1.2k" "$1.444" "31.9%/272k (auto)"]
@@ -58,9 +59,10 @@
   (testing "footer payload uses derived display name when explicit session name is absent"
     (let [home    (System/getProperty "user.home")
           cwd     (str home "/projects/hugoduncan/psi/psi-main")
-          [ctx _] (support/create-session-context {:cwd cwd})
+          [ctx session-id] (support/create-session-context {:cwd cwd})
           payload (with-redefs [session/query-in
-                                (fn [_ctx q]
+                                (fn [_ctx sid q]
+                                  (is (= session-id sid))
                                   (is (= @#'rpc.events/footer-query q))
                                   {:psi.agent-session/cwd cwd
                                    :psi.agent-session/git-branch "master"
@@ -80,7 +82,7 @@
                                    :psi.agent-session/thinking-level :high
                                    :psi.agent-session/effective-reasoning-effort "high"
                                    :psi.ui/statuses []})]
-                    (rpc.events/footer-updated-payload ctx))]
+                    (rpc.events/footer-updated-payload ctx session-id))]
       (is (= "~/projects/hugoduncan/psi/psi-main (master) • Investigate failing tests"
              (:path-line payload)))
       (is (= ["?/272k"]
@@ -154,7 +156,7 @@
                                                    :data {:message {:role "assistant"
                                                                     :usage {:input-tokens 111
                                                                             :output-tokens 22}}}})
-          payload          (rpc.events/footer-updated-payload ctx)
+          payload          (rpc.events/footer-updated-payload ctx session-id)
           stats-line       (:stats-line payload)]
       (is (= ["↑111" "↓22" "4.0%/100k"]
              (:usage-parts payload)))

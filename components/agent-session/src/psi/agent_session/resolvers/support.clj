@@ -13,12 +13,13 @@
   nil)
 
 (defn resolver-session-id
-  "Resolve the session-id for resolver/helper execution.
-   Prefers the query-bound explicit session-id, then the first context session.
-   This preserves non-query helper/test behavior while removing ctx targeting."
-  [agent-session-ctx]
+  "Resolve the explicit session-id for resolver/helper execution.
+   Session-scoped reads must provide a session-id via query binding; helpers no
+   longer fall back to inferred ctx ordering or ctx-carried retargeting data."
+  [_agent-session-ctx]
   (or *session-id*
-      (some-> (ss/list-context-sessions-in agent-session-ctx) first :session-id)))
+      (throw (ex-info "Session-scoped query requires explicit :psi.agent-session/session-id"
+                      {:error-code "request/missing-session-id"}))))
 
 (defn session-data
   "Get session data for the resolved session-id."

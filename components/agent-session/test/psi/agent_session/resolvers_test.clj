@@ -37,13 +37,14 @@
 (defn- q
   "Run EQL query against a fresh session context."
   [eql]
-  (let [[ctx _] (test-support/create-test-session)]
-    (session/query-in ctx eql)))
+  (let [[ctx session-id] (test-support/create-test-session)]
+    (session/query-in ctx session-id eql)))
 
 (defn- q-in
   "Run EQL query against explicit session context CTX."
   [ctx eql]
-  (session/query-in ctx eql))
+  (let [session-id (some-> (ss/list-context-sessions-in ctx) first :session-id)]
+    (session/query-in ctx session-id eql)))
 
 (defmacro with-user-dir
   "Temporarily set java user.dir while evaluating body."
@@ -469,15 +470,17 @@
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable
             (regression: extension query-fn uses isolated qctx via register-resolvers-in!)"
-    (let [[ctx _] (create-session-context {:persist? false})
+    (let [[ctx session-id] (create-session-context {:persist? false})
           qctx    (query/create-query-context)
           _      (session/register-resolvers-in! qctx false)
           _      (session/register-mutations-in! qctx mutations/all-mutations true)
-          result (query/query-in qctx {:psi/agent-session-ctx ctx}
-                                 [:git.worktree/list
-                                  :git.worktree/current
-                                  :git.worktree/count
-                                  :git.branch/default-branch])]
+          result (binding [psi.agent-session.resolvers.support/*session-id* session-id]
+                   (query/query-in qctx {:psi/agent-session-ctx ctx
+                                         :psi.agent-session/session-id session-id}
+                                   [:git.worktree/list
+                                    :git.worktree/current
+                                    :git.worktree/count
+                                    :git.branch/default-branch]))]
       (is (contains? result :git.worktree/list)
           "git.worktree/list resolvable via isolated qctx (requires history resolvers)")
       (is (contains? result :git.worktree/current)

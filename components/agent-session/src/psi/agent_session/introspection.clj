@@ -48,8 +48,14 @@
 
 (defn query-in
   "Run EQL `q` against `ctx` through the component's Pathom resolvers.
-   Optional explicit `session-id` and `extra-entity` map are merged into the
-   Pathom query entity."
+   Session-scoped queries require an explicit `session-id`; non-session/global
+   attrs may be queried without one.
+
+   Arity:
+   - (query-in ctx q)
+   - (query-in ctx q extra-entity)
+   - (query-in ctx session-id q)
+   - (query-in ctx session-id q extra-entity)"
   ([ctx q]
    (resolvers/query-in ctx q))
   ([ctx x y]

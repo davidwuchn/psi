@@ -51,7 +51,7 @@
     (let [[ctx session-id] (create-session-context)]
       (inject-messages! ctx session-id [(make-user-msg "hi")
                                         (make-assistant-msg "hello")])
-      (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
+      (let [r (session/query-in ctx session-id [:psi.agent-session/api-error-count])]
         (is (zero? (:psi.agent-session/api-error-count r))))))
 
   (testing "provider reply error is exposed via api-errors"
@@ -73,7 +73,7 @@
                                                   :error {:type "invalid_request_error"
                                                           :message "Error"}
                                                   :request_id "req_ant_123"}}})
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/http-status
                                    :psi.api-error/request-id
@@ -101,7 +101,7 @@
     (let [[ctx session-id] (create-session-context)]
       (inject-messages! ctx session-id [(make-user-msg "hi")
                                         (make-error-msg "clj-http: status 400 {}" 400)])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/message-index
                                    :psi.api-error/http-status
@@ -132,7 +132,7 @@
                                            :headers {"request-id" "req_ant_live"}
                                            :body-text "{\"type\":\"error\",\"request_id\":\"req_ant_live\"}"
                                            :body {:type "error" :request_id "req_ant_live"}}})
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/message-index
                                    :psi.api-error/request-id
@@ -158,7 +158,7 @@
                                         (make-error-msg "error 1" 429)
                                         (make-user-msg "retry")
                                         (make-error-msg "error 2" 500)])
-      (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
+      (let [r (session/query-in ctx session-id [:psi.agent-session/api-error-count])]
         (is (= 2 (:psi.agent-session/api-error-count r)))))))
 
 (deftest api-error-detail-test
@@ -168,7 +168,7 @@
                                         (make-error-msg
                                          "clj-http: status 400 {\"request-id\" \"req_abc123\"}"
                                          400)])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/request-id]}])
             err (first (:psi.agent-session/api-errors r))]
@@ -180,7 +180,7 @@
                                         (make-error-msg
                                          "Error (status 400) [request-id req_011CZ8hy9y3kRrVsNfhmugS1]"
                                          400)])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/request-id]}])
             err (first (:psi.agent-session/api-errors r))]
@@ -192,7 +192,7 @@
                                         (make-assistant-msg "response 1")
                                         (make-user-msg "step 2")
                                         (make-error-msg "boom" 400)])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [{:psi.api-error/surrounding-messages
                                     [:psi.context-message/index
@@ -209,7 +209,7 @@
                                         (make-tool-call-msg "running" "tc1" "bash")
                                         (make-tool-result-msg "tc1" "bash" "done")
                                         (make-error-msg "status 400" 400)])
-      (let [r (session/query-in ctx
+      (let [r (session/query-in ctx session-id
                                 [{:psi.agent-session/api-errors
                                   [{:psi.api-error/request-shape
                                     [:psi.request-shape/message-count
