@@ -7,6 +7,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.mutations :as mutations]
    [psi.agent-session.test-support :as test-support]))
 
 ;; ── Registry isolation ──────────────────────────────────────────────────────
@@ -31,6 +32,13 @@
     (let [reg (ext/create-registry)]
       (ext/register-extension-in! reg "/ext/foo")
       (ext/register-extension-in! reg "/ext/foo")
+      (is (= 1 (ext/extension-count-in reg)))))
+
+  (testing "setting allowed events before registration does not hide extension from registration order"
+    (let [reg (ext/create-registry)]
+      (ext/set-allowed-events-in! reg "/ext/foo" #{:session/ui-notify})
+      (ext/register-extension-in! reg "/ext/foo")
+      (is (= ["/ext/foo"] (ext/extensions-in reg)))
       (is (= 1 (ext/extension-count-in reg))))))
 
 ;; ── Handler registration ─────────────────────────────────────────────────────
@@ -638,6 +646,39 @@
           (is (contains? (ext/flag-names-in reg) "verbose"))
           (is (= true (ext/get-flag-in reg "verbose")))
           (is (= 1 (ext/handler-count-in reg))))
+        (finally
+          (.delete ext-file)
+          (.delete tmp-dir))))))
+
+(deftest add-extension-runtime-keeps-registered-extension-visible-test
+  (testing "add-extension-in! keeps successfully loaded extensions in registration order"
+    (let [[ctx session-id] (test-support/create-test-session {:persist? false
+                                                              :cwd (test-support/temp-cwd)
+                                                              :mutations mutations/all-mutations})
+          reg              (:extension-registry ctx)
+          tmp-dir          (io/file (System/getProperty "java.io.tmpdir")
+                                    (str "psi-ext-runtime-" (System/nanoTime)))
+          ext-file         (io/file tmp-dir "runtime_ext.clj")]
+      (try
+        (.mkdirs tmp-dir)
+        (spit ext-file
+              "(ns psi.test-extensions.runtime-ext)
+
+(defn init [api]
+  ((:register-tool api) {:name \"runtime-tool\"
+                         :label \"Runtime Tool\"
+                         :description \"Runtime-added test tool\"
+                         :parameters {:type \"object\"}}))")
+        (let [result (ext-rt/add-extension-in! ctx session-id (.getAbsolutePath ext-file))]
+          (is (= {:loaded? true
+                  :path (.getAbsolutePath ext-file)
+                  :error nil}
+                 result))
+          (is (= [(.getAbsolutePath ext-file)] (ext/extensions-in reg)))
+          (is (= 1 (ext/extension-count-in reg))
+              (pr-str @(:state reg)))
+          (is (contains? (ext/tool-names-in reg) "runtime-tool")
+              (pr-str @(:state reg))))
         (finally
           (.delete ext-file)
           (.delete tmp-dir))))))

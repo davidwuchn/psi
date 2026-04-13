@@ -37,22 +37,27 @@
 (defn register-extension-in!
   "Register a new extension by path into `reg`.
    Seeds the extension record with explicit default `:allowed-events`.
-   Extensions may narrow or extend these via `set-allowed-events-in!`."
+   Extensions may narrow or extend these via `set-allowed-events-in!`.
+   If an extension map was pre-seeded before formal registration, ensures the
+   path is still present in `:registration-order`."
   [reg path]
   (swap! (:state reg)
          (fn [s]
-           (if (get-in s [:extensions path])
-             s
-             (-> s
-                 (assoc-in [:extensions path]
-                           {:path           path
-                            :handlers       {}
-                            :tools          {}
-                            :commands       {}
-                            :flags          {}
-                            :shortcuts      {}
-                            :allowed-events default-allowed-events})
-                 (update :registration-order conj path)))))
+           (let [existing   (get-in s [:extensions path])
+                 registered? (some #(= path %) (:registration-order s))]
+             (cond->
+              (if existing
+                s
+                (assoc-in s [:extensions path]
+                          {:path           path
+                           :handlers       {}
+                           :tools          {}
+                           :commands       {}
+                           :flags          {}
+                           :shortcuts      {}
+                           :allowed-events default-allowed-events}))
+               (not registered?)
+               (update :registration-order conj path)))))
   reg)
 
 (defn set-allowed-events-in!
