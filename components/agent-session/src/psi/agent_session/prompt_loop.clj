@@ -33,11 +33,11 @@
      :progress-queue — LinkedBlockingQueue for TUI progress events
 
    Returns the final assistant message."
-  ([ai-ctx ctx session-id agent-ctx ai-model]
-   (run-agent-loop! ai-ctx ctx session-id agent-ctx ai-model nil))
-  ([ai-ctx ctx session-id agent-ctx ai-model opts]
+  ([ai-ctx ctx session-id ai-model]
+   (run-agent-loop! ai-ctx ctx session-id ai-model nil))
+  ([ai-ctx ctx session-id ai-model opts]
    (let [result (try
-                  (prompt-turn/run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
+                  (prompt-turn/run-turn-loop! ai-ctx ctx session-id ai-model
                                               (prompt-request/session->request-options
                                                ctx
                                                (session/get-session-data-in ctx session-id)

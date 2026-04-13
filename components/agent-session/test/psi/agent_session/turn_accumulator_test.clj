@@ -101,7 +101,7 @@
                       (consume-fn {:type :thinking-delta :content-index 0 :delta "plan"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model
                                 {:progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
@@ -125,7 +125,7 @@
                       (consume-fn {:type :thinking-end :content-index 0})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)
       (let [td (turn-sc/get-turn-data
                 (ss/get-state-value-in session-ctx
                                        (ss/state-path :turn-ctx session-ctx-id)))]
@@ -148,7 +148,7 @@
                       (consume-fn {:type :thinking-delta :content-index 0 :delta "Now I see the flow"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model
                                 {:progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
@@ -174,7 +174,7 @@
                       (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-2"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model
                                 {:progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
@@ -199,7 +199,7 @@
                        (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-2"})
                        (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx openai-model
+      (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id openai-model
                                 {:progress-queue q})
       (let [events          (loop [acc []]
                               (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
@@ -221,7 +221,7 @@
                       (consume-fn {:type :toolcall-end :content-index 1})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [assistant-message (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
+      (let [assistant-message (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id stub-model nil q)
             events      (loop [acc []]
                           (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                             (recur (conj acc e))
@@ -254,7 +254,7 @@
                       (consume-fn {:type :toolcall-end :content-index 2})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [assistant-message (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
+      (let [assistant-message (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id stub-model nil q)
             events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                        (recur (conj acc e))
@@ -275,7 +275,7 @@
                       (consume-fn {:type :text-end :content-index 0})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [result   (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
+      (let [result   (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)
             turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= "Hello"
@@ -299,7 +299,7 @@
                       (consume-fn {:type :text-delta :delta "Hel\n"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)]
+      (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)]
         (is (= "Hel\n"
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
@@ -317,7 +317,7 @@
                       (consume-fn {:type :text-delta :delta " contents:"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
-      (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)]
+      (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)]
         (is (= "`deps.edn` contents:"
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
@@ -337,7 +337,7 @@
                         (consume-fn {:type :done :reason :stop}))]
       (with-redefs [psi.agent-session.prompt-runtime/do-stream! openai-turn]
         (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-        (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx openai-model)]
+        (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id openai-model)]
           (is (= :stop (:stop-reason result)))
           (is (= "Done"
                  (some #(when (= :text (:type %)) (:text %))
@@ -385,7 +385,7 @@
       (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
         (agent/start-loop-in! agent-ctx [user-msg])
         (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
-        (let [result (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id agent-ctx anthropic-model nil nil)
+        (let [result (#'prompt-turn/stream-turn! nil session-ctx session-ctx-id anthropic-model nil nil)
               msgs   (let [journal (ss/get-state-value-in session-ctx (ss/state-path :journal session-ctx-id))]
                        (->> journal
                             (filter #(= :message (:kind %)))
@@ -424,7 +424,7 @@
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn
                   psi.agent-session.prompt-runtime/llm-stream-idle-timeout-ms 200
                   psi.agent-session.prompt-runtime/llm-stream-wait-poll-ms 20]
-      (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)]
+      (let [result (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)]
         (is (= :stop (:stop-reason result)))))))
 
 (deftest idle-timeout-errors-when-stream-stalls-test
@@ -439,7 +439,7 @@
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn
                   psi.agent-session.prompt-runtime/llm-stream-idle-timeout-ms 120
                   psi.agent-session.prompt-runtime/llm-stream-wait-poll-ms 20]
-      (let [result   (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model)
+      (let [result   (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)
             turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= :error (:stop-reason result)))

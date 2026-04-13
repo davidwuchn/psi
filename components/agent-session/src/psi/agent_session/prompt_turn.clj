@@ -14,7 +14,7 @@
   "Stream one LLM response into agent-core via the per-turn statechart.
    Blocks until the statechart reaches :done or :error.
    Stores turn context in canonical state for nREPL introspection."
-  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
+  [ai-ctx ctx session-id ai-model extra-ai-options progress-queue]
   (:execution-result/assistant-message
    (prompt-runtime/execute-prepared-request-and-journal!
     ai-ctx ctx session-id
@@ -27,14 +27,14 @@
     progress-queue)))
 
 (defn run-turn-loop!
-  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
-  (let [assistant-message (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
+  [ai-ctx ctx session-id ai-model extra-ai-options progress-queue]
+  (let [assistant-message (stream-turn! ai-ctx ctx session-id ai-model
                                         extra-ai-options progress-queue)
         outcome           (prompt-recording/classify-assistant-message assistant-message)]
     (case (:turn/outcome outcome)
       :turn.outcome/tool-use
       (do (tool-batch/run-tool-calls! ctx session-id (:tool-calls outcome) progress-queue)
-          (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
+          (run-turn-loop! ai-ctx ctx session-id ai-model
                           extra-ai-options progress-queue))
 
       assistant-message)))

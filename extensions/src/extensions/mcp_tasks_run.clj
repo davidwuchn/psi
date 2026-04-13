@@ -858,7 +858,6 @@
                      nil
                      step-session-ctx
                      session-id
-                     agent-ctx
                      model
                      (cond-> {:turn-ctx-atom nil}
                        api-key (assoc :api-key api-key)))

@@ -951,13 +951,12 @@
                        :children []
                        :state :unrefined})]
           (is (:ok? result))
-          (is (= 6 (count @captured)))
+          (is (= 5 (count @captured)))
           (is (nil? (nth @captured 0)))
           (is (= fake-session-ctx (nth @captured 1)))
           (is (= fake-session-id (nth @captured 2)))
-          (is (= fake-agent-ctx (nth @captured 3)))
-          (is (= fake-model (nth @captured 4)))
-          (is (= {:turn-ctx-atom nil} (nth @captured 5))))))))
+          (is (= fake-model (nth @captured 3)))
+          (is (= {:turn-ctx-atom nil} (nth @captured 4))))))))
 
 (deftest run-step-agent-resume-session-test
   (testing "run-step-agent reuses the pending asking session on resume"
@@ -1002,10 +1001,9 @@
                        :user-answer "Create two follow-up tasks first."
                        :resume-step-session resume-session})]
           (is (:ok? result))
-          (is (= 6 (count @captured)))
+          (is (= 5 (count @captured)))
           (is (= fake-session-ctx (nth @captured 1)))
           (is (= fake-session-id (nth @captured 2)))
-          (is (= fake-agent-ctx (nth @captured 3)))
-          (is (= fake-model (nth @captured 4)))
-          (is (= {:turn-ctx-atom nil} (nth @captured 5)))
+          (is (= fake-model (nth @captured 3)))
+          (is (= {:turn-ctx-atom nil} (nth @captured 4)))
           (is (= resume-session (:step-session result))))))))
