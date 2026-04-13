@@ -21,14 +21,18 @@
    agent-core context). Falls back to extension registry in that case."
   [ctx session-id tool-name]
   (let [agent-ctx   (ss/agent-ctx-in ctx session-id)
-        from-agent (when agent-ctx
-                     (some #(when (= tool-name (:name %)) %)
-                           (:tools (agent/get-data-in agent-ctx))))
-        from-ext   (when-not from-agent
-                     (when-let [reg (:extension-registry ctx)]
-                       (some #(when (= tool-name (:name %)) %)
-                             (ext/all-tools-in reg))))]
-    (or from-agent from-ext)))
+        from-agent  (when agent-ctx
+                      (some #(when (= tool-name (:name %)) %)
+                            (:tools (agent/get-data-in agent-ctx))))
+        from-ext    (when-let [reg (:extension-registry ctx)]
+                      (some #(when (= tool-name (:name %)) %)
+                            (ext/all-tools-in reg)))]
+    ;; Agent runtime tool defs intentionally project provider-safe metadata and
+    ;; may omit executable fns. Prefer an executable agent tool when present,
+    ;; otherwise fall back to the extension registry's canonical tool def.
+    (or (when (:execute from-agent) from-agent)
+        from-ext
+        from-agent)))
 
 (defn- execute-app-query-tool-in!
   "Execute a session-bound app-query-tool instance.

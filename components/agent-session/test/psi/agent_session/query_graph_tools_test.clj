@@ -9,6 +9,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.agent-session.extensions :as ext]
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as sc]
@@ -52,7 +53,29 @@
       (is (= {:content "A:hello" :is-error false}
              (tool-plan/default-execute-runtime-tool-in! ctx session-id "prefix-a" {"text" "hello"} {})))
       (is (= {:content "A:hello" :is-error false}
-             (tool-plan/execute-tool-runtime-in! ctx session-id "prefix-a" {"text" "hello"} {}))))))
+             (tool-plan/execute-tool-runtime-in! ctx session-id "prefix-a" {"text" "hello"} {})))))
+
+  (testing "default-execute-runtime-tool-in! falls back to extension registry when projected agent tools omit execute"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          reg              (:extension-registry ctx)
+          exec-fn          (fn [args _opts]
+                             {:content (str "EXT:" (get args "text" ""))
+                              :is-error false})]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-tool-in! reg "/ext/a" {:name "ext-tool"
+                                            :description "extension tool"
+                                            :parameters {:type "object"}
+                                            :execute exec-fn})
+      ;; Simulate the agent-core runtime projection stripping :execute while the
+      ;; canonical extension registry still retains the executable fn.
+      (agent-core/set-tools-in!
+       (ss/agent-ctx-in ctx session-id)
+       [{:name "ext-tool"
+         :label "ext-tool"
+         :description "extension tool"
+         :parameters {:type "object"}}])
+      (is (= {:content "EXT:hello" :is-error false}
+             (tool-plan/default-execute-runtime-tool-in! ctx session-id "ext-tool" {"text" "hello"} {}))))))
 
 (deftest tool-plan-runtime-tool-executor-boundary-test
   (testing "run-tool-plan uses the ctx-provided runtime tool executor boundary"

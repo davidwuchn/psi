@@ -19,21 +19,25 @@
     :else {:type "object"}))
 
 (defn normalize-tool-def
-  "Normalize a builtin/extension tool map into the canonical tool-def shape."
+  "Normalize a builtin/extension tool map into the canonical tool-def shape.
+   Preserves executable runtime fns for in-process tool execution while
+   boundary projections decide what crosses into agent-core/provider payloads."
   [tool]
   (when-let [name (some-> (:name tool) str not-empty)]
-    {:name               name
-     :label              (or (some-> (:label tool) str not-empty)
-                             name)
-     :description        (or (some-> (:description tool) str)
-                             "")
-     :parameters         (parse-parameters (:parameters tool))
-     :lambda-description (some-> (:lambda-description tool) str)
-     :source             (:source tool)
-     :ext-path           (:ext-path tool)
-     :enabled?           (if (contains? tool :enabled?)
-                           (boolean (:enabled? tool))
-                           true)}))
+    (cond-> {:name               name
+             :label              (or (some-> (:label tool) str not-empty)
+                                     name)
+             :description        (or (some-> (:description tool) str)
+                                     "")
+             :parameters         (parse-parameters (:parameters tool))
+             :lambda-description (some-> (:lambda-description tool) str)
+             :source             (:source tool)
+             :ext-path           (:ext-path tool)
+             :enabled?           (if (contains? tool :enabled?)
+                                   (boolean (:enabled? tool))
+                                   true)}
+      (contains? tool :execute)
+      (assoc :execute (:execute tool)))))
 
 (defn normalize-tool-defs
   [tools]
