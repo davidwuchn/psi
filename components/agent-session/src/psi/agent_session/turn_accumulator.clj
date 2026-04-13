@@ -373,9 +373,9 @@
    - every tool call is upgraded to a canonical tool-call-id by execution time
    - lifecycle/result events must target rows by canonical tool-call-id
 
-   `ai-model`        — for provider-specific thinking accumulation (Anthropic vs OpenAI)
+   `ai-model`         — for provider-specific thinking accumulation (Anthropic vs OpenAI)
    `thinking-buffers` — atom({content-index → merged-text}) for per-block accumulation"
-  [ctx session-id _agent-ctx done-p progress-queue ai-model thinking-buffers]
+  [ctx session-id done-p progress-queue ai-model thinking-buffers]
   (fn [action-key data]
     (let [td (:turn-data data)]
       (case action-key

@@ -32,7 +32,7 @@
                     (swap! sync-calls conj {:ctx ctx :session-id sid})
                     {:ok? true})
                   psi.agent-session.prompt-runtime/execute-prepared-request!
-                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                  (fn [_ai-ctx _ctx sid prepared _pq]
                     {:execution-result/turn-id (:prepared-request/id prepared)
                      :execution-result/session-id sid
                      :execution-result/assistant-message {:role "assistant"

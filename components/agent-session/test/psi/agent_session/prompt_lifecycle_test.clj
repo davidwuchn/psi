@@ -74,7 +74,7 @@
                                                                              :prepared-request/provider-conversation {:system-prompt "sys"
                                                                                                                       :messages []
                                                                                                                       :tools []}})
-                  psi.agent-session.prompt-runtime/execute-prepared-request! (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                  psi.agent-session.prompt-runtime/execute-prepared-request! (fn [_ai-ctx _ctx sid prepared _pq]
                                                                                {:execution-result/turn-id (:prepared-request/id prepared)
                                                                                 :execution-result/session-id sid
                                                                                 :execution-result/assistant-message {:role "assistant"
@@ -101,7 +101,7 @@
   (let [[ctx session-id] (create-session-context {:persist? false})]
     (dispatch/clear-event-log!)
     (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                  (fn [_ai-ctx _ctx sid prepared _pq]
                     {:execution-result/turn-id (:prepared-request/id prepared)
                      :execution-result/session-id sid
                      :execution-result/assistant-message {:role "assistant"
@@ -317,7 +317,7 @@
                          :text "Please be brief."}
                         {:origin :core})
     (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                  (fn [_ai-ctx _ctx sid prepared _pq]
                     {:execution-result/turn-id (:prepared-request/id prepared)
                      :execution-result/session-id sid
                      :execution-result/assistant-message {:role "assistant"
@@ -351,7 +351,7 @@
                          :text "next question"}
                         {:origin :core})
     (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                  (fn [_ai-ctx _ctx sid prepared _pq]
                     (is (= "next question"
                            (get-in prepared [:prepared-request/user-message :content 0 :text])))
                     {:execution-result/turn-id (:prepared-request/id prepared)
@@ -393,7 +393,7 @@
                         {:session-id session-id :text "q2"}
                         {:origin :core})
     (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                  (fn [_ai-ctx _ctx sid prepared _pq]
                     (swap! seen-prompts conj (get-in prepared [:prepared-request/user-message :content 0 :text]))
                     {:execution-result/turn-id (:prepared-request/id prepared)
                      :execution-result/session-id sid

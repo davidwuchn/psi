@@ -48,7 +48,7 @@
           ctx                (retarget ctx sd)]
       (is (= :idle (ss/sc-phase-in ctx session-id)))
       (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                    (fn [_ai-ctx _ctx sid _agent-ctx prepared _progress-queue]
+                    (fn [_ai-ctx _ctx sid prepared _progress-queue]
                       {:execution-result/turn-id (:prepared-request/id prepared)
                        :execution-result/session-id sid
                        :execution-result/assistant-message {:role "assistant"

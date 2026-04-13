@@ -17,7 +17,7 @@
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
   (:execution-result/assistant-message
    (prompt-runtime/execute-prepared-request-and-journal!
-    ai-ctx ctx session-id agent-ctx
+    ai-ctx ctx session-id
     (prompt-request/build-prepared-request
      ctx session-id
      {:turn-id       (str (java.util.UUID/randomUUID))

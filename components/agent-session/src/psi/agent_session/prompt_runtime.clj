@@ -65,10 +65,10 @@
   "Create and install the canonical live turn execution state used by prompt
    execution paths. Returns the working state needed to drive one provider
    stream to completion."
-  [ctx session-id agent-ctx ai-model progress-queue turn-id]
+  [ctx session-id ai-model progress-queue turn-id]
   (let [done-p           (promise)
         thinking-buffers (atom {})
-        actions-fn       (accum/make-turn-actions ctx session-id agent-ctx done-p progress-queue
+        actions-fn       (accum/make-turn-actions ctx session-id done-p progress-queue
                                                   ai-model thinking-buffers)
         turn-ctx         (turn-sc/create-turn-context actions-fn)
         _                (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
@@ -168,9 +168,9 @@
 (defn execute-live-turn!
   "Execute one live provider turn against an already prepared conversation.
    Returns {:turn-id :model :assistant-message :ai-options :turn-ctx}."
-  [ai-ctx ctx session-id agent-ctx {:keys [ai-conv ai-model base-ai-options progress-queue turn-id]}]
+  [ai-ctx ctx session-id {:keys [ai-conv ai-model base-ai-options progress-queue turn-id]}]
   (let [{:keys [done-p actions-fn turn-ctx last-progress-ms timed-out?]}
-        (create-live-turn-context ctx session-id agent-ctx ai-model progress-queue turn-id)
+        (create-live-turn-context ctx session-id ai-model progress-queue turn-id)
         ai-options       (capture-aware-ai-options ctx session-id turn-id base-ai-options)
         cancelled-pred   #(prompt-stream/cancelled-stream-handle? (:stream-handle @(:turn-data turn-ctx)))
         _stream-handle   (prompt-stream/mark-turn-stream-handle!
@@ -195,7 +195,7 @@
 (defn execute-prepared-request!
   "Execute one prepared request through the existing turn-streaming runtime.
    Returns a shaped execution-result map."
-  [ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
+  [ai-ctx ctx session-id prepared-request progress-queue]
   (let [turn-id         (:prepared-request/id prepared-request)
         ai-conv         (:prepared-request/provider-conversation prepared-request)
         ai-model        (or (:prepared-request/model prepared-request)
@@ -203,7 +203,7 @@
                             (models/get-model :sonnet-4.6))
         base-ai-options (or (:prepared-request/ai-options prepared-request) {})
         {:keys [assistant-message]}
-        (execute-live-turn! ai-ctx ctx session-id agent-ctx
+        (execute-live-turn! ai-ctx ctx session-id
                             {:ai-conv         ai-conv
                              :ai-model        ai-model
                              :base-ai-options base-ai-options
@@ -227,8 +227,8 @@
 (defn execute-prepared-request-and-journal!
   "Execute one prepared request and append the resulting assistant message to
    the canonical session journal. Returns the shaped execution-result map."
-  [ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
-  (let [execution-result (execute-prepared-request! ai-ctx ctx session-id agent-ctx prepared-request progress-queue)
+  [ai-ctx ctx session-id prepared-request progress-queue]
+  (let [execution-result (execute-prepared-request! ai-ctx ctx session-id prepared-request progress-queue)
         assistant-msg    (:execution-result/assistant-message execution-result)]
     (ss/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
     execution-result))

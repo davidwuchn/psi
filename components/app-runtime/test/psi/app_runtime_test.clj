@@ -184,7 +184,7 @@
         (fn []
           (dispatch/clear-event-log!)
           (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                        (fn [_ai-ctx _ctx sid _agent-ctx prepared _progress-queue]
+                        (fn [_ai-ctx _ctx sid prepared _progress-queue]
                           {:execution-result/turn-id (:prepared-request/id prepared)
                            :execution-result/session-id sid
                            :execution-result/prepared-request-id (:prepared-request/id prepared)
@@ -225,7 +225,7 @@
         (fn []
           (dispatch/clear-event-log!)
           (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
-                        (fn [_ai-ctx _ctx sid _agent-ctx prepared progress-queue]
+                        (fn [_ai-ctx _ctx sid prepared progress-queue]
                           (reset! queued progress-queue)
                           {:execution-result/turn-id (:prepared-request/id prepared)
                            :execution-result/session-id sid

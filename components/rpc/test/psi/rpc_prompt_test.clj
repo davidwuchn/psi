@@ -17,7 +17,7 @@
           _   (dispatch/dispatch! ctx :session/ui-set-status {:extension-id "ext.demo" :text "ready"} {:origin :test})
           state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _prepared-request progress-queue]
+                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _prepared-request progress-queue]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :text-delta :text "Hello" :type :agent-event})
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
@@ -68,7 +68,7 @@
     (let [[ctx _] (support/create-session-context)
           state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _prepared-request progress-queue]
+                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _prepared-request progress-queue]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :text-delta :text "Hello" :type :agent-event})
                                             (support/assistant-msg->execution-result _session-id {:role "assistant" :content [{:type :text :text "Hello final"}] :stop-reason :stop :usage {:total-tokens 3}}))})
@@ -125,7 +125,7 @@
     (let [[ctx _] (support/create-session-context)
           state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _prepared-request progress-queue]
+                       :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _prepared-request progress-queue]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :thinking-delta :text "plan-1" :type :agent-event})
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue

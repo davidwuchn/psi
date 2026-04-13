@@ -103,8 +103,8 @@
 
 (defn- normalize-execute-prepared-request-fn
   [f]
-  (fn [ai-ctx ctx session-id agent-ctx prepared-request progress-queue]
-    (let [result (f ai-ctx ctx session-id agent-ctx prepared-request progress-queue)]
+  (fn [ai-ctx ctx session-id prepared-request progress-queue]
+    (let [result (f ai-ctx ctx session-id prepared-request progress-queue)]
       (if (contains? result :execution-result/session-id)
         result
         (assistant-msg->execution-result session-id result)))))

@@ -147,12 +147,10 @@
   (let [session-id       (effect-session-id ctx effect)
         prepared-request (:prepared-request effect)
         progress-queue   (:progress-queue effect)
-        agent-ctx        (effect-agent-ctx ctx effect)
         execution-result ((:execute-prepared-request-fn ctx)
                           (:ai-ctx ctx)
                           ctx
                           session-id
-                          agent-ctx
                           prepared-request
                           progress-queue)]
     (dispatch/dispatch! ctx
