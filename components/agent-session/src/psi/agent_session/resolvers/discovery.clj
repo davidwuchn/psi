@@ -11,13 +11,13 @@
 
 (pco/defresolver prompt-template-summary-resolver
   "Resolve prompt template summary: count, names, per-source grouping."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.prompt-template/summary
                  :psi.prompt-template/names
                  :psi.prompt-template/count
                  :psi.prompt-template/by-source]}
-  (let [templates (:prompt-templates (support/session-data agent-session-ctx))]
+  (let [templates (:prompt-templates (support/session-data agent-session-ctx session-id))]
     {:psi.prompt-template/summary   (pt/template-summary templates)
      :psi.prompt-template/names     (pt/template-names templates)
      :psi.prompt-template/count     (count templates)
@@ -26,10 +26,10 @@
 (pco/defresolver prompt-template-detail-resolver
   "Resolve a single enriched prompt template by name.
    Seed input: {:psi.prompt-template/name \"template-name\"}"
-  [{:keys [psi/agent-session-ctx psi.prompt-template/name]}]
-  {::pco/input  [:psi/agent-session-ctx :psi.prompt-template/name]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id psi.prompt-template/name]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id :psi.prompt-template/name]
    ::pco/output [:psi.prompt-template/detail]}
-  (let [templates (:prompt-templates (support/session-data agent-session-ctx))
+  (let [templates (:prompt-templates (support/session-data agent-session-ctx session-id))
         tpl       (pt/find-template templates name)]
     {:psi.prompt-template/detail
      (when tpl (pt/enrich-template tpl))}))
@@ -38,15 +38,15 @@
 
 (pco/defresolver skill-summary-resolver
   "Resolve skill summary: count, visible/hidden counts, per-source grouping."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.skill/summary
                  :psi.skill/names
                  :psi.skill/count
                  :psi.skill/visible-count
                  :psi.skill/hidden-count
                  :psi.skill/by-source]}
-  (let [all-skills (:skills (support/session-data agent-session-ctx))
+  (let [all-skills (:skills (support/session-data agent-session-ctx session-id))
         summary    (skills/skill-summary all-skills)]
     {:psi.skill/summary       summary
      :psi.skill/names         (skills/skill-names all-skills)
@@ -58,10 +58,10 @@
 (pco/defresolver skill-detail-resolver
   "Resolve a single enriched skill by name.
    Seed input: {:psi.skill/name \"skill-name\"}"
-  [{:keys [psi/agent-session-ctx psi.skill/name]}]
-  {::pco/input  [:psi/agent-session-ctx :psi.skill/name]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id psi.skill/name]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id :psi.skill/name]
    ::pco/output [:psi.skill/detail]}
-  (let [all-skills (:skills (support/session-data agent-session-ctx))
+  (let [all-skills (:skills (support/session-data agent-session-ctx session-id))
         skill      (skills/find-skill all-skills name)]
     {:psi.skill/detail
      (when skill (skills/enrich-skill skill))}))
@@ -70,12 +70,12 @@
 
 (pco/defresolver tool-summary-resolver
   "Resolve active tool summary: count and names."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.tool/summary
                  :psi.tool/names
                  :psi.tool/count]}
-  (let [tools (:tools (support/agent-data agent-session-ctx))
+  (let [tools (:tools (support/agent-data agent-session-ctx session-id))
         names (mapv :name tools)]
     {:psi.tool/summary {:tool-count (count tools)
                         :tools      (mapv #(select-keys % [:name :label :description]) tools)}
@@ -85,10 +85,10 @@
 (pco/defresolver tool-detail-resolver
   "Resolve a single active tool by name.
    Seed input: {:psi.tool/name \"tool-name\"}"
-  [{:keys [psi/agent-session-ctx psi.tool/name]}]
-  {::pco/input  [:psi/agent-session-ctx :psi.tool/name]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id psi.tool/name]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id :psi.tool/name]
    ::pco/output [:psi.tool/detail]}
-  (let [tools (:tools (support/agent-data agent-session-ctx))
+  (let [tools (:tools (support/agent-data agent-session-ctx session-id))
         tool  (first (filter #(= (:name %) name) tools))]
     {:psi.tool/detail tool}))
 
@@ -113,8 +113,8 @@
 
 (pco/defresolver session-list-resolver
   "Resolve all sessions for the current session's cwd, sorted by modified desc."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.session/list
                   [:psi.session-info/path
                    :psi.session-info/id
@@ -132,7 +132,7 @@
    (mapv session-info->eql
          (persist/list-sessions
           (persist/session-dir-for
-           (or (:worktree-path (support/session-data agent-session-ctx))
+           (or (:worktree-path (support/session-data agent-session-ctx session-id))
                (:cwd agent-session-ctx)))))})
 
 (pco/defresolver session-list-all-resolver

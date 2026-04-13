@@ -270,7 +270,7 @@
           root-attrs (:psi.graph/root-queryable-attrs meta)]
       (is (vector? root-seeds))
       (is (every? keyword? root-seeds))
-      (is (= [:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx]
+      (is (= [:psi/agent-session-ctx :psi.agent-session/session-id :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx]
              root-seeds))
       (is (vector? root-attrs))
       (is (seq root-attrs))

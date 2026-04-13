@@ -67,6 +67,14 @@ Bootstrapped on 2026-04-02.
 ## Explicit routing direction
 - Strong current direction: explicit session routing over inferred focus.
 - When an RPC operation can reasonably carry `session-id`, pass it explicitly.
+- New resolver/introspection follow-on now landed in `agent-session`:
+  - removed `psi.agent-session.resolvers.support/*session-id*`
+  - removed resolver-time hidden session selection
+  - session-scoped resolver reads now require explicit `:psi.agent-session/session-id`
+  - direct Pathom/qctx callers now pass session-id in entities instead of binding dynamic vars
+  - session git branch/context resolution is now explicitly session-scoped from session worktree/cwd
+  - graph introspection now advertises `:psi.agent-session/session-id` as a root seed because session-scoped attrs require it explicitly
+  - unit + extension + Emacs test suites are green after the change
 - `targetable-rpc-ops` was expanded so explicit routing now includes additional ops such as:
   - `new_session`
   - `switch_session`

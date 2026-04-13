@@ -538,19 +538,19 @@
 
         (let [qctx (query/create-query-context)
               _    (session/register-resolvers-in! qctx false)
-              lookup (binding [psi.agent-session.resolvers.support/*session-id* session-id]
-                       (query/query-in qctx {:psi/agent-session-ctx ctx
-                                             :psi.agent-session/session-id session-id
-                                             :psi.agent-session/lookup-tool-id "call-1"}
-                                       [{:psi.agent-session/tool-lifecycle-summary-for-tool-id
-                                         [:psi.tool-lifecycle.summary/tool-id
-                                          :psi.tool-lifecycle.summary/tool-name
-                                          :psi.tool-lifecycle.summary/event-count
-                                          :psi.tool-lifecycle.summary/last-event-kind
-                                          :psi.tool-lifecycle.summary/completed?
-                                          :psi.tool-lifecycle.summary/result-text
-                                          :psi.tool-lifecycle.summary/arguments
-                                          :psi.tool-lifecycle.summary/parsed-args]}]))
+              lookup (query/query-in qctx
+                                     {:psi/agent-session-ctx ctx
+                                      :psi.agent-session/session-id session-id
+                                      :psi.agent-session/lookup-tool-id "call-1"}
+                                     [{:psi.agent-session/tool-lifecycle-summary-for-tool-id
+                                       [:psi.tool-lifecycle.summary/tool-id
+                                        :psi.tool-lifecycle.summary/tool-name
+                                        :psi.tool-lifecycle.summary/event-count
+                                        :psi.tool-lifecycle.summary/last-event-kind
+                                        :psi.tool-lifecycle.summary/completed?
+                                        :psi.tool-lifecycle.summary/result-text
+                                        :psi.tool-lifecycle.summary/arguments
+                                        :psi.tool-lifecycle.summary/parsed-args]}])
               looked-up (:psi.agent-session/tool-lifecycle-summary-for-tool-id lookup)]
           (is (= "call-1" (:psi.tool-lifecycle.summary/tool-id looked-up)))
           (is (= "read" (:psi.tool-lifecycle.summary/tool-name looked-up)))
@@ -702,14 +702,14 @@
                                              :error-message "Error (status 400) [request-id req_lookup]"
                                              :http-status 400}})
 
-        (let [req (binding [psi.agent-session.resolvers.support/*session-id* session-id]
-                    ((resolve 'psi.agent-session.resolvers.telemetry/provider-request-by-turn-id)
-                     {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
-                      :psi/agent-session-ctx ctx}))
-              reply (binding [psi.agent-session.resolvers.support/*session-id* session-id]
-                      ((resolve 'psi.agent-session.resolvers.telemetry/provider-reply-by-turn-id)
-                       {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
-                        :psi/agent-session-ctx ctx}))]
+        (let [req ((resolve 'psi.agent-session.resolvers.telemetry/provider-request-by-turn-id)
+                    {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                     :psi/agent-session-ctx ctx
+                     :psi.agent-session/session-id session-id})
+              reply ((resolve 'psi.agent-session.resolvers.telemetry/provider-reply-by-turn-id)
+                      {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                       :psi/agent-session-ctx ctx
+                       :psi.agent-session/session-id session-id})]
           (is (= :anthropic
                  (get-in req [:psi.agent-session/provider-request-for-turn-id
                               :psi.provider-request/provider])))

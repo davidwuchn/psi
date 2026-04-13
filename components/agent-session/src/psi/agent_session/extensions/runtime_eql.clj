@@ -1,7 +1,6 @@
 (ns psi.agent-session.extensions.runtime-eql
   (:require
    [psi.agent-session.background-job-runtime :as bg-rt]
-   [psi.agent-session.resolvers.support :as resolver-support]
    [psi.agent-session.session-state :as ss]
    [psi.history.git :as history-git]
    [psi.query.core :as query]))
@@ -70,8 +69,7 @@
   (let [qctx (query/create-query-context)
         _    (register-resolvers! qctx false)
         _    (register-mutations! qctx (:all-mutations ctx) true)]
-    (binding [resolver-support/*session-id* session-id]
-      (query/query-in qctx
-                      {:psi/agent-session-ctx        ctx
-                       :psi.agent-session/session-id session-id}
-                      eql-query))))
+    (query/query-in qctx
+                    {:psi/agent-session-ctx        ctx
+                     :psi.agent-session/session-id session-id}
+                    eql-query)))

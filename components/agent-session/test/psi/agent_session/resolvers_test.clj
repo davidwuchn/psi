@@ -474,13 +474,12 @@
           qctx    (query/create-query-context)
           _      (session/register-resolvers-in! qctx false)
           _      (session/register-mutations-in! qctx mutations/all-mutations true)
-          result (binding [psi.agent-session.resolvers.support/*session-id* session-id]
-                   (query/query-in qctx {:psi/agent-session-ctx ctx
-                                         :psi.agent-session/session-id session-id}
-                                   [:git.worktree/list
-                                    :git.worktree/current
-                                    :git.worktree/count
-                                    :git.branch/default-branch]))]
+          result (query/query-in qctx {:psi/agent-session-ctx ctx
+                                       :psi.agent-session/session-id session-id}
+                                 [:git.worktree/list
+                                  :git.worktree/current
+                                  :git.worktree/count
+                                  :git.branch/default-branch])]
       (is (contains? result :git.worktree/list)
           "git.worktree/list resolvable via isolated qctx (requires history resolvers)")
       (is (contains? result :git.worktree/current)

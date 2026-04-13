@@ -27,7 +27,6 @@
    [psi.query.registry :as registry]
    [psi.recursion.core :as recursion]
    [psi.recursion.resolvers :as recursion-resolvers]
-   [psi.agent-session.resolvers.support :as support]
    [psi.agent-session.resolvers.session :as session-resolvers]
    [psi.agent-session.resolvers.extensions :as extension-resolvers]
    [psi.agent-session.resolvers.services :as service-resolvers]
@@ -86,7 +85,11 @@
                                   set)
         root-queryable-attrs (graph/derive-root-queryable-attrs
                               (:resolver-ops op-meta)
-                              #{:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx})]
+                              #{:psi/agent-session-ctx
+                                :psi.agent-session/session-id
+                                :psi/memory-ctx
+                                :psi/recursion-ctx
+                                :psi/engine-ctx})]
     {:psi.graph/resolver-count       (count resolver-syms)
      :psi.graph/mutation-count       (count mutation-syms)
      :psi.graph/resolver-syms        resolver-syms
@@ -97,6 +100,7 @@
      :psi.graph/capabilities         (:capabilities cgraph)
      :psi.graph/domain-coverage      (:domain-coverage cgraph)
      :psi.graph/root-seeds           [:psi/agent-session-ctx
+                                      :psi.agent-session/session-id
                                       :psi/memory-ctx
                                       :psi/recursion-ctx
                                       :psi/engine-ctx]
@@ -149,12 +153,11 @@
          engine-ctx    (or (:engine-ctx ctx)
                            (snapshot-engine-context))
          session-id    (:psi.agent-session/session-id extra-entity)]
-     (binding [support/*session-id* session-id]
-       (p.eql/process (ensure-query-env!)
-                      (merge extra-entity
-                             {:psi/agent-session-ctx        ctx
-                              :psi.agent-session/session-id session-id
-                              :psi/memory-ctx               memory-ctx
-                              :psi/recursion-ctx            recursion-ctx
-                              :psi/engine-ctx               engine-ctx})
-                      q)))))
+     (p.eql/process (ensure-query-env!)
+                    (merge extra-entity
+                           {:psi/agent-session-ctx        ctx
+                            :psi.agent-session/session-id session-id
+                            :psi/memory-ctx               memory-ctx
+                            :psi/recursion-ctx            recursion-ctx
+                            :psi/engine-ctx               engine-ctx})
+                    q))))

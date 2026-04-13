@@ -546,12 +546,11 @@
                  {:session-defaults {:skills all-skills}})
         sd      (session-core/new-session-in! ctx nil {})
         env     (pci/register resolvers/all-resolvers)
-        result  (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
-                  (p.eql/process env
-                                 {:psi/agent-session-ctx ctx
-                                  :psi.agent-session/session-id (:session-id sd)
-                                  :psi.skill/name "alpha"}
-                                [:psi.skill/detail]))
+        result  (p.eql/process env
+                               {:psi/agent-session-ctx ctx
+                                :psi.agent-session/session-id (:session-id sd)
+                                :psi.skill/name "alpha"}
+                               [:psi.skill/detail])
         detail (:psi.skill/detail result)]
 
     (testing "detail includes enriched fields"
@@ -560,12 +559,11 @@
       (is (true? (:is-available-to-model detail))))
 
     (testing "detail for unknown skill is nil"
-      (let [r (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
-                (p.eql/process env
-                               {:psi/agent-session-ctx ctx
-                                :psi.agent-session/session-id (:session-id sd)
-                                :psi.skill/name "unknown"}
-                               [:psi.skill/detail]))]
+      (let [r (p.eql/process env
+                             {:psi/agent-session-ctx ctx
+                              :psi.agent-session/session-id (:session-id sd)
+                              :psi.skill/name "unknown"}
+                             [:psi.skill/detail])]
         (is (nil? (:psi.skill/detail r)))))))
 
 ;; ============================================================

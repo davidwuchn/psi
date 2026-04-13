@@ -46,8 +46,6 @@
    [psi.query.core :as query]
    [psi.query.registry :as registry]
    [psi.memory.core :as memory]
-   [psi.agent-session.resolvers.support :as agent-session-support]
-   [psi.agent-session.session-state :as session-state]
    [psi.system-bootstrap.core :as bootstrap]))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
@@ -233,15 +231,15 @@
    Requires ctx to have been created with an :agent-session-ctx option and a
    live session. Also seeds :psi/memory-ctx so :psi.memory/* attrs are queryable
    in-session."
-  [ctx q]
-  (let [{:keys [agent-session-ctx memory-ctx query-ctx]} ctx]
-    (when-not agent-session-ctx
-      (throw (ex-info "No :agent-session-ctx in introspection context" {})))
-    (let [session-id (some-> (session-state/list-context-sessions-in agent-session-ctx)
-                             first
-                             :session-id)]
-      (binding [agent-session-support/*session-id* session-id]
-        (query/query-in query-ctx {:psi/agent-session-ctx agent-session-ctx
-                                   :psi.agent-session/session-id session-id
-                                   :psi/memory-ctx memory-ctx}
-                        q)))))
+  ([ctx q]
+   (query-agent-session-in ctx (:session-id ctx) q))
+  ([ctx session-id q]
+   (let [{:keys [agent-session-ctx memory-ctx query-ctx]} ctx]
+     (when-not agent-session-ctx
+       (throw (ex-info "No :agent-session-ctx in introspection context" {})))
+     (when-not session-id
+       (throw (ex-info "No live session-id available for introspection query" {})))
+     (query/query-in query-ctx {:psi/agent-session-ctx agent-session-ctx
+                                :psi.agent-session/session-id session-id
+                                :psi/memory-ctx memory-ctx}
+                     q))))

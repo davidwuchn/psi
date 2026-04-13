@@ -19,8 +19,8 @@
 (pco/defresolver agent-session-identity
   "Resolve stable identity, naming, and context session registry fields.
    Note: :context-active-session-id removed — adapters (RPC, TUI) own focus locally."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/session-id
                  :psi.agent-session/session-file
                  :psi.agent-session/session-name
@@ -36,11 +36,11 @@
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
                    :psi.session-info/created]}]}
-  (let [resolver-sid (support/resolver-session-id agent-session-ctx)
-        sd           (support/session-data agent-session-ctx)
+  (let [resolver-sid session-id
+        sd           (support/session-data agent-session-ctx session-id)
         hs           (ss/list-context-sessions-in agent-session-ctx)
         messages     (when resolver-sid
-                       (support/agent-core-messages agent-session-ctx))]
+                       (support/agent-core-messages agent-session-ctx session-id))]
     {:psi.agent-session/session-id                 (:session-id sd)
      :psi.agent-session/session-file               (:session-file sd)
      :psi.agent-session/session-name               (:session-name sd)
@@ -65,14 +65,14 @@
 
 (pco/defresolver agent-session-phase
   "Resolve statechart phase and derived boolean flags."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/phase
                  :psi.agent-session/is-streaming
                  :psi.agent-session/is-compacting
                  :psi.agent-session/is-idle]}
   (let [sc-env        (:sc-env agent-session-ctx)
-        sc-session-id (ss/sc-session-id-in agent-session-ctx (support/resolver-session-id agent-session-ctx))
+        sc-session-id (ss/sc-session-id-in agent-session-ctx session-id)
         phase         (sc/sc-phase sc-env sc-session-id)]
     {:psi.agent-session/phase         phase
      :psi.agent-session/is-streaming  (= phase :streaming)
@@ -83,13 +83,13 @@
 
 (pco/defresolver agent-session-model
   "Resolve model, thinking level, prompt mode, and UI type."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/model
                  :psi.agent-session/thinking-level
                  :psi.agent-session/prompt-mode
                  :psi.agent-session/ui-type]}
-  (let [sd (support/session-data agent-session-ctx)]
+  (let [sd (support/session-data agent-session-ctx session-id)]
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)
      :psi.agent-session/prompt-mode    (:prompt-mode sd)
@@ -116,8 +116,8 @@
 
 (pco/defresolver agent-session-queues
   "Resolve queue depths, prompt layers, and prompt lifecycle summaries."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/base-system-prompt
                  :psi.agent-session/system-prompt
                  :psi.agent-session/developer-prompt
@@ -140,7 +140,7 @@
                  :psi.agent-session/last-execution-stop-reason
                  :psi.agent-session/last-execution-tool-call-count
                  :psi.agent-session/last-execution-recorded-at]}
-  (let [sd         (support/session-data agent-session-ctx)
+  (let [sd         (support/session-data agent-session-ctx session-id)
         base       (:base-system-prompt sd)
         sys        (:system-prompt sd)
         dev        (:developer-prompt sd)
@@ -167,13 +167,13 @@
 
 (pco/defresolver agent-session-retry-compact
   "Resolve retry and compaction operational fields."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/retry-attempt
                  :psi.agent-session/auto-retry-enabled
                  :psi.agent-session/auto-compaction-enabled
                  :psi.agent-session/scoped-models]}
-  (let [sd (support/session-data agent-session-ctx)]
+  (let [sd (support/session-data agent-session-ctx session-id)]
     {:psi.agent-session/retry-attempt           (:retry-attempt sd)
      :psi.agent-session/auto-retry-enabled      (:auto-retry-enabled sd)
      :psi.agent-session/auto-compaction-enabled (:auto-compaction-enabled sd)
@@ -183,11 +183,11 @@
 
 (pco/defresolver agent-session-resources
   "Resolve registered skills and prompt templates."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/skills
                  :psi.agent-session/prompt-templates]}
-  (let [sd (support/session-data agent-session-ctx)]
+  (let [sd (support/session-data agent-session-ctx session-id)]
     {:psi.agent-session/skills           (:skills sd)
      :psi.agent-session/prompt-templates (:prompt-templates sd)}))
 
@@ -195,13 +195,13 @@
 
 (pco/defresolver agent-session-extensions
   "Resolve extension registry summary and extension prompt telemetry."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/extension-summary
                  :psi.agent-session/extension-last-prompt-source
                  :psi.agent-session/extension-last-prompt-delivery
                  :psi.agent-session/extension-last-prompt-at]}
-  (let [sd (support/session-data agent-session-ctx)]
+  (let [sd (support/session-data agent-session-ctx session-id)]
     {:psi.agent-session/extension-summary              (ext/summary-in (:extension-registry agent-session-ctx))
      :psi.agent-session/extension-last-prompt-source   (:extension-last-prompt-source sd)
      :psi.agent-session/extension-last-prompt-delivery (:extension-last-prompt-delivery sd)
@@ -209,12 +209,12 @@
 
 (pco/defresolver agent-session-context-usage
   "Resolve context token usage and fraction."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/context-tokens
                  :psi.agent-session/context-window
                  :psi.agent-session/context-fraction]}
-  (let [sd (support/session-data agent-session-ctx)]
+  (let [sd (support/session-data agent-session-ctx session-id)]
     {:psi.agent-session/context-tokens   (:context-tokens sd)
      :psi.agent-session/context-window   (:context-window sd)
      :psi.agent-session/context-fraction (session/context-fraction-used sd)}))
@@ -234,27 +234,26 @@
     (if (number? v) v 0.0)))
 
 (defn- session-usage-totals
-  [agent-session-ctx]
-  (let [session-id (:session-id (support/session-data agent-session-ctx))]
-    (reduce
-     (fn [acc entry]
-       (let [msg       (get-in entry [:data :message])
-             entry-sid (:session-id entry)]
-         (if (and (= :message (:kind entry))
-                  (or (nil? entry-sid)
-                      (= session-id entry-sid))
-                  (= "assistant" (:role msg))
-                  (map? (:usage msg)))
-           (let [u (:usage msg)]
-             (-> acc
-                 (update :input + (usage-number u :input-tokens :input))
-                 (update :output + (usage-number u :output-tokens :output))
-                 (update :cache-read + (usage-number u :cache-read-tokens :cache-read))
-                 (update :cache-write + (usage-number u :cache-write-tokens :cache-write))
-                 (update :cost + (usage-cost-total u))))
-           acc)))
-     {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
-     (session/get-state-value-in agent-session-ctx (session/state-path :journal (support/resolver-session-id agent-session-ctx))))))
+  [agent-session-ctx session-id]
+  (reduce
+   (fn [acc entry]
+     (let [msg       (get-in entry [:data :message])
+           entry-sid (:session-id entry)]
+       (if (and (= :message (:kind entry))
+                (or (nil? entry-sid)
+                    (= session-id entry-sid))
+                (= "assistant" (:role msg))
+                (map? (:usage msg)))
+         (let [u (:usage msg)]
+           (-> acc
+               (update :input + (usage-number u :input-tokens :input))
+               (update :output + (usage-number u :output-tokens :output))
+               (update :cache-read + (usage-number u :cache-read-tokens :cache-read))
+               (update :cache-write + (usage-number u :cache-write-tokens :cache-write))
+               (update :cost + (usage-cost-total u))))
+         acc)))
+   {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
+   (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id))))
 
 (defn- find-git-head-path
   [cwd]
@@ -294,20 +293,23 @@
 (pco/defresolver agent-session-cwd
   "Resolve working directory for the current session context.
    Prefers session-bound worktree-path over process context cwd."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/cwd]}
-  (let [sd (support/session-data agent-session-ctx)]
+  (let [sd (support/session-data agent-session-ctx session-id)]
     {:psi.agent-session/cwd (or (:worktree-path sd)
                                 (:cwd agent-session-ctx))}))
 
 (pco/defresolver agent-session-git-branch
-  "Resolve current git branch for :psi.agent-session/cwd.
+  "Resolve current git branch for the explicit session worktree/cwd.
    Returns nil outside git repos and \"detached\" for detached HEAD."
-  [{:keys [psi.agent-session/cwd]}]
-  {::pco/input  [:psi.agent-session/cwd]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/git-branch]}
-  {:psi.agent-session/git-branch (git-branch-from-cwd cwd)})
+  (let [sd  (support/session-data agent-session-ctx session-id)
+        cwd (or (:worktree-path sd)
+                (:cwd agent-session-ctx))]
+    {:psi.agent-session/git-branch (git-branch-from-cwd cwd)}))
 
 (pco/defresolver runtime-nrepl-info
   "Expose runtime nREPL endpoint information from canonical runtime metadata on session context.
@@ -328,26 +330,29 @@
      :psi.runtime/nrepl-endpoint endpoint}))
 
 (pco/defresolver agent-session-git-context
-  "Bridge resolver: derive :git/context from :psi.agent-session/cwd so
+  "Bridge resolver: derive :git/context from the explicit session worktree/cwd so
    history resolvers can be queried from in-session app-query-tool roots."
-  [{:keys [psi.agent-session/cwd]}]
-  {::pco/input  [:psi.agent-session/cwd]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:git/context]}
-  (if (seq cwd)
-    {:git/context (git/create-context cwd)}
-    {}))
+  (let [sd  (support/session-data agent-session-ctx session-id)
+        cwd (or (:worktree-path sd)
+                (:cwd agent-session-ctx))]
+    (if (seq cwd)
+      {:git/context (git/create-context cwd)}
+      {})))
 
 (pco/defresolver agent-session-usage
   "Resolve cumulative token usage and cost across assistant messages in the session journal.
    Single journal scan produces all five usage attrs."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/usage-input
                  :psi.agent-session/usage-output
                  :psi.agent-session/usage-cache-read
                  :psi.agent-session/usage-cache-write
                  :psi.agent-session/usage-cost-total]}
-  (let [totals (session-usage-totals agent-session-ctx)]
+  (let [totals (session-usage-totals agent-session-ctx session-id)]
     {:psi.agent-session/usage-input       (:input totals)
      :psi.agent-session/usage-output      (:output totals)
      :psi.agent-session/usage-cache-read  (:cache-read totals)
@@ -356,17 +361,17 @@
 
 (pco/defresolver agent-session-model-provider
   "Resolve active model provider string from session state."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/model-provider]}
-  {:psi.agent-session/model-provider (:provider (:model (support/session-data agent-session-ctx)))})
+  {:psi.agent-session/model-provider (:provider (:model (support/session-data agent-session-ctx session-id)))})
 
 (pco/defresolver agent-session-model-id
   "Resolve active model id from session state."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/model-id]}
-  {:psi.agent-session/model-id (:id (:model (support/session-data agent-session-ctx)))})
+  {:psi.agent-session/model-id (:id (:model (support/session-data agent-session-ctx session-id)))})
 
 (def ^:private thinking-level->reasoning-effort
   {:off nil
@@ -383,11 +388,11 @@
 
 (pco/defresolver agent-session-model-reasoning
   "Resolve whether the active model supports reasoning and effective effort."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/model-reasoning
                  :psi.agent-session/effective-reasoning-effort]}
-  (let [sd    (support/session-data agent-session-ctx)
+  (let [sd    (support/session-data agent-session-ctx session-id)
         model (:model sd)
         level (:thinking-level sd)]
     {:psi.agent-session/model-reasoning
@@ -451,8 +456,8 @@
 
 (pco/defresolver startup-bootstrap-resolver
   "Resolve startup bootstrap summary and derived fields."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.startup/bootstrap-summary
                  :psi.startup/bootstrap-timestamp
                  :psi.startup/prompt-count
@@ -462,7 +467,7 @@
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
                  :psi.startup/mutations]}
-  (let [summary (:startup-bootstrap (support/session-data agent-session-ctx))]
+  (let [summary (:startup-bootstrap (support/session-data agent-session-ctx session-id))]
     {:psi.startup/bootstrap-summary      summary
      :psi.startup/bootstrap-timestamp    (:timestamp summary)
      :psi.startup/prompt-count           (:prompt-count summary 0)

@@ -170,11 +170,11 @@
 
 (pco/defresolver extension-prompt-contributions-resolver
   "Resolve extension-managed prompt contributions in deterministic render order."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.extension/prompt-contributions
                  :psi.extension/prompt-contribution-count]}
-  (let [contribs (->> (or (:prompt-contributions (support/session-data agent-session-ctx)) [])
+  (let [contribs (->> (or (:prompt-contributions (support/session-data agent-session-ctx session-id)) [])
                       (filter map?)
                       (sort-by (fn [{:keys [priority ext-path id]}]
                                  [(or priority 1000)

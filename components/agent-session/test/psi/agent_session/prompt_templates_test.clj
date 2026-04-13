@@ -495,12 +495,11 @@
              {:session-defaults {:prompt-templates templates}})
         sd  (session-core/new-session-in! ctx nil {})
         env (pci/register resolvers/all-resolvers)
-        result (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
-                 (p.eql/process env
-                                {:psi/agent-session-ctx ctx
-                                 :psi.agent-session/session-id (:session-id sd)
-                                 :psi.prompt-template/name "greet"}
-                                [:psi.prompt-template/detail]))
+        result (p.eql/process env
+                              {:psi/agent-session-ctx ctx
+                               :psi.agent-session/session-id (:session-id sd)
+                               :psi.prompt-template/name "greet"}
+                              [:psi.prompt-template/detail])
         detail (:psi.prompt-template/detail result)]
     (testing "detail includes enriched fields"
       (is (= "greet" (:name detail)))
@@ -509,12 +508,11 @@
       (is (= 2 (:placeholder-count detail))))
 
     (testing "detail for unknown template is nil"
-      (let [r (binding [psi.agent-session.resolvers.support/*session-id* (:session-id sd)]
-                (p.eql/process env
-                               {:psi/agent-session-ctx ctx
-                                :psi.agent-session/session-id (:session-id sd)
-                                :psi.prompt-template/name "unknown"}
-                               [:psi.prompt-template/detail]))]
+      (let [r (p.eql/process env
+                             {:psi/agent-session-ctx ctx
+                              :psi.agent-session/session-id (:session-id sd)
+                              :psi.prompt-template/name "unknown"}
+                             [:psi.prompt-template/detail])]
         (is (nil? (:psi.prompt-template/detail r)))))))
 
 ;; ============================================================

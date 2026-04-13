@@ -56,22 +56,22 @@
    :psi.background-job/is-non-terminal             (bg-jobs/non-terminal-status? (:status job))})
 
 (defn- session-thread-id
-  [agent-session-ctx]
-  (:session-id (support/session-data agent-session-ctx)))
+  [_agent-session-ctx session-id]
+  session-id)
 
 (defn- reconcile-workflow-background-jobs!
   [agent-session-ctx]
   (bg-runtime/reconcile-workflow-background-jobs-in! agent-session-ctx))
 
 (pco/defresolver agent-session-background-jobs
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/background-job-count
                  :psi.agent-session/background-job-statuses
                  :psi.agent-session/background-jobs
                  {:psi.agent-session/background-jobs background-job-output}]}
   (reconcile-workflow-background-jobs! agent-session-ctx)
-  (let [thread-id (session-thread-id agent-session-ctx)
+  (let [thread-id (session-thread-id agent-session-ctx session-id)
         store     (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs))
         jobs      (if thread-id
                     (bg-jobs/list-jobs-in store thread-id background-job-status-order)
@@ -151,20 +151,20 @@
    :psi.tool-output.call/context-bytes-added (:context-bytes-added call)})
 
 (pco/defresolver tool-output-policy
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.tool-output/default-max-lines
                  :psi.tool-output/default-max-bytes
                  :psi.tool-output/overrides]}
   {:psi.tool-output/default-max-lines tool-output/default-max-lines
    :psi.tool-output/default-max-bytes tool-output/default-max-bytes
    :psi.tool-output/overrides         (or (:tool-output-overrides
-                                           (support/session-data agent-session-ctx))
+                                           (support/session-data agent-session-ctx session-id))
                                           {})})
 
 (pco/defresolver tool-output-calls
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.tool-output/calls
                   [:psi.tool-output.call/tool-call-id
                    :psi.tool-output.call/tool-name
@@ -176,24 +176,24 @@
                    :psi.tool-output.call/output-bytes
                    :psi.tool-output.call/context-bytes-added]}]}
   {:psi.tool-output/calls
-   (let [sid (support/resolver-session-id agent-session-ctx)]
+   (let [sid session-id]
      (mapv tool-output-call->eql
            (or (:calls (session/get-state-value-in agent-session-ctx (session/state-path :tool-output-stats sid))) [])))})
 
 (pco/defresolver tool-output-stats
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.tool-output/stats]}
   {:psi.tool-output/stats
-   (let [sid        (support/resolver-session-id agent-session-ctx)
+   (let [sid        session-id
          aggregates (:aggregates (session/get-state-value-in agent-session-ctx (session/state-path :tool-output-stats sid)))]
      {:total-context-bytes (or (:total-context-bytes aggregates) 0)
       :by-tool             (or (:by-tool aggregates) {})
       :limit-hits-by-tool  (or (:limit-hits-by-tool aggregates) {})})})
 
 (pco/defresolver agent-session-journal
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/session-entry-count
                  :psi.agent-session/journal-flushed?
                  {:psi.agent-session/session-entries
@@ -202,8 +202,7 @@
                    :psi.session-entry/timestamp
                    :psi.session-entry/kind
                    :psi.session-entry/data]}]}
-  (let [session-id (:session-id (support/session-data agent-session-ctx))
-        entries  (accessors/journal-state-in agent-session-ctx session-id)
+  (let [entries  (accessors/journal-state-in agent-session-ctx session-id)
         flushed? (:flushed? (accessors/flush-state-in agent-session-ctx session-id))]
     {:psi.agent-session/session-entry-count (count entries)
      :psi.agent-session/journal-flushed?    flushed?

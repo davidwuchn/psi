@@ -1,40 +1,27 @@
 (ns psi.agent-session.resolvers.support
   "Shared helpers for agent-session resolver namespaces.
 
-   Provides session-id resolution, data access, and EQL projection utilities
-   that all domain-specific resolver namespaces depend on."
+   Provides explicit session-scoped data access and EQL projection utilities
+   that domain-specific resolver namespaces depend on."
   (:require
    [psi.agent-core.core :as agent]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]))
 
-(def ^:dynamic *session-id*
-  "When bound, overrides session-id resolution for the current query scope."
-  nil)
-
-(defn resolver-session-id
-  "Resolve the explicit session-id for resolver/helper execution.
-   Session-scoped reads must provide a session-id via query binding; helpers no
-   longer fall back to inferred ctx ordering or ctx-carried retargeting data."
-  [_agent-session-ctx]
-  (or *session-id*
-      (throw (ex-info "Session-scoped query requires explicit :psi.agent-session/session-id"
-                      {:error-code "request/missing-session-id"}))))
-
 (defn session-data
-  "Get session data for the resolved session-id."
-  [agent-session-ctx]
-  (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
+  "Get session data for an explicit session-id."
+  [agent-session-ctx session-id]
+  (session/get-session-data-in agent-session-ctx session-id))
 
 (defn agent-data
-  "Get agent-core data for the resolved session-id."
-  [agent-session-ctx]
-  (agent/get-data-in (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx))))
+  "Get agent-core data for an explicit session-id."
+  [agent-session-ctx session-id]
+  (agent/get-data-in (ss/agent-ctx-in agent-session-ctx session-id)))
 
 (defn agent-core-messages
   "Extract the message vec from agent-core inside a session context."
-  [agent-session-ctx]
-  (:messages (agent-data agent-session-ctx)))
+  [agent-session-ctx session-id]
+  (:messages (agent-data agent-session-ctx session-id)))
 
 (defn contribution->attrs
   "Project a prompt contribution map to :psi.extension.prompt-contribution/* attributes."

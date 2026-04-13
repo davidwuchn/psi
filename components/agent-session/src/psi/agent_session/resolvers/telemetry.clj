@@ -11,8 +11,8 @@
 (declare tool-lifecycle-summaries)
 (defn- stats-snapshot
   "Build canonical session telemetry stats from current session/journal state."
-  [agent-session-ctx]
-  (let [sd      (support/session-data agent-session-ctx)
+  [agent-session-ctx session-id]
+  (let [sd      (support/session-data agent-session-ctx session-id)
         journal (accessors/journal-state-in agent-session-ctx (:session-id sd))
         msgs    (keep #(when (= :message (:kind %)) (get-in % [:data :message])) journal)]
     {:session-id         (:session-id sd)
@@ -28,8 +28,8 @@
      :context-tokens     (:context-tokens sd)
      :context-window     (:context-window sd)}))
 (defn- canonical-start-time
-  [agent-session-ctx]
-  (let [sd      (support/session-data agent-session-ctx)
+  [agent-session-ctx session-id]
+  (let [sd      (support/session-data agent-session-ctx session-id)
         startup (:startup-bootstrap sd)
         journal (accessors/journal-state-in agent-session-ctx (:session-id sd))
         first-ts (:timestamp (first journal))]
@@ -38,39 +38,39 @@
         (java.time.Instant/now))))
 (pco/defresolver agent-session-canonical-telemetry
   "Resolve canonical top-level telemetry attrs."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/messages-count
                  :psi.agent-session/ai-call-count
                  :psi.agent-session/tool-call-count
                  :psi.agent-session/executed-tool-count
                  :psi.agent-session/start-time
                  :psi.agent-session/current-time]}
-  (let [stats               (stats-snapshot agent-session-ctx)
-        executed-tool-count (count (tool-lifecycle-summaries agent-session-ctx))]
+  (let [stats               (stats-snapshot agent-session-ctx session-id)
+        executed-tool-count (count (tool-lifecycle-summaries agent-session-ctx session-id))]
     {:psi.agent-session/messages-count      (:total-messages stats)
      :psi.agent-session/ai-call-count       (:ai-calls stats)
      :psi.agent-session/tool-call-count     (:tool-calls stats)
      :psi.agent-session/executed-tool-count executed-tool-count
-     :psi.agent-session/start-time          (canonical-start-time agent-session-ctx)
+     :psi.agent-session/start-time          (canonical-start-time agent-session-ctx session-id)
      :psi.agent-session/current-time        (java.time.Instant/now)}))
 (pco/defresolver agent-session-stats
   "Resolve a SessionStats snapshot."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/stats]}
-  {:psi.agent-session/stats (stats-snapshot agent-session-ctx)})
+  {:psi.agent-session/stats (stats-snapshot agent-session-ctx session-id)})
 (defn- utf8-byte-count
   [s]
   (count (.getBytes (str (or s "")) "UTF-8")))
 (defn- tool-call-attempt-events
-  [agent-session-ctx]
-  (let [sid (support/resolver-session-id agent-session-ctx)]
+  [agent-session-ctx session-id]
+  (let [sid session-id]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-call-attempts sid))
              []))))
 (defn- tool-result-ids
-  [agent-session-ctx]
-  (->> (support/agent-core-messages agent-session-ctx)
+  [agent-session-ctx session-id]
+  (->> (support/agent-core-messages agent-session-ctx session-id)
        (filter #(= "toolResult" (:role %)))
        (keep :tool-call-id)
        set))
@@ -141,9 +141,8 @@
         (reduce-attempt-events events)))
 (pco/defresolver agent-session-tool-call-attempts
   "Resolve streamed provider tool-call attempts."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input
-   [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output
    [:psi.agent-session/tool-call-attempt-count
     :psi.agent-session/tool-call-attempt-unmatched-count
@@ -159,15 +158,15 @@
       :psi.tool-call-attempt/argument-bytes
       :psi.tool-call-attempt/executed?
       :psi.tool-call-attempt/result-recorded?]}]}
-  (let [attempts* (build-tool-call-attempts (tool-call-attempt-events agent-session-ctx)
-                                            (tool-result-ids agent-session-ctx))
+  (let [attempts* (build-tool-call-attempts (tool-call-attempt-events agent-session-ctx session-id)
+                                            (tool-result-ids agent-session-ctx session-id))
         unmatched (count (remove :psi.tool-call-attempt/result-recorded? attempts*))]
     {:psi.agent-session/tool-call-attempt-count           (count attempts*)
      :psi.agent-session/tool-call-attempt-unmatched-count unmatched
      :psi.agent-session/tool-call-attempts                attempts*}))
 (defn- tool-lifecycle-events
-  [agent-session-ctx]
-  (let [sid (support/resolver-session-id agent-session-ctx)]
+  [agent-session-ctx session-id]
+  (let [sid session-id]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-lifecycle-events sid))
              []))))
 (defn- tool-lifecycle-event->eql
@@ -183,8 +182,8 @@
    :psi.tool-lifecycle/arguments  (:arguments event)
    :psi.tool-lifecycle/parsed-args (:parsed-args event)})
 (defn- tool-lifecycle-summaries
-  [agent-session-ctx]
-  (->> (tool-lifecycle-events agent-session-ctx)
+  [agent-session-ctx session-id]
+  (->> (tool-lifecycle-events agent-session-ctx session-id)
        (reduce (fn [acc {:keys [tool-id tool-name event-kind timestamp is-error result-text arguments parsed-args]}]
                  (let [k   tool-id
                        cur (get acc k {:psi.tool-lifecycle.summary/tool-id k
@@ -222,9 +221,8 @@
                       :psi.tool-lifecycle.summary/tool-id))
        vec))
 (pco/defresolver agent-session-tool-lifecycle-events
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input
-   [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output
    [:psi.agent-session/tool-lifecycle-event-count
     :psi.agent-session/tool-lifecycle-summary-count
@@ -252,16 +250,16 @@
       :psi.tool-lifecycle.summary/arguments
       :psi.tool-lifecycle.summary/parsed-args]}]}
   (let [events    (mapv tool-lifecycle-event->eql
-                        (tool-lifecycle-events agent-session-ctx))
-        summaries (tool-lifecycle-summaries agent-session-ctx)]
+                        (tool-lifecycle-events agent-session-ctx session-id))
+        summaries (tool-lifecycle-summaries agent-session-ctx session-id)]
     {:psi.agent-session/tool-lifecycle-event-count   (count events)
      :psi.agent-session/tool-lifecycle-events        events
      :psi.agent-session/tool-lifecycle-summary-count (count summaries)
      :psi.agent-session/tool-lifecycle-summaries     summaries}))
 (pco/defresolver tool-lifecycle-summary-by-tool-id
-  [{:keys [psi.agent-session/lookup-tool-id psi/agent-session-ctx]}]
+  [{:keys [psi.agent-session/lookup-tool-id psi/agent-session-ctx psi.agent-session/session-id]}]
   {::pco/input
-   [:psi.agent-session/lookup-tool-id :psi/agent-session-ctx]
+   [:psi.agent-session/lookup-tool-id :psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output
    [{:psi.agent-session/tool-lifecycle-summary-for-tool-id
      [:psi.tool-lifecycle.summary/tool-id
@@ -279,25 +277,25 @@
    (some (fn [summary]
            (when (= lookup-tool-id (:psi.tool-lifecycle.summary/tool-id summary))
              summary))
-         (tool-lifecycle-summaries agent-session-ctx))})
+         (tool-lifecycle-summaries agent-session-ctx session-id))})
 (defn- provider-requests
-  [agent-session-ctx]
-  (let [sid (support/resolver-session-id agent-session-ctx)]
+  [agent-session-ctx session-id]
+  (let [sid session-id]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-requests sid))
              []))))
 (defn- provider-nonerror-replies
-  [agent-session-ctx]
-  (let [sid (support/resolver-session-id agent-session-ctx)]
+  [agent-session-ctx session-id]
+  (let [sid session-id]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-replies sid))
              []))))
 (defn- provider-error-replies
-  [agent-session-ctx]
-  (vec (or (:provider-error-replies (support/session-data agent-session-ctx))
+  [agent-session-ctx session-id]
+  (vec (or (:provider-error-replies (support/session-data agent-session-ctx session-id))
            [])))
 (defn- provider-replies
-  [agent-session-ctx]
-  (let [nonerror (provider-nonerror-replies agent-session-ctx)
-        errors   (provider-error-replies agent-session-ctx)]
+  [agent-session-ctx session-id]
+  (let [nonerror (provider-nonerror-replies agent-session-ctx session-id)
+        errors   (provider-error-replies agent-session-ctx session-id)]
     (if (seq errors)
       (->> (concat (remove #(= :error (get-in % [:event :type])) nonerror)
                    errors)
@@ -323,8 +321,8 @@
    :psi.provider-reply/event     (:event capture)})
 (pco/defresolver provider-request-by-turn-id
   "Resolve a single captured provider request by turn-id."
-  [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx]}]
-  {::pco/input  [:psi.agent-session/lookup-turn-id :psi/agent-session-ctx]
+  [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi.agent-session/lookup-turn-id :psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.agent-session/provider-request-for-turn-id
                   [:psi.provider-request/provider
                    :psi.provider-request/api
@@ -334,14 +332,14 @@
                    :psi.provider-request/headers
                    :psi.provider-request/body]}]}
   {:psi.agent-session/provider-request-for-turn-id
-   (some->> (provider-requests agent-session-ctx)
+   (some->> (provider-requests agent-session-ctx session-id)
             (some (fn [capture]
                     (when (= lookup-turn-id (:turn-id capture))
                       (provider-request->eql capture)))))})
 (pco/defresolver provider-reply-by-turn-id
   "Resolve a single captured provider reply by turn-id."
-  [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx]}]
-  {::pco/input  [:psi.agent-session/lookup-turn-id :psi/agent-session-ctx]
+  [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi.agent-session/lookup-turn-id :psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.agent-session/provider-reply-for-turn-id
                   [:psi.provider-reply/provider
                    :psi.provider-reply/api
@@ -350,15 +348,15 @@
                    :psi.provider-reply/timestamp
                    :psi.provider-reply/event]}]}
   {:psi.agent-session/provider-reply-for-turn-id
-   (some->> (provider-replies agent-session-ctx)
+   (some->> (provider-replies agent-session-ctx session-id)
             reverse
             (some (fn [capture]
                     (when (= lookup-turn-id (:turn-id capture))
                       (provider-reply->eql capture)))))})
 (pco/defresolver agent-session-provider-captures
   "Resolve captured outbound provider requests and inbound provider reply events."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/provider-request-count
                  :psi.agent-session/provider-reply-count
                  {:psi.agent-session/provider-last-request
@@ -405,9 +403,9 @@
                    :psi.provider-reply/turn-id
                    :psi.provider-reply/timestamp
                    :psi.provider-reply/event]}]}
-  (let [requests*         (mapv provider-request->eql (provider-requests agent-session-ctx))
-        raw-replies       (provider-replies agent-session-ctx)
-        raw-error-replies (provider-error-replies agent-session-ctx)
+  (let [requests*         (mapv provider-request->eql (provider-requests agent-session-ctx session-id))
+        raw-replies       (provider-replies agent-session-ctx session-id)
+        raw-error-replies (provider-error-replies agent-session-ctx session-id)
         replies*          (mapv provider-reply->eql raw-replies)
         error-replies*    (mapv provider-reply->eql raw-error-replies)]
     {:psi.agent-session/provider-request-count   (count requests*)
@@ -428,10 +426,10 @@
     (or (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))
         (second (re-find #"\[request-id\s+([^\]\s]+)\]" error-text)))))
 (defn- api-errors-from-messages
-  [agent-session-ctx]
-  (if-not (ss/agent-ctx-in agent-session-ctx (support/resolver-session-id agent-session-ctx))
+  [agent-session-ctx session-id]
+  (if-not (ss/agent-ctx-in agent-session-ctx session-id)
     []
-    (let [msgs (support/agent-core-messages agent-session-ctx)]
+    (let [msgs (support/agent-core-messages agent-session-ctx session-id)]
       (->> msgs
            (map-indexed vector)
            (filter (fn [[_ m]]
@@ -448,9 +446,10 @@
                       :psi.api-error/error-message-brief brief
                       :psi.api-error/error-message-full err-text
                       :psi.api-error/request-id (parse-request-id err-text)
+                      :psi.agent-session/session-id session-id
                       :psi/agent-session-ctx agent-session-ctx})))))))
 (defn- provider-error-reply->api-error
-  [agent-session-ctx idx capture]
+  [agent-session-ctx session-id idx capture]
   (let [event      (:event capture)
         err-text   (:error-message event)
         body       (:body event)
@@ -473,11 +472,12 @@
      :psi.api-error/turn-id (:turn-id capture)
      :psi.api-error/provider-event event
      :psi.api-error/provider-reply-capture capture
+     :psi.agent-session/session-id session-id
      :psi/agent-session-ctx agent-session-ctx}))
 (defn- find-provider-reply-by-request-id
-  [agent-session-ctx request-id]
+  [agent-session-ctx session-id request-id]
   (when (seq request-id)
-    (->> (provider-replies agent-session-ctx)
+    (->> (provider-replies agent-session-ctx session-id)
          reverse
          (some (fn [capture]
                  (let [event (:event capture)
@@ -488,25 +488,28 @@
                                 (parse-request-id (:error-message event))))
                      capture)))))))
 (defn- enrich-api-error-from-provider-reply
-  [agent-session-ctx error]
+  [agent-session-ctx session-id error]
   (if (or (:psi.api-error/provider-event error)
           (not (:psi/agent-session-ctx error)))
     error
     (if-let [capture (find-provider-reply-by-request-id agent-session-ctx
+                                                        session-id
                                                         (:psi.api-error/request-id error))]
       (merge error
              (dissoc (provider-error-reply->api-error agent-session-ctx
+                                                      session-id
                                                       (:psi.api-error/message-index error)
                                                       capture)
                      :psi.api-error/message-index
+                     :psi.agent-session/session-id
                      :psi/agent-session-ctx))
       error)))
 (defn- api-errors-from-provider-replies
-  [agent-session-ctx]
-  (->> (provider-replies agent-session-ctx)
+  [agent-session-ctx session-id]
+  (->> (provider-replies agent-session-ctx session-id)
        (keep-indexed (fn [idx capture]
                        (when (= :error (get-in capture [:event :type]))
-                         (provider-error-reply->api-error agent-session-ctx idx capture))))
+                         (provider-error-reply->api-error agent-session-ctx session-id idx capture))))
        vec))
 (defn- dedupe-api-errors
   [errors]
@@ -616,8 +619,8 @@
      :psi.request-shape/alternation-violations violations
      :psi.request-shape/empty-content-count    empty-ct}))
 (defn- resolve-context-window
-  [agent-session-ctx]
-  (or (:context-window (support/session-data agent-session-ctx))
+  [agent-session-ctx session-id]
+  (or (:context-window (support/session-data agent-session-ctx session-id))
       (some-> (:model-config-atom agent-session-ctx) deref :context-window)
       200000))
 (defn- resolve-max-output-tokens
@@ -626,8 +629,8 @@
       16384))
 (pco/defresolver api-error-list
   "Extract API errors from assistant messages and provider reply captures."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/api-error-count
                  {:psi.agent-session/api-errors
                   [:psi.api-error/message-index
@@ -640,19 +643,18 @@
                    :psi.api-error/api
                    :psi.api-error/url
                    :psi.api-error/turn-id
-                   :psi.api-error/provider-event
-                   :psi/agent-session-ctx]}]}
-  (let [message-errors  (mapv #(enrich-api-error-from-provider-reply agent-session-ctx %)
-                              (api-errors-from-messages agent-session-ctx))
-        provider-errors (api-errors-from-provider-replies agent-session-ctx)
+                   :psi.api-error/provider-event]}]}
+  (let [message-errors  (mapv #(enrich-api-error-from-provider-reply agent-session-ctx session-id %)
+                              (api-errors-from-messages agent-session-ctx session-id))
+        provider-errors (api-errors-from-provider-replies agent-session-ctx session-id)
         errors          (dedupe-api-errors (vec (concat message-errors provider-errors)))]
     {:psi.agent-session/api-error-count (count errors)
      :psi.agent-session/api-errors      errors}))
 (pco/defresolver api-error-detail
   "Resolve API error detail."
-  [{:keys [psi.api-error/message-index psi/agent-session-ctx]
+  [{:keys [psi.api-error/message-index psi/agent-session-ctx psi.agent-session/session-id]
     :as entity}]
-  {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
+  {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.api-error/error-message-full
                  :psi.api-error/request-id
                  :psi.api-error/provider
@@ -665,7 +667,7 @@
                    :psi.context-message/role
                    :psi.context-message/content-types
                    :psi.context-message/snippet]}]}
-  (let [msgs              (support/agent-core-messages agent-session-ctx)
+  (let [msgs              (support/agent-core-messages agent-session-ctx session-id)
         msg               (nth msgs message-index nil)
         err-text          (or (:psi.api-error/error-message-full entity)
                               (when msg (error-message-text msg)))
@@ -687,34 +689,34 @@
      :psi.api-error/surrounding-messages surr}))
 (pco/defresolver api-error-request-shape
   "Resolve API error request shape."
-  [{:keys [psi.api-error/message-index psi/agent-session-ctx]}]
-  {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
+  [{:keys [psi.api-error/message-index psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.api-error/request-shape request-shape-output}]}
-  (let [data      (support/agent-data agent-session-ctx)
+  (let [data      (support/agent-data agent-session-ctx session-id)
         msgs      (:messages data)
         pre-error (subvec (vec msgs) 0 (min message-index (count msgs)))]
     {:psi.api-error/request-shape
      (compute-request-shape (:system-prompt data)
                             pre-error
                             (:tools data)
-                            (resolve-context-window agent-session-ctx)
+                            (resolve-context-window agent-session-ctx session-id)
                             (resolve-max-output-tokens agent-session-ctx))}))
 (pco/defresolver current-request-shape
   "Resolve request shape for the current conversation state."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.agent-session/request-shape request-shape-output}]}
-  (let [data (support/agent-data agent-session-ctx)]
+  (let [data (support/agent-data agent-session-ctx session-id)]
     {:psi.agent-session/request-shape
      (compute-request-shape (:system-prompt data)
                             (:messages data)
                             (:tools data)
-                            (resolve-context-window agent-session-ctx)
+                            (resolve-context-window agent-session-ctx session-id)
                             (resolve-max-output-tokens agent-session-ctx))}))
 (pco/defresolver agent-session-turn
   "Resolve per-turn streaming statechart state."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.turn/phase
                  :psi.turn/is-streaming
                  :psi.turn/text
@@ -728,8 +730,7 @@
                  :psi.turn/is-tool-accumulating
                  :psi.turn/is-done
                  :psi.turn/is-error]}
-  (let [session-id (:session-id (support/session-data agent-session-ctx))]
-    (if-let [turn-ctx (accessors/turn-context-in agent-session-ctx session-id)]
+  (if-let [turn-ctx (accessors/turn-context-in agent-session-ctx session-id)]
       (let [phase (turn-sc/turn-phase turn-ctx)
             td    (turn-sc/get-turn-data turn-ctx)]
         {:psi.turn/phase                phase
@@ -757,7 +758,7 @@
        :psi.turn/is-text-accumulating false
        :psi.turn/is-tool-accumulating false
        :psi.turn/is-done              false
-       :psi.turn/is-error             false})))
+       :psi.turn/is-error             false}))
 (def resolvers
   (into basics/resolvers
         [agent-session-canonical-telemetry

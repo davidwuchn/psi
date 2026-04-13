@@ -47,12 +47,11 @@
           qctx            (query/create-query-context)]
       (session/register-resolvers-in! qctx)
       (let [session-id (->> (ss/list-context-sessions-in session-ctx) first :session-id)
-            result (binding [psi.agent-session.resolvers.support/*session-id* session-id]
-                     (query/query-in qctx
-                                     {:psi/agent-session-ctx session-ctx
-                                      :psi.agent-session/session-id session-id}
-                                     [:psi.agent-session/session-id
-                                      :psi.agent-session/phase]))]
+            result     (query/query-in qctx
+                                       {:psi/agent-session-ctx session-ctx
+                                        :psi.agent-session/session-id session-id}
+                                       [:psi.agent-session/session-id
+                                        :psi.agent-session/phase])]
         (is (string? (:psi.agent-session/session-id result)))
         (is (= :idle (:psi.agent-session/phase result)))))))
 
@@ -240,7 +239,7 @@
                                                                                      :data {:result (get-in data [:_event :data :result])}}])})))
                                    (ele/final {:id :done}))
           mutate (fn [op params]
-                   (let [ctx* (assoc ctx :psi.agent-session/session-id session-id)]
+                   (let [ctx* ctx]
                      (get (query/query-in qctx
                                           {:psi/agent-session-ctx ctx*
                                            :psi.agent-session/session-id session-id}

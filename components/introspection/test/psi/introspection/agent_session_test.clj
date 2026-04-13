@@ -183,12 +183,13 @@
       (engine/bootstrap-system-in! (:engine-ctx ctx))
       (introspection/register-resolvers-in! ctx)
       (let [r (introspection/query-agent-session-in
-               ctx [:psi.startup/prompt-count
-                    :psi.startup/skill-count
-                    :psi.startup/tool-count
-                    :psi.startup/extension-loaded-count
-                    :psi.startup/extension-error-count
-                    :psi.startup/mutations])]
+               ctx session-id
+               [:psi.startup/prompt-count
+                :psi.startup/skill-count
+                :psi.startup/tool-count
+                :psi.startup/extension-loaded-count
+                :psi.startup/extension-error-count
+                :psi.startup/mutations])]
         (is (= 1 (:psi.startup/prompt-count r)))
         (is (= 0 (:psi.startup/skill-count r)))
         (is (= 0 (:psi.startup/tool-count r)))

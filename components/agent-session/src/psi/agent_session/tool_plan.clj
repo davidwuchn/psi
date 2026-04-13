@@ -8,7 +8,6 @@
    [clojure.walk :as walk]
    [psi.agent-core.core :as agent]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.resolvers.support :as resolver-support]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tools :as tools]
    [psi.query.core :as query]))
@@ -46,11 +45,10 @@
         _                   (register-mutations! qctx (:all-mutations ctx) true)
         tool                (tools/make-app-query-tool
                              (fn [eql-query]
-                               (binding [resolver-support/*session-id* session-id]
-                                 (query/query-in qctx
-                                                 {:psi/agent-session-ctx        ctx
-                                                  :psi.agent-session/session-id session-id}
-                                                 eql-query)))
+                               (query/query-in qctx
+                                               {:psi/agent-session-ctx        ctx
+                                                :psi.agent-session/session-id session-id}
+                                               eql-query))
                              {:overrides   (:overrides opts)
                               :tool-call-id (:tool-call-id opts)})]
     ((:execute tool) args)))
