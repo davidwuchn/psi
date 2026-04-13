@@ -35,6 +35,8 @@ change_chain ≡ λδ. δ ∉ MemoryArtifacts →
   verify(coherence({meta spec tests code doc})) →
   suggest(trigger(mementum,δ,summary))   ⟨candidate only; mementum protocol + gates decide memories/knowledge⟩
 
+λchange. decompose(change, vertical_slice) > decompose(change, horizontal_layer)
+
 coherence ≡ λA.
   ∀a ∈ A. ∀b ∈ A.
     related(a,b) → consistent(a,b)
