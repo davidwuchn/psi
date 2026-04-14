@@ -23,6 +23,7 @@ Wave-boundary check results:
 
 Active follow-on slices from Gordian:
 1. keep an eye on prompt-lifecycle / session-lifecycle conceptual overlap while avoiding new structural coupling
+2. fold child-session runtime allocation semantics into the session lifecycle boundary so mutation-time child creation remains obviously aligned with spec/tests
 
 Completed follow-on slices:
 - OpenAI migration completed; `psi.ai.providers.openai.common` has been deleted

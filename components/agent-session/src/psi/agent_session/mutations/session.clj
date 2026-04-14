@@ -7,6 +7,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
+   [psi.agent-session.session-runtime :as runtime]
    [psi.agent-session.session-state :as ss]))
 
 (pco/defmutation set-session-name
@@ -73,6 +74,17 @@
                          :tool-defs        tool-defs
                          :thinking-level   thinking-level}
                         {:origin :mutations})
+    (let [sd    (ss/get-session-data-in agent-session-ctx child-sid)
+          fresh (runtime/create-runtime!
+                 agent-session-ctx child-sid
+                 {:session-data  sd
+                  :messages      []
+                  :agent-initial (:agent-initial agent-session-ctx)})]
+      (swap! (:state* agent-session-ctx)
+             (fn [state]
+               (-> state
+                   (assoc-in [:agent-session :sessions child-sid :agent-ctx] (:agent-ctx fresh))
+                   (assoc-in [:agent-session :sessions child-sid :sc-session-id] (:sc-session-id fresh))))))
     {:psi.agent-session/session-id child-sid}))
 
 (pco/defmutation run-agent-loop-in-session

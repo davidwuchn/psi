@@ -156,9 +156,7 @@
         (assoc-in [:agent-session :sessions child-session-id :persistence]
                   {:journal     []
                    :flush-state {:flushed? false :session-file nil}})
-        (initialize-session-slots child-session-id [])
-        (assoc-in [:agent-session :sessions child-session-id :sc-session-id]
-                  (java.util.UUID/randomUUID)))))
+        (initialize-session-slots child-session-id []))))
 
 (defn initialize-resumed-session-state
   [state current-sd {:keys [session-id _source-session-id session-path header entries model thinking-level]}]

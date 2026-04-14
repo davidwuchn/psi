@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-13
+
+- λ Δ Fixed child-session runtime allocation for extension-driven agent execution:
+  - `psi.extension/create-child-session` now allocates real child runtime handles (`agent-ctx` + started session statechart) instead of leaving child sessions with placeholder statechart ids
+  - fixed `agent` / `agent-chain` sub-agent execution path so child sessions remain runnable even when the parent session is busy or streaming
+  - added regression coverage for child-session mutation creation and child-session execution while the parent session is `:streaming`
+- ✓ Verification:
+  - targeted `psi.agent-session.child-session-mutation-test`
+  - targeted `extensions.agent-test`
+  - targeted `extensions.agent-chain-test`
+
 ## 2026-04-09
 
 - λ Δ Hardened prompt-completion projections against keyword sentinel values:

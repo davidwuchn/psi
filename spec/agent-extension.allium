@@ -266,7 +266,7 @@ rule CreateChildSession {
             worktree_path: core/WorktreePath(ctx)
         }),
         agent_ctx: agent_ctx,
-        sc_session_id: UUID(),
+        sc_session_id: core/StartedSessionStatechartSession(ctx, child_session_id),
         telemetry: core/EmptyTelemetry(),
         persistence: core/EmptyPersistence(),
         turn: { ctx: null }
@@ -292,7 +292,8 @@ rule CreateChildSession {
     @guidance
         -- The child session lives in the same state* atom as all other sessions.
         -- It shares the context's extensions, registries, config, and dispatch pipeline.
-        -- It owns its own agent_core and statechart_session_id (per ConcurrentSessionExecution).
+        -- It owns its own agent_core and a started statechart session id (per ConcurrentSessionExecution).
+        -- Child creation must allocate real runtime handles; a placeholder/random statechart id is invalid.
         -- The executor runs against the core ctx, not an extension-fabricated ctx.
         -- Persistence, journaling, and telemetry use the same infrastructure as any session.
         -- The extension never holds a session-ctx; it holds only the session_id.

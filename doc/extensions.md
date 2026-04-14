@@ -105,6 +105,7 @@ Purpose: create/continue/remove/list agents with workflow-backed UI widgets.
 - Tool: `agent`
   - actions: `create`, `continue`, `remove`, `list`
   - create options include `agent`, `mode` (`sync|async`), `fork_session`, `timeout_ms`
+  - implementation note: agent runs execute in real child sessions with their own runtime handles and started session statecharts, so sub-agents can run even while the parent session is busy/streaming
 - Commands:
   - `/agent [--fork|-f] [@agent] <task>`
   - `/agent-cont <id> <prompt>`
