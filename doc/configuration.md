@@ -139,17 +139,141 @@ explicitly persist them).
 
 ---
 
+## Custom models — `models.edn`
+
+Define custom providers (local models, proxies, self-hosted endpoints) in EDN
+config files. Both user-global and project-local files are supported:
+
+| File | Scope |
+|------|-------|
+| `~/.psi/agent/models.edn` | User-global — loaded at startup |
+| `<cwd>/.psi/models.edn` | Project-local — loaded at session bootstrap |
+
+Project models override user models when the same `(provider, id)` pair exists
+in both files. Custom models never shadow built-in models.
+
+### Format
+
+```edn
+{:version 1
+ :providers
+ {"local"
+  {:base-url "http://localhost:8080/v1"
+   :api      :openai-completions
+   :auth     {:api-key      "none"       ; literal, or "env:MY_API_KEY"
+              :auth-header? true          ; send Authorization: Bearer (default true)
+              :headers      {}}           ; extra request headers
+   :models
+   [{:id               "llama-3.3-70b"
+     :name             "Llama 3.3 70B"
+     :supports-reasoning false
+     :supports-images  false
+     :context-window   128000
+     :max-tokens       16384}]}}}
+```
+
+### Provider fields
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `:base-url` | **yes** | — | Base URL for the API endpoint |
+| `:api` | **yes** | — | Wire protocol: `:openai-completions`, `:anthropic-messages`, or `:openai-codex-responses` |
+| `:auth` | no | — | Auth config (see below) |
+| `:models` | **yes** | — | At least one model definition |
+
+### Auth fields
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `:api-key` | `nil` | API key — literal string or `"env:VAR_NAME"` to read from environment |
+| `:auth-header?` | `true` | When true, sends `Authorization: Bearer <key>`. Set to false for servers that reject auth headers |
+| `:headers` | `{}` | Additional headers merged into every request |
+
+### Model fields
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `:id` | **(required)** | Model identifier sent to the API |
+| `:name` | same as `:id` | Human-readable display name |
+| `:supports-reasoning` | `false` | Supports extended thinking |
+| `:supports-images` | `false` | Accepts image input |
+| `:supports-text` | `true` | Accepts text input |
+| `:context-window` | `128000` | Input context window (tokens) |
+| `:max-tokens` | `16384` | Max output tokens |
+| `:input-cost` | `0.0` | Cost per million input tokens |
+| `:output-cost` | `0.0` | Cost per million output tokens |
+| `:cache-read-cost` | `0.0` | Cost per million cache-read tokens |
+| `:cache-write-cost` | `0.0` | Cost per million cache-write tokens |
+
+### Examples
+
+**Ollama on localhost:**
+
+```edn
+{:version 1
+ :providers
+ {"ollama"
+  {:base-url "http://localhost:11434/v1"
+   :api      :openai-completions
+   :auth     {:api-key "ollama" :auth-header? false}
+   :models
+   [{:id "qwen2.5-coder:32b" :name "Qwen 2.5 Coder 32B" :context-window 32768}
+    {:id "llama3.3:70b"       :name "Llama 3.3 70B"       :context-window 128000}]}}}
+```
+
+**vLLM on a remote server:**
+
+```edn
+{:version 1
+ :providers
+ {"vllm-dev"
+  {:base-url "http://gpu-server.local:8000/v1"
+   :api      :openai-completions
+   :auth     {:api-key "env:VLLM_API_KEY"}
+   :models
+   [{:id "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+     :name "Qwen3 Coder 480B"
+     :supports-reasoning true
+     :context-window 262144
+     :max-tokens 32768}]}}}
+```
+
+**LM Studio:**
+
+```edn
+{:version 1
+ :providers
+ {"lm-studio"
+  {:base-url "http://localhost:1234/v1"
+   :api      :openai-completions
+   :auth     {:auth-header? false}
+   :models
+   [{:id "local-model" :name "LM Studio Model"}]}}}
+```
+
+### Validation
+
+Invalid `models.edn` files are logged as warnings and skipped. Built-in models
+remain available. Check `*warn-on-reflection*` output or the session log for
+parse errors.
+
+---
+
 ## Startup resolution
 
 At bootstrap, psi:
 
-1. Reads `~/.psi/agent/config.edn` (user config — missing file is silently ignored)
-2. Reads `<cwd>/.psi/project.edn` (project config — missing file is silently ignored)
-3. Merges: system defaults ← user ← project (rightmost wins per key)
-4. Resolves the model — if the merged model spec doesn't match a known model,
+1. Reads `~/.psi/agent/models.edn` (user models — missing file is silently ignored)
+2. Reads `~/.psi/agent/config.edn` (user config — missing file is silently ignored)
+3. Reads `<cwd>/.psi/models.edn` (project models — missing file is silently ignored)
+4. Reads `<cwd>/.psi/project.edn` (project config — missing file is silently ignored)
+5. Merges custom models: user models ← project models (project wins per key)
+6. Merges model catalog: built-in models + custom models (custom extends, does not shadow)
+7. Merges config: system defaults ← user config ← project config (rightmost wins per key)
+8. Resolves the model — if the merged model spec doesn't match a catalog entry,
    falls back to the CLI `--model` flag or `PSI_MODEL` env var
-5. Clamps thinking-level to what the resolved model supports
-6. Sets session state from the merged result
+9. Clamps thinking-level to what the resolved model supports
+10. Sets session state from the merged result
 
 CLI flags and environment variables are applied before config-file resolution
 and act as the fallback when no config file specifies a value.

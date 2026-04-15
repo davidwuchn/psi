@@ -24,6 +24,17 @@ A meta model for psi.
 - psi runtime owns process-scoped managed services on ctx for long-lived subprocesses and similar runtime resources
 - managed services are keyed by logical identity and reused within ctx rather than extension-local hidden state
 
+- psi has a model catalog of built-in and user-defined AI models
+- built-in models are compiled into the AI component (anthropic, openai)
+- user-defined models are loaded from `~/.psi/agent/models.edn` (user-global) and `.psi/models.edn` (project-local)
+- project models override user models for the same (provider, id) pair
+- custom models do not shadow built-in models; conflicts are warned and skipped
+- a custom provider defines: base-url, api protocol, optional auth, and one or more model definitions
+- custom providers reuse existing transport implementations via their declared api protocol
+- provider dispatch resolves by exact provider key first, then falls back to api protocol key
+- api-key resolution supports env var reference (`"env:VAR"`) and literal strings
+- auth-header control allows omitting Authorization for local servers that reject it
+
 - psi interacts with AI LLM models via sessions
 - psi hosts multiple sessions concurrently inside one process
 - psi has a session host registry and one active session pointer

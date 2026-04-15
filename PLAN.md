@@ -4,6 +4,86 @@ Remove completed plan sections once finished; `PLAN.md` should contain active wo
 
 # Active work
 
+## Custom providers — local model support
+
+Goal: load user-defined model providers from `models.edn` config files so users
+can target local OpenAI-compatible servers (Ollama, vLLM, LM Studio, llama.cpp).
+
+Spec: `spec/custom-providers.allium`
+Doc: `doc/configuration.md` (Custom models section)
+Meta: `META.md` (model catalog bullets)
+
+### Implementation slices
+
+1. **`psi.ai.user-models`** — new namespace in `components/ai/src/`
+   - Read + parse `models.edn` from a given path
+   - Validate against malli schema (mirrors the allium `ModelsConfig` shape)
+   - Resolve API key specs (`"env:VAR"` / literal)
+   - Expand provider + model defs into fully-formed model maps
+   - Return `{:models [...] :auth {provider-key → ProviderAuth}}`
+   - Log warnings and return empty on invalid file
+
+2. **`psi.ai.model-registry`** — new namespace in `components/ai/src/`
+   - Owns the merged model catalog atom: built-in + user + project custom
+   - `(all-models)` → replaces current `psi.ai.models/all-models` map
+   - `(find-model provider-key model-id)` → lookup
+   - `(get-auth provider-key)` → ProviderAuth or nil
+   - `(load-user-models! path)` — called at startup
+   - `(load-project-models! path)` — called at session bootstrap
+   - `(refresh!)` — reload from disk
+
+3. **Schema changes** in `psi.ai.schemas`
+   - `Provider`: `[:enum :anthropic :openai]` → `keyword?`
+   - `Api`: add no changes (`:openai-completions` already covers local)
+   - Model schema: stays closed but Provider constraint relaxes
+
+4. **Provider dispatch fallback** in `psi.ai.core`
+   - `resolve-provider` gains api-key fallback:
+     `(or (get @registry (:provider model)) (get @registry (:api model)))`
+   - Register built-in providers also under their api keys:
+     `{:openai-completions openai/provider, :anthropic-messages anthropic/provider, ...}`
+
+5. **Auth injection** in `psi.agent-session.prompt-request`
+   - `resolve-api-key` gains model-registry auth lookup as fallback source
+   - `session->request-options` propagates `:headers` from custom provider auth
+   - When `auth-header?` is false, set sentinel so transport skips `Authorization`
+
+6. **Transport auth-header control** in `psi.ai.providers.openai.chat-completions`
+   - `build-request`: skip `Authorization` header when options signal auth-header disabled
+   - Merge custom `:headers` from options into request headers
+
+7. **Callers of `ai-models/all-models`** — migrate to `model-registry/all-models`
+   - `psi.agent-session.prompt-request/resolve-runtime-model`
+   - `psi.ai.core/ai-model-list-resolver`
+   - `psi.ai.core/ai-provider-models-resolver`
+   - Any other direct refs
+
+8. **Tests**
+   - `psi.ai.user-models-test`: parse valid/invalid EDN, env var resolution, defaults
+   - `psi.ai.model-registry-test`: merge precedence, no shadow built-ins, auth lookup
+   - `psi.ai.core-test`: provider dispatch api-key fallback
+   - `psi.agent-session.prompt-request-test`: auth injection for custom providers
+   - Integration test: end-to-end with a mock local server (optional / later)
+
+### Dependencies between slices
+
+```
+1 (user-models) → 2 (model-registry) → 3 (schema)
+                                       → 4 (dispatch)
+                                       → 5 (auth injection)
+                                       → 6 (transport)
+                                       → 7 (caller migration)
+8 (tests) follows each slice
+```
+
+### Guardrails
+
+- Built-in models unchanged — zero regression risk
+- Invalid `models.edn` → warn + empty, never block startup
+- No new dependencies between components
+- `model-registry` is in `ai` component alongside `models` — same dependency scope
+- `auth-header?` defaults to `true` — existing behavior unchanged
+
 ## Post-Wave-B Gordian follow-on
 
 Wave B is complete.

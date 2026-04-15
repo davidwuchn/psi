@@ -1,0 +1,243 @@
+-- allium: 1
+
+-- custom-providers.allium
+-- User-defined model providers loaded from config files.
+-- Enables local models (Ollama, llama.cpp, vLLM, LM Studio, etc.)
+-- running an OpenAI-compatible API on localhost.
+
+use "./config-sources.allium" as config
+
+-- ── Values ───────────────────────────────────────────────────────────────────
+
+value ApiProtocol {
+    api: anthropic_messages | openai_completions | openai_codex_responses
+}
+
+value ApiKeySpec {
+    -- Resolution order:
+    --   1. "env:VAR_NAME"  → System/getenv("VAR_NAME")
+    --   2. literal string  → used as-is
+    -- nil / absent → no auth
+    raw: String?
+}
+
+value ProviderAuthConfig {
+    api_key: ApiKeySpec?
+    auth_header: Boolean = true
+    -- auth_header true  → send "Authorization: Bearer <key>"
+    -- auth_header false → omit Authorization header entirely
+    headers: Map<String, String>?
+}
+
+value CustomModelDef {
+    id: String
+    name: String?                              -- defaults to id
+    supports_reasoning: Boolean = false
+    supports_images: Boolean = false
+    supports_text: Boolean = true
+    context_window: PositiveInt = 128000
+    max_tokens: PositiveInt = 16384
+    input_cost: Number = 0.0
+    output_cost: Number = 0.0
+    cache_read_cost: Number = 0.0
+    cache_write_cost: Number = 0.0
+}
+
+value CustomProviderDef {
+    base_url: String                           -- required, e.g. "http://localhost:8080/v1"
+    api: ApiProtocol                           -- required, wire protocol to use
+    auth: ProviderAuthConfig?
+    models: List<CustomModelDef>               -- at least one
+}
+
+value ModelsConfig {
+    version: PositiveInt = 1
+    providers: Map<String, CustomProviderDef>
+}
+
+value ResolvedCustomModel {
+    -- A fully-formed model map, ready to merge into the catalog.
+    -- Carries all fields of a built-in model plus origin metadata.
+    id: String
+    name: String
+    provider: String                           -- the custom provider key, e.g. "local"
+    api: ApiProtocol
+    base_url: String
+    supports_reasoning: Boolean
+    supports_images: Boolean
+    supports_text: Boolean
+    context_window: PositiveInt
+    max_tokens: PositiveInt
+    input_cost: Number
+    output_cost: Number
+    cache_read_cost: Number
+    cache_write_cost: Number
+}
+
+value ProviderAuth {
+    provider: String
+    api_key: String?
+    auth_header: Boolean
+    headers: Map<String, String>?
+}
+
+-- ── Config files ─────────────────────────────────────────────────────────────
+
+config {
+    user_models_file: String = "~/.psi/agent/models.edn"
+    project_models_file: String = ".psi/models.edn"
+}
+
+-- ── Loading ──────────────────────────────────────────────────────────────────
+
+rule LoadModelsFromUserFile {
+    when: SystemStartup
+
+    let raw = ReadEdn(config.user_models_file) or null
+
+    ensures: raw == null implies user_models = []
+    ensures: raw != null implies user_models = ParseModelsConfig(raw)
+}
+
+rule LoadModelsFromProjectFile {
+    when: SessionBootstrapStarted(session)
+
+    let raw = ReadEdn(config.project_models_file) or null
+
+    ensures: raw == null implies project_models = []
+    ensures: raw != null implies project_models = ParseModelsConfig(raw)
+}
+
+rule ParseModelsConfig {
+    requires: ValidateSchema(raw, ModelsConfig)
+
+    for each (provider_key, provider_def) in raw.providers:
+        requires: Length(provider_def.models) >= 1
+        requires: NotBlank(provider_def.base_url)
+
+        for each model_def in provider_def.models:
+            ensures: ResolvedCustomModel {
+                id: model_def.id,
+                name: model_def.name or model_def.id,
+                provider: provider_key,
+                api: provider_def.api,
+                base_url: provider_def.base_url,
+                supports_reasoning: model_def.supports_reasoning,
+                supports_images: model_def.supports_images,
+                supports_text: model_def.supports_text,
+                context_window: model_def.context_window,
+                max_tokens: model_def.max_tokens,
+                input_cost: model_def.input_cost,
+                output_cost: model_def.output_cost,
+                cache_read_cost: model_def.cache_read_cost,
+                cache_write_cost: model_def.cache_write_cost
+            }
+}
+
+rule ResolveApiKey {
+    -- Resolve raw api-key spec to concrete string or nil.
+
+    when: ApiKeySpec(raw)
+
+    ensures: raw == null implies resolved = null
+    ensures: StartsWith(raw, "env:") implies resolved = SystemGetenv(Substring(raw, 4))
+    ensures: not StartsWith(raw, "env:") implies resolved = raw
+}
+
+-- ── Precedence ───────────────────────────────────────────────────────────────
+
+rule ProjectModelsOverrideUserModels {
+    -- When the same (provider, model-id) pair exists in both project and user
+    -- models files, the project definition wins.
+
+    when: MergeModels(user_models, project_models)
+
+    ensures: for each model in project_models:
+        model replaces any user_model where
+            user_model.provider == model.provider and
+            user_model.id == model.id
+}
+
+rule CustomModelsDoNotReplaceBuiltIns {
+    -- Custom models extend the catalog; they do not shadow same-named built-ins.
+    -- If a custom model has the same (provider, id) as a built-in, the custom
+    -- model is skipped and a warning is logged.
+
+    when: MergeCatalog(builtin_models, custom_models)
+
+    ensures: for each model in custom_models:
+        if ExistsBuiltIn(provider: model.provider, id: model.id):
+            LogWarning("Custom model {provider}/{id} shadows built-in; skipping")
+            model is not added
+        else:
+            model is added to catalog
+}
+
+-- ── Provider dispatch ────────────────────────────────────────────────────────
+
+rule ProviderDispatchByApi {
+    -- Custom providers do not register their own streaming implementation.
+    -- Instead, dispatch falls back from provider key to api key.
+
+    when: ResolveProvider(model)
+
+    ensures: provider_impl =
+        ExactMatch(provider_registry, model.provider)
+        or ExactMatch(provider_registry, model.api)
+        or Error("No provider implementation for {model.provider} (api: {model.api})")
+}
+
+-- ── Auth injection ───────────────────────────────────────────────────────────
+
+rule InjectCustomProviderAuth {
+    -- During request preparation, if the model's provider has a custom auth
+    -- config, inject the resolved api-key and headers into stream options.
+
+    when: BuildPreparedRequest(session, model)
+
+    let auth = LookupProviderAuth(model.provider)
+
+    ensures: auth == null implies ai_options unchanged
+    ensures: auth != null and auth.api_key != null and auth.auth_header implies
+        ai_options.api_key = auth.api_key
+    ensures: auth != null and auth.api_key != null and not auth.auth_header implies
+        ai_options.api_key = null
+        -- Provider transport will not send Authorization header
+    ensures: auth != null and auth.headers != null implies
+        ai_options.headers = Merge(ai_options.headers or {}, auth.headers)
+}
+
+rule NoAuthHeaderWhenDisabled {
+    -- When auth_header is false, the transport must not send Authorization.
+    -- This supports local servers that reject auth headers.
+
+    when: BuildProviderRequest(model, options)
+
+    requires: LookupProviderAuth(model.provider).auth_header == false
+
+    ensures: request.headers does not contain "Authorization"
+}
+
+-- ── Validation errors ────────────────────────────────────────────────────────
+
+rule InvalidModelsFileDoesNotBlockStartup {
+    -- Malformed models.edn is logged as a warning.
+    -- Built-in models remain available.
+
+    when: LoadModelsFile fails with error
+
+    ensures: LogWarning("Failed to load {file}: {error}")
+    ensures: custom_models = []
+    ensures: builtin_models unchanged
+}
+
+-- ── EQL surface ──────────────────────────────────────────────────────────────
+
+rule CustomModelsVisibleInGraph {
+    -- Custom models appear in :ai/all-models and :ai/provider-models
+    -- alongside built-ins.
+
+    when: QueryAllModels or QueryProviderModels(provider)
+
+    ensures: result includes custom models from merged catalog
+}
