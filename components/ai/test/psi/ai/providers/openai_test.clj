@@ -582,3 +582,33 @@
     (is (= "rate limit exceeded (status 429) [request-id req_oai_429]"
            (:error-message (first @events))))
     (is (= 429 (:http-status (first @events))))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Auth header control for custom providers
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(deftest no-auth-header-skips-authorization-test
+  (let [convo (-> (conv/create "sys") (conv/add-user-message "hi"))
+        model (models/get-model :gpt-4o)]
+    (testing "no-auth-header omits Authorization"
+      (let [req (#'openai/build-request convo model {:no-auth-header true})]
+        (is (not (contains? (:headers req) "Authorization")))
+        (is (= "application/json" (get-in req [:headers "Content-Type"])))))
+
+    (testing "default includes Authorization"
+      (let [req (#'openai/build-request convo model {:api-key "sk-test"})]
+        (is (contains? (:headers req) "Authorization"))
+        (is (= "Bearer sk-test" (get-in req [:headers "Authorization"])))))))
+
+(deftest custom-headers-merged-into-request-test
+  (let [convo (-> (conv/create "sys") (conv/add-user-message "hi"))
+        model (models/get-model :gpt-4o)]
+    (testing "custom headers merge into request"
+      (let [req (#'openai/build-request convo model
+                  {:api-key "sk-test"
+                   :headers {"X-Custom" "value" "X-Project" "psi"}})]
+        (is (= "value" (get-in req [:headers "X-Custom"])))
+        (is (= "psi" (get-in req [:headers "X-Project"])))
+        ;; Standard headers preserved
+        (is (= "Bearer sk-test" (get-in req [:headers "Authorization"])))
+        (is (= "application/json" (get-in req [:headers "Content-Type"])))))))

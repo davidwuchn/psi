@@ -344,8 +344,16 @@
                           thinking            (assoc :thinking thinking)
                           (seq tool-defs)     (assoc :tools tool-defs))
         body*           (request-schema/validate-request-body! body)]
-    {:headers (request-headers api-key thinking prompt-caching?)
-     :body    (json/generate-string body*)}))
+    (let [base-hdrs (if (:no-auth-header options)
+                     ;; Strip auth headers when explicitly disabled
+                     (dissoc (request-headers api-key thinking prompt-caching?)
+                             "Authorization" "x-api-key")
+                     (request-headers api-key thinking prompt-caching?))
+          headers   (if-let [custom (:headers options)]
+                      (merge base-hdrs custom)
+                      base-hdrs)]
+      {:headers headers
+       :body    (json/generate-string body*)})))
 
 (defn- safe-call!
   [f payload]

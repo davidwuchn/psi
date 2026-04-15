@@ -108,15 +108,19 @@
                       {:provider :openai :api :openai-codex-responses})))
     (let [tools     (codex-tools conversation)
           reasoning (codex-reasoning model options)
-          headers   (cond-> {"Content-Type"       "application/json"
-                             "Authorization"      (str "Bearer " api-key)
+          base-hdrs (cond-> {"Content-Type"       "application/json"
                              "accept"             "text/event-stream"
                              "OpenAI-Beta"        "responses=experimental"
                              "originator"         "psi"
                              "chatgpt-account-id" account-id}
+                      (not (:no-auth-header options))
+                      (assoc "Authorization" (str "Bearer " api-key))
                       (:session-id options)
                       (assoc "session_id"      (:session-id options)
                              "conversation_id" (:session-id options)))
+          headers   (if-let [custom (:headers options)]
+                      (merge base-hdrs custom)
+                      base-hdrs)
           body      (cond-> {"model"               (:id model)
                              "store"               false
                              "stream"              true
