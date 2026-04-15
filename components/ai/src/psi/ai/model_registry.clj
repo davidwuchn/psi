@@ -11,7 +11,7 @@
 ;; ── State ────────────────────────────────────────────────────────────────────
 
 (defonce ^:private registry-state
-  (atom {:catalog    {}   ;; {[provider-kw model-id] → model-map}
+  (atom {:catalog    nil  ;; {[provider-kw model-id] → model-map}, nil = not yet initialized
          :auth       {}   ;; {provider-kw → auth-map}
          :load-error nil}))
 
@@ -128,15 +128,23 @@
 
 ;; ── Queries ──────────────────────────────────────────────────────────────────
 
+(defn- ensure-catalog
+  "Return the catalog, lazily initializing from built-ins if not yet loaded."
+  []
+  (let [cat (:catalog @registry-state)]
+    (if (some? cat)
+      cat
+      (built-in-catalog))))
+
 (defn all-models
   "Return all models as a map of {[provider-kw model-id] → model-map}."
   []
-  (:catalog @registry-state))
+  (ensure-catalog))
 
 (defn all-models-seq
   "Return all models as a sequence of model maps."
   []
-  (vals (:catalog @registry-state)))
+  (vals (ensure-catalog)))
 
 (defn all-models-by-key
   "Return all models as {model-key → model-map}, keyed the same way
@@ -157,13 +165,13 @@
                    (keyword (name provider) model-id))]
          (assoc acc k model)))
      {}
-     (:catalog @registry-state))))
+     (ensure-catalog))))
 
 (defn find-model
   "Find a model by provider keyword and model-id string.
    Returns the model map or nil."
   [provider-kw model-id]
-  (get (:catalog @registry-state) [provider-kw model-id]))
+  (get (ensure-catalog) [provider-kw model-id]))
 
 (defn get-auth
   "Get auth config for a provider keyword.
@@ -179,14 +187,14 @@
 (defn providers
   "Return the set of all provider keywords in the catalog."
   []
-  (into #{} (map first) (keys (:catalog @registry-state))))
+  (into #{} (map first) (keys (ensure-catalog))))
 
 (defn models-for-provider
   "Return all models for a given provider keyword."
   [provider-kw]
   (into {}
         (filter (fn [[[p _] _]] (= p provider-kw)))
-        (:catalog @registry-state)))
+        (ensure-catalog)))
 
 ;; ── Init from defaults ───────────────────────────────────────────────────────
 

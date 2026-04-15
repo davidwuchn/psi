@@ -33,6 +33,7 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as ai-models]
+   [psi.ai.model-registry :as model-registry]
    [psi.memory.core :as memory]))
 
 ;; ============================================================
@@ -312,11 +313,12 @@
 (defn- resolve-runtime-model
   [provider model-id]
   (let [provider* (some-> provider keyword)]
-    (some (fn [[_ model]]
-            (when (and (= provider* (:provider model))
-                       (= model-id (:id model)))
-              model))
-          ai-models/all-models)))
+    (or (model-registry/find-model provider* model-id)
+        (some (fn [[_ model]]
+                (when (and (= provider* (:provider model))
+                           (= model-id (:id model)))
+                  model))
+              ai-models/all-models))))
 
 ;; ============================================================
 ;; Login provider selection (pure — returns data)

@@ -1,6 +1,6 @@
 (ns psi.rpc.session.command-pickers
   (:require
-   [psi.ai.models :as ai-models]
+   [psi.ai.model-registry :as model-registry]
    [psi.app-runtime.ui-actions :as ui-actions]
    [psi.rpc.session.emit :as emit]))
 
@@ -12,8 +12,7 @@
      emit!
      request-id
      (ui-actions/model-picker-action
-      (->> ai-models/all-models
-           vals
+      (->> (model-registry/all-models-seq)
            (sort-by (juxt :provider :id))
            (mapv (fn [m]
                    {:provider  (name (:provider m))

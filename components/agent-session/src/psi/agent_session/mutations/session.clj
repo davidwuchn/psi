@@ -3,6 +3,7 @@
    [clojure.string :as str]
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.ai.models :as models]
+   [psi.ai.model-registry :as model-registry]
    [psi.agent-session.core :as core]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
@@ -101,11 +102,14 @@
   (let [session-model  (:model (ss/get-session-data-in agent-session-ctx session-id))
         resolved-model (or model
                            (when session-model
-                             (some (fn [m]
-                                     (when (and (= (:provider m) (keyword (:provider session-model)))
-                                                (= (:id m) (:id session-model)))
-                                       m))
-                                   (vals models/all-models)))
+                             (or (model-registry/find-model
+                                  (keyword (:provider session-model))
+                                  (:id session-model))
+                                 (some (fn [m]
+                                         (when (and (= (:provider m) (keyword (:provider session-model)))
+                                                    (= (:id m) (:id session-model)))
+                                           m))
+                                       (vals models/all-models))))
                            (get models/all-models :sonnet-4.6))
         started-ms     (System/currentTimeMillis)]
     (try

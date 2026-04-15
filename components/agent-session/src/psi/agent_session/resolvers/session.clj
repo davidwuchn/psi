@@ -12,6 +12,7 @@
    [psi.agent-session.state-accessors :as accessors]
    [psi.agent-session.statechart :as sc]
    [psi.ai.models :as ai-models]
+   [psi.ai.model-registry :as model-registry]
    [psi.history.git :as git]))
 
 ;; ── Core session fields ─────────────────────────────────
@@ -403,8 +404,7 @@
 (defn- runtime-model-catalog
   "Return deterministic runtime model catalog for frontend selectors."
   []
-  (->> ai-models/all-models
-       vals
+  (->> (model-registry/all-models-seq)
        (map (fn [m]
               {:provider  (name (:provider m))
                :id        (:id m)

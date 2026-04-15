@@ -75,6 +75,7 @@
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
+   [psi.ai.model-registry :as model-registry]
    [psi.system-bootstrap.core :as bootstrap]
    [psi.memory.runtime :as memory-runtime]
    [psi.recursion.core :as recursion])
@@ -125,21 +126,23 @@
 (defn resolve-model
   "Return an ai.schemas.Model map for `model-key` keyword."
   [model-key]
-  (or (get models/all-models model-key)
-      (throw (ex-info (str "Unknown model: " model-key
-                           "
-Available: " (str/join ", " (map name (keys models/all-models))))
-                      {:model-key model-key}))))
+  (let [all (model-registry/all-models-by-key)]
+    (or (get all model-key)
+        (throw (ex-info (str "Unknown model: " model-key
+                             "
+Available: " (str/join ", " (map name (keys all))))
+                        {:model-key model-key})))))
 
 (defn- resolve-model-by-provider+id
   "Find a runtime model map by provider string + model-id string."
   [provider model-id]
   (let [provider* (some-> provider keyword)]
-    (some (fn [[_ model]]
-            (when (and (= provider* (:provider model))
-                       (= model-id (:id model)))
-              model))
-          models/all-models)))
+    (or (model-registry/find-model provider* model-id)
+        (some (fn [[_ model]]
+                (when (and (= provider* (:provider model))
+                           (= model-id (:id model)))
+                  model))
+              models/all-models))))
 
 (defn- current-ai-model-in
   "Resolve the effective runtime model for `session-id`, falling back to

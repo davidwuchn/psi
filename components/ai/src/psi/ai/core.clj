@@ -10,6 +10,7 @@
             [psi.ai.streaming :as streaming]
             [psi.ai.models :as models]
             [psi.ai.schemas :as schemas]
+            [psi.ai.model-registry :as model-registry]
             [psi.ai.providers.anthropic :as anthropic]
             [psi.ai.providers.openai :as openai]
             [psi.engine.core :as engine]
@@ -58,17 +59,17 @@
   {:ai.model/data (models/get-model model-key)})
 
 (pco/defresolver ai-model-list-resolver
-  "Resolve the full model catalogue (all providers)."
+  "Resolve the full model catalogue (built-in + custom providers)."
   [_]
   {::pco/output [:ai/all-models]}
-  {:ai/all-models models/all-models})
+  {:ai/all-models (model-registry/all-models-by-key)})
 
 (pco/defresolver ai-provider-models-resolver
   "Resolve models for a given provider key."
   [{provider :ai/provider}]
   {::pco/input  [:ai/provider]
    ::pco/output [:ai/provider-models]}
-  {:ai/provider-models (models/list-for-provider provider)})
+  {:ai/provider-models (model-registry/models-for-provider provider)})
 
 (pco/defresolver ai-provider-registry-resolver
   "Resolve the set of registered provider keys."

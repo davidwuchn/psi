@@ -94,11 +94,13 @@
   [session-model]
   (let [provider (some-> (:provider session-model) keyword)
         model-id (:id session-model)]
-    (some (fn [[_ model]]
-            (when (and (= provider (:provider model))
-                       (= model-id (:id model)))
-              model))
-          ai-models/all-models)))
+    (or (model-registry/find-model provider model-id)
+        ;; Fallback: scan built-in models for backward compatibility
+        (some (fn [[_ model]]
+                (when (and (= provider (:provider model))
+                           (= model-id (:id model)))
+                  model))
+              ai-models/all-models))))
 
 (defn- sorted-contributions
   [session-data]

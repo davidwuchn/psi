@@ -12,6 +12,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.ai.models :as ai-models]
+   [psi.ai.model-registry :as model-registry]
    [psi.rpc.events :as events]
    [psi.rpc.session.commands :as rpc.commands]
    [psi.rpc.session.emit :as emit]
@@ -208,11 +209,12 @@
 (defn resolve-model
   [provider model-id]
   (let [provider* (normalize-provider provider)]
-    (some (fn [[_ model]]
-            (when (and (= provider* (:provider model))
-                       (= model-id (:id model)))
-              model))
-          ai-models/all-models)))
+    (or (model-registry/find-model provider* model-id)
+        (some (fn [[_ model]]
+                (when (and (= provider* (:provider model))
+                           (= model-id (:id model)))
+                  model))
+              ai-models/all-models))))
 
 (defn- current-ai-model
   ([ctx session-deps]
