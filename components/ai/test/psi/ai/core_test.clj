@@ -158,6 +158,91 @@
       (is (= :completed (:status @session))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
+;; Provider dispatch fallback — custom providers dispatch by :api key
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(deftest test-dispatch-fallback-by-api
+  (testing "custom provider dispatches through :api fallback to :openai-completions"
+    (let [conversation (-> (core/create-conversation "assistant")
+                           (core/send-message "hi"))
+          ;; A model with a custom :provider but :api :openai-completions
+          model        {:id               "local-model"
+                        :name             "Local Model"
+                        :provider         :my-local
+                        :api              :openai-completions
+                        :base-url         "http://localhost:8080/v1"
+                        :supports-reasoning false
+                        :supports-images  false
+                        :supports-text    true
+                        :context-window   128000
+                        :max-tokens       16384
+                        :input-cost       0.0
+                        :output-cost      0.0
+                        :cache-read-cost  0.0
+                        :cache-write-cost 0.0}
+          options      {:temperature 0.5}
+          events       (atom [])
+          ;; Register the openai-completions fallback in isolated context
+          provider     (stub-provider "local-response")
+          ctx          (core/create-context {:providers {:openai-completions provider}})
+          {bg :future} (core/stream-response-in ctx conversation model options
+                                                 (fn [ev] (swap! events conj ev)))]
+      @bg
+      (is (some #(= :text-delta (:type %)) @events))
+      (is (= "local-response" (:delta (first (filter #(= :text-delta (:type %)) @events)))))))
+
+  (testing "exact provider match takes priority over api fallback"
+    (let [conversation (-> (core/create-conversation "assistant")
+                           (core/send-message "hi"))
+          model        {:id               "test"
+                        :name             "Test"
+                        :provider         :my-provider
+                        :api              :openai-completions
+                        :base-url         "http://localhost:8080/v1"
+                        :supports-reasoning false
+                        :supports-images  false
+                        :supports-text    true
+                        :context-window   128000
+                        :max-tokens       16384
+                        :input-cost       0.0
+                        :output-cost      0.0
+                        :cache-read-cost  0.0
+                        :cache-write-cost 0.0}
+          options      {:temperature 0.5}
+          events       (atom [])
+          ;; Both exact and api-fallback are available; exact should win
+          exact-provider   (stub-provider "exact-match")
+          api-provider     (stub-provider "api-fallback")
+          ctx              (core/create-context {:providers {:my-provider        exact-provider
+                                                             :openai-completions api-provider}})
+          {bg :future}     (core/stream-response-in ctx conversation model options
+                                                     (fn [ev] (swap! events conj ev)))]
+      @bg
+      (is (= "exact-match" (:delta (first (filter #(= :text-delta (:type %)) @events)))))))
+
+  (testing "unknown provider with no api fallback throws"
+    (let [conversation (-> (core/create-conversation "assistant")
+                           (core/send-message "hi"))
+          ;; Valid api enum but empty registry — neither provider nor api matches
+          model        {:id               "test"
+                        :name             "Test"
+                        :provider         :totally-unknown
+                        :api              :openai-completions
+                        :base-url         "http://localhost:8080/v1"
+                        :supports-reasoning false
+                        :supports-images  false
+                        :supports-text    true
+                        :context-window   128000
+                        :max-tokens       16384
+                        :input-cost       0.0
+                        :output-cost      0.0
+                        :cache-read-cost  0.0
+                        :cache-write-cost 0.0}
+          ctx          (core/create-context {:providers {}})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown provider"
+            (core/stream-response-in ctx conversation model {} (fn [_])))))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
 ;; Query integration — resolvers registered in EQL graph
 ;; ─────────────────────────────────────────────────────────────────────────────
 

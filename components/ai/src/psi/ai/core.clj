@@ -21,8 +21,13 @@
 ;; ───────────────────────────────────────────────────────────────────────────
 
 (defonce ^:private provider-registry
-  (atom {:anthropic anthropic/provider
-         :openai    openai/provider}))
+  (atom {:anthropic               anthropic/provider
+         :openai                  openai/provider
+         ;; API-keyed entries: custom providers that declare an api protocol
+         ;; resolve through here when no exact provider match exists.
+         :anthropic-messages      anthropic/provider
+         :openai-completions      openai/provider
+         :openai-codex-responses  openai/provider}))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Isolated AI context (Nullable pattern)
@@ -151,11 +156,21 @@
   (:provider-registry ctx))
 
 (defn- resolve-provider
-  "Look up the provider impl for `model` from `registry-atom`, throwing if absent."
+  "Look up the provider impl for `model` from `registry-atom`.
+
+   Resolution order:
+   1. Exact match on (:provider model) — built-in and explicitly registered providers
+   2. Fallback to (:api model) — custom providers inherit the transport impl for their wire protocol
+
+   Throws if neither matches."
   [registry-atom model]
-  (let [provider-impl (get @registry-atom (:provider model))]
+  (let [reg           @registry-atom
+        provider-impl (or (get reg (:provider model))
+                          (get reg (:api model)))]
     (when-not provider-impl
-      (throw (ex-info "Unknown provider" {:provider (:provider model)})))
+      (throw (ex-info "Unknown provider"
+                      {:provider (:provider model)
+                       :api      (:api model)})))
     provider-impl))
 
 (defn- provider-stream
