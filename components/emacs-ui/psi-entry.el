@@ -186,7 +186,7 @@ frontend state boundaries."
     (psi-widget-projection-setup)
     buffer))
 
-;;;###autoload
+;;;###autoload (autoload 'psi-emacs-start "psi" "Start a dedicated psi buffer/session." t)
 (defun psi-emacs-start (&optional prefix)
   "Start psi frontend in its dedicated process buffer.
 
@@ -199,7 +199,7 @@ With PREFIX, create and switch to a fresh dedicated buffer name."
     (psi-emacs--focus-input-area buffer window)
     buffer))
 
-;;;###autoload
+;;;###autoload (autoload 'psi-emacs-project "psi" "Start or switch to a project-scoped psi buffer/session." t)
 (defun psi-emacs-project (&optional prefix)
   "Start psi frontend for the current project.
 
