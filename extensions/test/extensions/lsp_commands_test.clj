@@ -18,8 +18,17 @@
   (testing "init registers lsp status/restart commands and notifies ui"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
           api' (assoc api
+                      :cwd-fn (fn [] "/repo")
                       :register-post-tool-processor (fn [spec]
-                                                      ((:mutate api) 'psi.extension/register-post-tool-processor spec)))]
+                                                      ((:mutate api) 'psi.extension/register-post-tool-processor spec))
+                      :ensure-service (fn [spec]
+                                        ((:mutate api) 'psi.extension/ensure-service spec))
+                      :service-request (fn [spec]
+                                         ((:mutate api) 'psi.extension/service-request
+                                          (assoc spec :response {"result" {"capabilities" {"textDocumentSync" {"change" 2}}}})))
+                      :service-notify (fn [spec]
+                                        ((:mutate api) 'psi.extension/service-notify spec))
+                      :get-service (fn [_] nil))]
       (sut/init api')
       (is (contains? (:commands @state) "lsp-status"))
       (is (contains? (:commands @state) "lsp-restart"))
@@ -95,9 +104,38 @@
                (:documents @sut/state)))
         (is (some #(re-find #"Restarted LSP workspace /repo" %) @printed))))))
 
+(deftest warm-start-current-workspace-test
+  (testing "warm-start initializes the current workspace when service hooks are available"
+    (reset! sut/state {:initialized-workspaces #{}
+                       :document-diagnostic-support {}
+                       :documents {}})
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :cwd-fn (fn [] "/repo")
+                      :ensure-service (fn [spec]
+                                        ((:mutate api) 'psi.extension/ensure-service spec))
+                      :service-request (fn [spec]
+                                         ((:mutate api) 'psi.extension/service-request
+                                          (assoc spec :response {"result" {"capabilities" {"textDocumentSync" {"change" 2}}}})))
+                      :service-notify (fn [spec]
+                                        ((:mutate api) 'psi.extension/service-notify spec))
+                      :get-service (fn [_] nil))]
+      (sut/warm-start-current-workspace! api')
+      (Thread/sleep 50)
+      (is (= [{:key [:lsp "/repo"]
+               :type :subprocess
+               :spec {:command ["clojure-lsp"]
+                      :cwd "/repo"
+                      :transport :stdio
+                      :protocol :json-rpc
+                      :env nil}}]
+             (:services @state)))
+      (is (contains? (:initialized-workspaces @sut/state) "/repo")))))
+
 (deftest lsp-status-command-handler-test
   (testing "registered lsp-status command prints current workspace status"
     (reset! sut/state {:initialized-workspaces #{"/repo"}
+                       :document-diagnostic-support {}
                        :documents {"/repo/src/foo.clj" {:open? true :version 2 :text "x"}}})
     (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
           api' (assoc api

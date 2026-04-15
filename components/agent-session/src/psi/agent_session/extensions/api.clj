@@ -9,7 +9,11 @@
                            :psi.service/command
                            :psi.service/cwd
                            :psi.service/transport
-                           :psi.service/ext-path]}])
+                           :psi.service/ext-path
+                           :psi.service/notification-count
+                           {:psi.service/published-diagnostics
+                            [:psi.service.diagnostic/uri
+                             :psi.service.diagnostic/diagnostics]}]}])
 
 (defn- runtime-not-initialized
   [action]
@@ -106,7 +110,7 @@
            bus-on-in!]}
    reg
    ext-path
-   {:keys [mutate-fn query-fn get-api-key-fn ui-type-fn ui-context-fn log-fn]}]
+   {:keys [mutate-fn query-fn get-api-key-fn ui-type-fn ui-context-fn service-fn log-fn]}]
   (let [mutate-local
         (fn [op params fallback-fn]
           (mutate-ext-or-local mutate-fn ext-path op params fallback-fn))
@@ -209,6 +213,11 @@
         (fn []
           (:psi.service/services
            (runtime-query :list-services services-query)))
+        get-service
+        (fn [service-key]
+          (if service-fn
+            (service-fn service-key)
+            (runtime-not-initialized :get-service)))
         register-prompt-contribution!
         (fn [id contribution]
           (mutate-ext-required :register-prompt-contribution
@@ -270,6 +279,7 @@
      :service-request                service-request!
      :service-notify                 service-notify!
      :list-services                  list-services
+     :get-service                    get-service
      :register-prompt-contribution   register-prompt-contribution!
      :update-prompt-contribution     update-prompt-contribution!
      :unregister-prompt-contribution unregister-prompt-contribution!

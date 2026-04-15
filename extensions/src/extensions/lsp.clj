@@ -16,12 +16,14 @@
 (def ^:private default-lsp-config
   {:command ["clojure-lsp"]
    :transport :stdio
-   :diagnostics-timeout-ms 500
-   :startup-timeout-ms 2000
+   :diagnostics-timeout-ms 20000
+   :startup-timeout-ms 20000
    :sync-timeout-ms 500})
 
 (defonce state
   (atom {:initialized-workspaces #{}
+         :document-diagnostic-support {}
+         :workspace-sync-kinds {}
          :documents {}}))
 
 (defn default-config []
@@ -90,6 +92,8 @@
   [api {:keys [workspace-root]}]
   ((:stop-service api) (workspace-key workspace-root))
   (swap! state update :initialized-workspaces disj workspace-root)
+  (swap! state update :document-diagnostic-support dissoc workspace-root)
+  (swap! state update :workspace-sync-kinds dissoc workspace-root)
   (swap! state update :documents
          (fn [docs]
            (into {}
@@ -137,17 +141,43 @@
   (swap! state update :initialized-workspaces conj workspace-root)
   workspace-root)
 
+(defn workspace-sync-kind
+  [workspace-root]
+  (get-in @state [:workspace-sync-kinds workspace-root] :full))
+
+(defn mark-workspace-sync-kind!
+  [workspace-root sync-kind]
+  (swap! state assoc-in [:workspace-sync-kinds workspace-root] sync-kind)
+  sync-kind)
+
+(defn- sync-kind-from-initialize-result
+  [result]
+  (let [sync (get-in result ["capabilities" "textDocumentSync"])
+        change (cond
+                 (map? sync) (get sync "change")
+                 (number? sync) sync
+                 :else nil)]
+    (case change
+      2 :incremental
+      1 :full
+      :full)))
+
 (defn ensure-lsp-initialized!
   [api {:keys [workspace-root startup-timeout-ms dispatch-id] :as _opts}]
   (when-not (workspace-initialized? workspace-root)
-    (jsonrpc-request! api
-                      (dispatch/assoc-dispatch-id
-                       {:workspace-root workspace-root
-                        :id "initialize"
-                        :method "initialize"
-                        :params (initialize-request {:workspace-root workspace-root})
-                        :timeout-ms startup-timeout-ms}
-                       dispatch-id))
+    (let [response (jsonrpc-request! api
+                                     (dispatch/assoc-dispatch-id
+                                      {:workspace-root workspace-root
+                                       :id "initialize"
+                                       :method "initialize"
+                                       :params (initialize-request {:workspace-root workspace-root})
+                                       :timeout-ms startup-timeout-ms}
+                                      dispatch-id))
+          result   (or (service-protocol/await-jsonrpc-result
+                        {:response (:psi.extension.service/response response)})
+                       (service-protocol/await-jsonrpc-result response)
+                       {})]
+      (mark-workspace-sync-kind! workspace-root (sync-kind-from-initialize-result result)))
     (jsonrpc-notify! api
                      (dispatch/assoc-dispatch-id
                       {:workspace-root workspace-root
@@ -191,28 +221,48 @@
                          :diagnostics diagnostics}})))
        vec))
 
+(defn- service-entry
+  [api workspace-root]
+  (if-let [get-service (:get-service api)]
+    (get-service (workspace-key workspace-root))
+    (let [services (or ((:list-services api)) [])]
+      (some #(when (= (workspace-key workspace-root) (:psi.service/key %)) %) services))))
+
+(defn- diagnostics-from-published-cache
+  [api workspace-root paths]
+  (let [service (service-entry api workspace-root)
+        by-uri  (into {}
+                      (map (fn [entry]
+                             [(:psi.service.diagnostic/uri entry)
+                              (vec (:psi.service.diagnostic/diagnostics entry))]))
+                      (or (:psi.service/published-diagnostics service) []))]
+    (reduce (fn [acc path]
+              (let [uri (file-uri path)]
+                (if (contains? by-uri uri)
+                  (assoc acc path (get by-uri uri))
+                  acc)))
+            {}
+            paths)))
+
+(defn- diagnostics-known?
+  [diagnostics-by-path paths]
+  (boolean
+   (some (fn [path]
+           (contains? diagnostics-by-path path))
+         paths)))
+
 (defn request-diagnostics!
-  [api {:keys [workspace-root paths diagnostics-timeout-ms dispatch-id]}]
-  (reduce (fn [acc path]
-            (let [response (jsonrpc-request! api
-                                             (dispatch/assoc-dispatch-id
-                                              {:workspace-root workspace-root
-                                               :id (str "diagnostics:" path)
-                                               :method "textDocument/diagnostic"
-                                               :params (document-diagnostics-request path)
-                                               :timeout-ms diagnostics-timeout-ms}
-                                              dispatch-id))
-                  result   (or (service-protocol/await-jsonrpc-result
-                                 {:response (:psi.extension.service/response response)})
-                               (service-protocol/await-jsonrpc-result response)
-                               [])
-                  items    (cond
-                             (vector? result) result
-                             (map? result) (vec (or (get result "items") []))
-                             :else [])]
-              (assoc acc path items)))
-          {}
-          paths))
+  [api {:keys [workspace-root paths diagnostics-timeout-ms]}]
+  (let [deadline (+ (System/currentTimeMillis)
+                    (long (or diagnostics-timeout-ms 1000)))]
+    (loop []
+      (let [diagnostics-by-path (diagnostics-from-published-cache api workspace-root paths)]
+        (if (or (diagnostics-known? diagnostics-by-path paths)
+                (>= (System/currentTimeMillis) deadline))
+          diagnostics-by-path
+          (do
+            (Thread/sleep 50)
+            (recur)))))))
 
 (defn- changed-paths
   [{:keys [tool-result]}]
@@ -243,6 +293,57 @@
                                            :text text})
   {:path path :version version})
 
+(defn- full-change-params
+  [path version text]
+  {"textDocument" {"uri" (file-uri path)
+                    "version" version}
+   "contentChanges" [{"text" text}]})
+
+(defn- changed-region
+  [old-text new-text]
+  (let [old-text (or old-text "")
+        new-text (or new-text "")
+        old-len  (count old-text)
+        new-len  (count new-text)
+        prefix   (loop [i 0]
+                   (if (and (< i old-len)
+                            (< i new-len)
+                            (= (.charAt old-text i) (.charAt new-text i)))
+                     (recur (inc i))
+                     i))
+        max-suffix (- (min old-len new-len) prefix)
+        suffix   (loop [i 0]
+                   (if (and (< i max-suffix)
+                            (= (.charAt old-text (- old-len 1 i))
+                               (.charAt new-text (- new-len 1 i))))
+                     (recur (inc i))
+                     i))]
+    {:start prefix
+     :end-old (- old-len suffix)
+     :end-new (- new-len suffix)}))
+
+(defn- offset->position
+  [text offset]
+  (loop [idx 0 line 0 ch 0]
+    (if (>= idx offset)
+      {"line" line "character" ch}
+      (let [c (.charAt ^String text idx)]
+        (if (= c \newline)
+          (recur (inc idx) (inc line) 0)
+          (recur (inc idx) line (inc ch)))))))
+
+(defn- incremental-change-params
+  [path version old-text new-text]
+  (let [{:keys [start end-old end-new]} (changed-region old-text new-text)
+        start-pos (offset->position old-text start)
+        end-pos   (offset->position old-text end-old)
+        changed   (subs new-text start end-new)]
+    {"textDocument" {"uri" (file-uri path)
+                      "version" version}
+     "contentChanges" [{"range" {"start" start-pos
+                                    "end" end-pos}
+                         "text" changed}]}))
+
 (defn sync-document!
   [api {:keys [workspace-root path text dispatch-id]}]
   (let [first-open? (not (document-open? path))
@@ -250,14 +351,16 @@
         method      (if first-open?
                       "textDocument/didOpen"
                       "textDocument/didChange")
+        sync-kind   (workspace-sync-kind workspace-root)
+        old-text    (:text (document-state path))
         params      (if first-open?
                       {"textDocument" {"uri" (file-uri path)
                                         "languageId" "clojure"
                                         "version" version
                                         "text" text}}
-                      {"textDocument" {"uri" (file-uri path)
-                                        "version" version}
-                       "contentChanges" [{"text" text}]})]
+                      (if (= :incremental sync-kind)
+                        (incremental-change-params path version old-text text)
+                        (full-change-params path version text)))]
     (jsonrpc-notify! api
                      (dispatch/assoc-dispatch-id
                       {:workspace-root workspace-root
@@ -265,7 +368,11 @@
                        :params params}
                       dispatch-id))
     (record-document-sync! path version text)
-    {:path path :version version :first-open? first-open? :method method}))
+    {:path path
+     :version version
+     :first-open? first-open?
+     :method method
+     :sync-kind sync-kind}))
 
 (defn sync-tool-result!
   [api {:keys [worktree-path config dispatch-id] :as input}]
@@ -286,13 +393,14 @@
                                              :path path
                                              :text (read-text path)
                                              :dispatch-id dispatch-id})))
-    {:workspace-root root
-     :changed-paths paths
-     :document-syncs @syncs
-     :diagnostics-by-path (request-diagnostics! api {:workspace-root root
-                                                     :paths paths
-                                                     :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)
-                                                     :dispatch-id dispatch-id})}))
+    (Thread/sleep (long (:sync-timeout-ms cfg)))
+    (let [diagnostics-by-path (request-diagnostics! api {:workspace-root root
+                                                         :paths paths
+                                                         :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)})]
+      {:workspace-root root
+       :changed-paths paths
+       :document-syncs @syncs
+       :diagnostics-by-path diagnostics-by-path})))
 
 (defn- diagnostic-path-count
   [diagnostics-by-path]
@@ -402,6 +510,30 @@
     (println (str "Restarted LSP workspace " root))
     root))
 
+(defn- supports-warm-start?
+  [api]
+  (and (:ensure-service api)
+       (:get-service api)))
+
+(defn warm-start-current-workspace!
+  [api]
+  (when (supports-warm-start? api)
+    (let [cwd  (current-cwd api)
+          root (workspace-root {:cwd cwd :worktree-path cwd :path cwd})
+          cfg  (default-config)]
+      (when-not (str/blank? root)
+        (future
+          (try
+            (ensure-lsp-service! api {:cwd cwd :worktree-path cwd :path cwd :config cfg})
+            (ensure-lsp-initialized! api {:workspace-root root
+                                          :startup-timeout-ms (:startup-timeout-ms cfg)})
+            (catch Throwable t
+              (when-let [ui (:ui api)]
+                ((:notify ui)
+                 (str "lsp warm start failed: " (ex-message t))
+                 :error)))))
+        root))))
+
 (defn lsp-post-tool-handler
   "Backward-compatible handler constructor entrypoint used in tests."
   [input]
@@ -421,5 +553,6 @@
    {:description "Restart LSP workspace service for the current worktree or a provided path"
     :handler (fn [args]
                (restart-workspace! api (command-target api args)))})
+  (warm-start-current-workspace! api)
   (when-let [ui (:ui api)]
     ((:notify ui) "lsp loaded" :info)))

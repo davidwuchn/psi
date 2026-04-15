@@ -93,6 +93,8 @@
       (is (= 1
              (get-in contribution2 [:details/merge :lsp :diagnostic-path-count])))
       (is (= 1
+             (count (get-in contribution1 [:enrichments 1 :data :diagnostics]))))
+      (is (= 1
              (get-in contribution1 [:details/merge :lsp :document-syncs 0 :version])))
       (is (= 2
              (get-in contribution2 [:details/merge :lsp :document-syncs 0 :version])))
@@ -147,7 +149,7 @@
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (assoc params :psi/agent-session-ctx ctx :session-id session-id))])
                         op))
-          query* (fn [eql] (session/query-in ctx eql {:session-id session-id}))
+          query* (fn [eql] (session/query-in ctx session-id eql))
           runtime-fns {:query-fn query*
                        :mutate-fn mutate
                        :get-api-key-fn (fn [_] nil)

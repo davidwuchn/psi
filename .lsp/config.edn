@@ -1,4 +1,6 @@
-{:linters
+{:lint-project-files-after-startup? true
+ :text-document-sync-kind           :incremental
+ :linters
  {:clojure-lsp/unused-public-var
   {:exclude #{psi.query.registry
               psi.query.env

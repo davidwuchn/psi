@@ -204,7 +204,7 @@
       (try
         (is (= root worktree))
         (is (sut/workspace-initialized? root))
-        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen"}]
+        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen" :sync-kind :incremental}]
                (:document-syncs result)))
         (is (= [{"message" (str "fixture diagnostic for " file-path)
                  "severity" 2}]
@@ -222,7 +222,9 @@
         (is (some #(and (= :send (:event %))
                         (= "textDocument/diagnostic" (get-in % [:payload "method"])))
                   debug))
-        (is (some #(= "observed" (get-in % [:payload "method"])) notifications))
+        (is (some #(or (= "observed" (get-in % [:payload "method"]))
+                       (= "textDocument/publishDiagnostics" (get-in % [:payload "method"])))
+                  notifications))
         (finally
           (when-let [close-fn (:close-fn svc)]
             (future (close-fn)))
@@ -310,12 +312,13 @@
           svc (services/service-in ctx (sut/workspace-key root))
           debug @(:debug-atom svc)]
       (try
-        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen"}]
+        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen" :sync-kind :incremental}]
                (:document-syncs first-result)))
-        (is (= [{:path file-path :version 2 :first-open? false :method "textDocument/didChange"}]
+        (is (= [{:path file-path :version 2 :first-open? false :method "textDocument/didChange" :sync-kind :incremental}]
                (:document-syncs second-result)))
         (is (some #(= 2 (get-in % [:payload "params" "textDocument" "version"])) debug))
         (is (some #(= "textDocument/didChange" (get-in % [:payload "method"])) debug))
+        (is (some #(get-in % [:payload "params" "contentChanges" 0 "range"]) debug))
         (is (= [{"message" (str "fixture diagnostic for " file-path)
                  "severity" 2}]
                (get (:diagnostics-by-path second-result) file-path)))
@@ -360,9 +363,9 @@
       (try
         (is (= root restarted-root))
         (is (some #(= "textDocument/didClose" (get-in % [:payload "method"])) debug-before))
-        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen"}]
+        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen" :sync-kind :incremental}]
                (:document-syncs first-result)))
-        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen"}]
+        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen" :sync-kind :incremental}]
                (:document-syncs second-result)))
         (is (= [{"message" (str "fixture diagnostic for " file-path)
                  "severity" 2}]

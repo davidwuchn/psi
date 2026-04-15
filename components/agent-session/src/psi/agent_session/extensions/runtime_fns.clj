@@ -3,6 +3,7 @@
    [psi.agent-session.extensions.runtime-eql :as runtime-eql]
    [psi.agent-session.extensions.runtime-ui :as runtime-ui]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.services :as services]
    [psi.agent-session.session-state :as ss]))
 
 (defn make-extension-runtime-fns
@@ -34,6 +35,10 @@
      :ui-context-fn
      (fn [ext-path*]
        (runtime-ui/extension-ui-context ctx session-id current-session-data ext-path*))
+
+     :service-fn
+     (fn [service-key]
+       (services/service-in ctx service-key))
 
      :log-fn
      (fn [text]

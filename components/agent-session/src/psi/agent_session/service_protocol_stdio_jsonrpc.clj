@@ -92,15 +92,16 @@
    The adapter starts a daemon reader thread that correlates inbound messages by
    JSON-RPC id and also records notifications for optional debugging hooks."
   [service & [{:keys [on-notification on-error]}]]
-  (let [process        (:process service)
-        in             (BufferedInputStream. (io/input-stream (.getInputStream ^Process process)))
-        err-reader     (BufferedReader. (InputStreamReader. (.getErrorStream ^Process process) StandardCharsets/UTF_8))
-        out            (BufferedOutputStream. (io/output-stream (.getOutputStream ^Process process)))
-        pending        (ConcurrentHashMap.)
-        notifications* (atom [])
-        debug*         (atom [])
-        stderr*        (atom [])
-        running?       (atom true)
+  (let [process             (:process service)
+        in                  (BufferedInputStream. (io/input-stream (.getInputStream ^Process process)))
+        err-reader          (BufferedReader. (InputStreamReader. (.getErrorStream ^Process process) StandardCharsets/UTF_8))
+        out                 (BufferedOutputStream. (io/output-stream (.getOutputStream ^Process process)))
+        pending             (ConcurrentHashMap.)
+        notifications*      (atom [])
+        published-diags*    (atom {})
+        debug*              (atom [])
+        stderr*             (atom [])
+        running?            (atom true)
         stderr-thread  (doto
                         (Thread.
                          ^Runnable
@@ -133,6 +134,13 @@
                                        (swap! notifications* conj msg)))
                                    (do
                                      (swap! notifications* conj msg)
+                                     (when (= "textDocument/publishDiagnostics"
+                                              (get-in payload ["method"]))
+                                       (let [uri         (get-in payload ["params" "uri"])
+                                             diagnostics (vec (or (get-in payload ["params" "diagnostics"])
+                                                                  []))]
+                                         (when (string? uri)
+                                           (swap! published-diags* assoc uri diagnostics))))
                                      (when on-notification
                                        (on-notification msg))))))
                              (catch Throwable t
@@ -180,6 +188,7 @@
        (try (.close out) (catch Throwable _)))
 
      :notifications-atom notifications*
+     :published-diagnostics-atom published-diags*
      :debug-atom debug*
      :stderr-atom stderr*}))
 
