@@ -9,7 +9,9 @@
 ;; Value types
 
 (def Provider
-  [:enum :anthropic :openai])
+  "Provider identifier. Built-in providers are :anthropic and :openai;
+   custom providers use arbitrary keywords (e.g. :local, :ollama)."
+  keyword?)
 
 (def Api
   [:enum :anthropic-messages :openai-completions :openai-codex-responses])
@@ -74,7 +76,7 @@
   [:map {:closed true}
    [:kind [:= :thinking]]
    [:text string?]
-   [:provider {:optional true} [:or Provider string? keyword?]]
+   [:provider {:optional true} [:or keyword? string?]]
    [:signature {:optional true} string?]])
 
 (def StructuredTextBlock
