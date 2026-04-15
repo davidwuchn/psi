@@ -151,6 +151,29 @@ Bootstrapped on 2026-04-02.
 - Tests prove: submit → prepare → execute → record → finish → idle, including tool-use continuation paths.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 
+## Custom providers — implementation complete
+
+All 7 slices landed in 7 commits (`46bc655..e6cd43f`):
+
+1. `psi.ai.user-models` — parse `models.edn`, validate, resolve api-key specs
+2. `psi.ai.model-registry` — merged catalog (built-in + user + project), auth lookup
+3. `psi.ai.schemas/Provider` — relaxed from `[:enum :anthropic :openai]` to `keyword?`
+4. `psi.ai.core/resolve-provider` — dispatch fallback by `:api` protocol key
+5. `psi.agent-session.prompt-request` — custom provider auth + headers injection
+6. Transport (openai/anthropic) — `:no-auth-header` and custom `:headers` support
+7. All callers migrated from `ai-models/all-models` → `model-registry`
+
+New test count: 71 (ai component), 1106 (full unit suite, same 2 pre-existing failures).
+
+Config files:
+- `~/.psi/agent/models.edn` — user-global custom providers
+- `.psi/models.edn` — project-local custom providers
+
+Remaining work for full end-to-end:
+- Wire `model-registry/init!` into system bootstrap (currently lazy-initialized)
+- Wire `load-project-models!` into session bootstrap when cwd changes
+- Add `/reload-models` command or integrate with existing refresh path
+
 ## Suggested next step
 - Best next move: continue converging shared-session prompt semantics in the canonical prompt namespaces.
 - `psi.agent-session.executor` has been deleted; shared-session prompt execution now has one path:
