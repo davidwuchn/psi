@@ -6,6 +6,7 @@
   (:require
    [clojure.string :as str]
    [psi.ai.models :as ai-models]
+   [psi.ai.model-registry :as model-registry]
    [psi.agent-session.conversation :as conv]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.session-state :as ss]
@@ -28,14 +29,21 @@
        [])))
 
 (defn- resolve-api-key
-  "Resolve API key: prefer explicit runtime-opts, fall back to session-stored
-   key from prior turn, fall back to oauth context."
+  "Resolve API key in priority order:
+   1. Explicit runtime-opts :api-key
+   2. Session-stored key from prior turn
+   3. OAuth context
+   4. Custom provider auth from model-registry"
   [ctx session-data runtime-opts]
   (or (:api-key runtime-opts)
       (:runtime-api-key session-data)
       (when-let [oauth-ctx (:oauth-ctx ctx)]
         (when-let [provider (:provider (:model session-data))]
-          (oauth/get-api-key oauth-ctx provider)))))
+          (oauth/get-api-key oauth-ctx provider)))
+      (when-let [provider (:provider (:model session-data))]
+        (let [auth (model-registry/get-auth provider)]
+          (when (:auth-header? auth)
+            (:api-key auth))))))
 
 (defn- resolve-llm-stream-idle-timeout-ms
   [ctx runtime-opts]
@@ -46,12 +54,28 @@
       (and (number? config-timeout) (pos? config-timeout))   (long config-timeout)
       :else nil)))
 
+(defn- resolve-custom-provider-options
+  "Extract custom provider options from model-registry auth.
+   Returns a map to merge into request options, or nil."
+  [session-data]
+  (when-let [provider (:provider (:model session-data))]
+    (when-let [auth (model-registry/get-auth provider)]
+      (cond-> {}
+        ;; When auth-header? is false, signal to transport to skip Authorization
+        (false? (:auth-header? auth))
+        (assoc :no-auth-header true)
+
+        ;; Merge custom request headers
+        (seq (:headers auth))
+        (assoc :headers (:headers auth))))))
+
 (defn session->request-options
   "Build request/runtime options from canonical session data.
    This is the canonical projection for provider request/runtime shaping."
   [ctx session-data runtime-opts]
-  (let [api-key         (resolve-api-key ctx session-data runtime-opts)
-        idle-timeout-ms (resolve-llm-stream-idle-timeout-ms ctx runtime-opts)]
+  (let [api-key          (resolve-api-key ctx session-data runtime-opts)
+        idle-timeout-ms  (resolve-llm-stream-idle-timeout-ms ctx runtime-opts)
+        custom-opts      (resolve-custom-provider-options session-data)]
     (cond-> {}
       (contains? session-data :thinking-level)
       (assoc :thinking-level (:thinking-level session-data))
@@ -60,7 +84,11 @@
       (assoc :api-key api-key)
 
       idle-timeout-ms
-      (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))))
+      (assoc :llm-stream-idle-timeout-ms idle-timeout-ms)
+
+      ;; Merge custom provider options (headers, no-auth-header)
+      (some? custom-opts)
+      (merge custom-opts))))
 
 (defn- resolve-runtime-model
   [session-model]
