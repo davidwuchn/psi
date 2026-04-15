@@ -265,8 +265,12 @@ Available: " (str/join ", " (map name (keys all))))
    - :ui-type runtime UI type hint (:console | :tui | :emacs)
    - :thinking-level-override explicit thinking level (CLI/env); overrides config when set"
   [ai-model {:keys [event-queue session-config cwd ui-type thinking-level-override]}]
-  (let [oauth-ctx                (oauth/create-context)
-        cwd                      (or cwd (System/getProperty "user.dir"))
+  (let [cwd                      (or cwd (System/getProperty "user.dir"))
+        ;; Initialize model registry with user-global + project-local custom models
+        _                        (model-registry/init!
+                                  {:user-models-path    (model-registry/default-user-models-path)
+                                   :project-models-path (str cwd "/.psi/models.edn")})
+        oauth-ctx                (oauth/create-context)
         cfg                      (config-res/resolve-config cwd)
         effective-model          (if-let [{:keys [provider id]} (config-res/resolved-model cfg)]
                                    (or (resolve-model-by-provider+id provider id) ai-model)
