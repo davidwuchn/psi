@@ -422,14 +422,37 @@
             :else
             {:type :tree-switch :session-id sid}))))))
 
+(defn- eql-job->runtime-job
+  [job]
+  {:job-id                    (:psi.background-job/id job)
+   :thread-id                 (:psi.background-job/thread-id job)
+   :tool-call-id              (:psi.background-job/tool-call-id job)
+   :tool-name                 (:psi.background-job/tool-name job)
+   :job-kind                  (:psi.background-job/job-kind job)
+   :workflow-ext-path         (:psi.background-job/workflow-ext-path job)
+   :workflow-id               (:psi.background-job/workflow-id job)
+   :job-seq                   (:psi.background-job/job-seq job)
+   :started-at                (:psi.background-job/started-at job)
+   :completed-at              (:psi.background-job/completed-at job)
+   :completed-seq             (:psi.background-job/completed-seq job)
+   :status                    (:psi.background-job/status job)
+   :terminal-payload          (:psi.background-job/terminal-payload job)
+   :terminal-payload-file     (:psi.background-job/terminal-payload-file job)
+   :cancel-requested-at       (:psi.background-job/cancel-requested-at job)
+   :terminal-message-emitted  (:psi.background-job/terminal-message-emitted job)
+   :terminal-message-emitted-at (:psi.background-job/terminal-message-emitted-at job)})
+
 (defn- dispatch-jobs-command
   [ctx session-id trimmed]
-  (let [tail     (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
-        statuses (parse-job-statuses tail)
-        invalid? (and (not (str/blank? tail)) (empty? statuses))
-        jobs     (if statuses
-                   (bg-rt/list-background-jobs-in! ctx session-id statuses)
-                   (bg-rt/list-background-jobs-in! ctx session-id))]
+  (let [tail      (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
+        statuses  (parse-job-statuses tail)
+        invalid?  (and (not (str/blank? tail)) (empty? statuses))
+        jobs-eql  (:psi.agent-session/background-jobs
+                   (session/query-in ctx session-id [:psi.agent-session/background-jobs]))
+        jobs      (mapv eql-job->runtime-job
+                        (if statuses
+                          (filter #(contains? (set statuses) (:psi.background-job/status %)) jobs-eql)
+                          jobs-eql))]
     (if invalid?
       {:type :text :message "Usage: /jobs [status ...]"}
       {:type :text
@@ -440,7 +463,9 @@
   (let [job-id (-> (str/replace trimmed #"^/job\s*" "") str/trim)]
     (if (str/blank? job-id)
       {:type :text :message "Usage: /job <job-id>"}
-      (let [job (bg-rt/inspect-background-job-in! ctx session-id job-id)]
+      (let [jobs (:psi.agent-session/background-jobs
+                  (session/query-in ctx session-id [:psi.agent-session/background-jobs]))
+            job  (some #(when (= job-id (:psi.background-job/id %)) (eql-job->runtime-job %)) jobs)]
         {:type :text
          :message (:job/text (app-bg-view/job-detail job))}))))
 
