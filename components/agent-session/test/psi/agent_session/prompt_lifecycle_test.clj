@@ -3,6 +3,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extensions]
    [psi.agent-session.prompt-chain]
    [psi.agent-session.prompt-request]
    [psi.agent-session.prompt-runtime]
@@ -333,6 +334,35 @@
                            :user-msg nil}
                           {:origin :core}))
     (is (= [] (:steering-messages (ss/get-session-data-in ctx session-id))))))
+
+(deftest prompt-finish-dispatches-extension-turn-finished-event-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        seen             (atom [])
+        assistant-msg    {:role "assistant"
+                          :content [{:type :text :text "done"}]
+                          :stop-reason :stop
+                          :timestamp (java.time.Instant/now)}
+        terminal-result  {:execution-result/turn-id "turn-1"
+                          :execution-result/session-id session-id
+                          :execution-result/assistant-message assistant-msg
+                          :execution-result/turn-outcome :turn.outcome/stop
+                          :execution-result/tool-calls []
+                          :execution-result/stop-reason :stop}]
+    (dispatch/clear-event-log!)
+    (let [reg (:extension-registry ctx)]
+      (psi.agent-session.extensions/register-extension-in! reg "/ext/auto-session-name")
+      (psi.agent-session.extensions/register-handler-in! reg "/ext/auto-session-name" "session_turn_finished"
+                                                         (fn [event]
+                                                           (swap! seen conj event)
+                                                           nil)))
+    (dispatch/dispatch! ctx :session/prompt-finish
+                        {:session-id session-id
+                         :turn-id "turn-1"
+                         :terminal-result terminal-result}
+                        {:origin :core})
+    (is (= [{:session-id session-id
+             :turn-id "turn-1"}]
+           @seen))))
 
 (deftest prompt-finish-triggers-follow-up-next-run-test
   (let [[ctx session-id] (create-session-context {:persist? false})

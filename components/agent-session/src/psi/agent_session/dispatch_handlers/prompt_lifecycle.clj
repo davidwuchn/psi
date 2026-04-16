@@ -160,6 +160,10 @@
                            :event-type :on-agent-done
                            :event-data {:session-id session-id}
                            :origin :core}
+                          {:effect/type :notify/extension-dispatch
+                           :event-name "session_turn_finished"
+                           :payload {:session-id session-id
+                                     :turn-id turn-id}}
                           {:effect/type :runtime/reconcile-and-emit-background-job-terminals}
                           {:effect/type :statechart/send-event
                            :event :session/reset}]
