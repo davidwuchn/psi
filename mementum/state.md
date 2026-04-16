@@ -136,14 +136,11 @@ Bootstrapped on 2026-04-02.
   - projected background-job widgets render from shared UI projection state
 
 ## Recent relevant commits
+- `a946fe8` — ⚒ custom-providers: reload-models command + session bootstrap refresh
+- `97a66aa` — ⚒ custom-providers: wire model-registry init into bootstrap
+- `5d98edf` — ⊘ extensions: guard dispatch-in contains? against non-map handler returns
 - `a3f61cf0` — ⊘ tests: align dispatch-id expectations
-- `36459252` — ⊘ tests: align service protocol mutation stubs with trace opts
-- `faf4b3ba` — ⊘ tests: make interrupt dispatch test deterministic
-- `1b0a4424` — ⊘ tests: make deferred extension prompt test deterministic
 - `b10667f4` — ⊨ tools: remove tool-schemas child-session compatibility
-- `9eccca5f` — ⊨ tools: rename child-session payloads to tool-defs
-- `a0fec5be` — ⊨ tools: preserve structured params at agent-core projection
-- `6b5a206d` — ⊨ tools: relax agent-core parameter schema for migration
 
 ## Prompt lifecycle convergence — current status
 - The prepare → execute → record → finish scaffold is now fully wired end-to-end.
@@ -151,9 +148,9 @@ Bootstrapped on 2026-04-02.
 - Tests prove: submit → prepare → execute → record → finish → idle, including tool-use continuation paths.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 
-## Custom providers — implementation complete
+## Custom providers — complete (`46bc655..a946fe8`)
 
-All 7 slices landed in 7 commits (`46bc655..e6cd43f`):
+All 8 slices landed:
 
 1. `psi.ai.user-models` — parse `models.edn`, validate, resolve api-key specs
 2. `psi.ai.model-registry` — merged catalog (built-in + user + project), auth lookup
@@ -162,26 +159,27 @@ All 7 slices landed in 7 commits (`46bc655..e6cd43f`):
 5. `psi.agent-session.prompt-request` — custom provider auth + headers injection
 6. Transport (openai/anthropic) — `:no-auth-header` and custom `:headers` support
 7. All callers migrated from `ai-models/all-models` → `model-registry`
-
-New test count: 71 (ai component), 1106 (full unit suite, same 2 pre-existing failures).
+8. `/reload-models` command + session bootstrap refresh (`a946fe8`)
 
 Config files:
 - `~/.psi/agent/models.edn` — user-global custom providers
 - `.psi/models.edn` — project-local custom providers
 
-Remaining work for full end-to-end:
-- Wire `model-registry/init!` into system bootstrap (currently lazy-initialized)
-- Wire `load-project-models!` into session bootstrap when cwd changes
-- Add `/reload-models` command or integrate with existing refresh path
+Usage:
+- `/model local test-llm` — switch to a custom local model
+- `/reload-models` — reload models.edn from the current session's cwd after editing
+
+2 pre-existing failures in unit suite (unrelated: git-test, extensions-test).
 
 ## Suggested next step
-- Best next move: continue converging shared-session prompt semantics in the canonical prompt namespaces.
-- `psi.agent-session.executor` has been deleted; shared-session prompt execution now has one path:
-  - `prompt-turn` owns streaming + recursive turn progression
-  - `prompt-loop` owns loop lifecycle completion
-- Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes when they are intentionally isolated (for example workflow step-local sessions in `extensions/mcp_tasks_run.clj`) rather than forcing them into the shared session lifecycle.
-- The next convergence target should therefore be shared-session prompt semantics such as agent profile / skill injection in request preparation, not isolated workflow runtimes.
-- Keep LSP follow-on work as a secondary thread.
+- Custom providers: complete. Next active threads (PLAN.md order):
+  1. **Prompt lifecycle**: converge agent profile / skill injection into request preparation
+  2. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
+  3. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
+  4. **Dispatch trace**: broaden beyond tool/post-tool path
+  5. **Agent tool skill prelude**: `:skill` arg → synthetic context injection + cache breakpoint
+- Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes.
+- Next convergence target: agent profile / skill injection in request preparation for shared-session paths.
 
 ## Notes for future ψ
 - `PLAN.md` is the main active-work tracker and now begins with prompt lifecycle work; treat that as the current primary thread.
