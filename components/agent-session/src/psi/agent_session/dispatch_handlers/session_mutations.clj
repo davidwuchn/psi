@@ -134,6 +134,14 @@
         :return job})))
 
   (register-core-handler!
+   :session/login-begin
+   (fn [_ctx {:keys [provider-id oauth-ctx]}]
+     {:effects [{:effect/type :oauth/begin-login
+                 :provider-id provider-id
+                 :oauth-ctx   oauth-ctx}]
+      :return-effect-result? true}))
+
+  (register-core-handler!
    :session/remember
    (fn [_ctx {:keys [text memory-ctx provenance]}]
      {:effects [{:effect/type :memory/capture
@@ -141,6 +149,21 @@
                  :memory-ctx  memory-ctx
                  :provenance  provenance}]
       :return-effect-result? true}))
+
+  (register-core-handler!
+   :session/login-begin
+   (fn [_ctx {:keys [provider-id oauth-ctx]}]
+     {:effects [{:effect/type :oauth/begin-login
+                 :provider-id provider-id
+                 :oauth-ctx oauth-ctx}]
+      :return-effect-result? true}))
+
+  (register-core-handler!
+   :session/logout
+   (fn [_ctx {:keys [provider-ids oauth-ctx]}]
+     {:effects [{:effect/type :oauth/logout
+                 :provider-ids provider-ids
+                 :oauth-ctx oauth-ctx}]}))
 
   (register-core-handler!
    :session/reload-models

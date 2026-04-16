@@ -518,7 +518,7 @@
                                (name (:thinking-level result)))}))))))))
 
 (defn- dispatch-login-command
-  [oauth-ctx ai-model trimmed]
+  [ctx session-id oauth-ctx ai-model trimmed]
   (if-not oauth-ctx
     {:type :login-error :message "OAuth not available."}
     (let [provider-arg (second (str/split trimmed #"\s+" 2))
@@ -528,7 +528,7 @@
       (if error
         {:type :login-error :message (str "✗ " error)}
         (try
-          (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
+          (let [{:keys [url login-state]} (session/login-begin-in! (assoc ctx :oauth-ctx oauth-ctx) session-id (:id provider))]
             {:type                 :login-start
              :provider             provider
              :url                  url
@@ -607,7 +607,7 @@
     "/remember" (dispatch-remember-command ctx session-id trimmed)
     "/model" (dispatch-model-command ctx session-id trimmed)
     "/thinking" (dispatch-thinking-command ctx session-id trimmed)
-    "/login" (dispatch-login-command oauth-ctx ai-model trimmed)
+    "/login" (dispatch-login-command ctx session-id oauth-ctx ai-model trimmed)
     nil))
 
 (defn- dispatch*

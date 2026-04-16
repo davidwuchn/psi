@@ -253,6 +253,17 @@
   (let [result (core/remember-in! agent-session-ctx session-id text)]
     {:psi.memory.remember/ok? (boolean (:ok? result))}))
 
+(pco/defmutation login-begin
+  "Begin OAuth login flow for a provider."
+  [_ {:keys [psi/agent-session-ctx session-id provider-id]}]
+  {::pco/op-name 'psi.extension/login-begin
+   ::pco/params  [:psi/agent-session-ctx :session-id :provider-id]
+   ::pco/output  [:psi.oauth/url
+                  :psi.oauth/provider-id]}
+  (let [result (core/login-begin-in! agent-session-ctx session-id provider-id)]
+    {:psi.oauth/url         (:url result)
+     :psi.oauth/provider-id (:provider-id result)}))
+
 (def all-mutations
   [set-session-name
    set-model
@@ -266,4 +277,5 @@
    append-entry
    reload-models
    cancel-job
-   remember])
+   remember
+   login-begin])

@@ -8,8 +8,10 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.ai.model-registry :as model-registry]
    [psi.memory.core :as memory]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.session :as session-data]
@@ -255,6 +257,11 @@
                    (:event-name effect)
                    (:payload effect)))
 
+;;; OAuth
+
+(defmethod execute-effect! :oauth/begin-login [_ctx effect]
+  (oauth/begin-login! (:oauth-ctx effect) (:provider-id effect)))
+
 ;;; Memory capture
 
 (defmethod execute-effect! :memory/capture [_ctx effect]
@@ -264,6 +271,16 @@
     :content      (:text effect)
     :tags         [:remember :manual]
     :provenance   (:provenance effect)}))
+
+;;; OAuth
+
+(defmethod execute-effect! :oauth/begin-login [_ctx effect]
+  (oauth/begin-login! (:oauth-ctx effect) (:provider-id effect)))
+
+(defmethod execute-effect! :oauth/logout [_ctx effect]
+  (doseq [provider-id (:provider-ids effect)]
+    (oauth/logout! (:oauth-ctx effect) provider-id))
+  nil)
 
 ;;; Background job cancel
 

@@ -116,7 +116,8 @@
      [:provenance :map]]]
    [:oauth/begin-login
     [:map [:effect/type [:= :oauth/begin-login]]
-     [:provider-id :keyword]]]
+     [:provider-id :keyword]
+     [:oauth-ctx :any]]]
    [:oauth/logout
     [:map [:effect/type [:= :oauth/logout]]
      [:provider-ids [:vector :keyword]]]]])

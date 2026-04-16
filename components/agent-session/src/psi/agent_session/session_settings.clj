@@ -86,6 +86,26 @@
                          :provenance  (remember-provenance ctx session-id)}
                         {:origin :core})))
 
+(defn login-begin-in!
+  "Begin OAuth login for `provider-id`.
+   Returns the oauth begin-login result map."
+  [ctx session-id provider-id]
+  (dispatch/dispatch! ctx :session/login-begin
+                      {:session-id session-id
+                       :provider-id provider-id
+                       :oauth-ctx (:oauth-ctx ctx)}
+                      {:origin :core}))
+
+(defn logout-in!
+  "Logout all listed OAuth providers.
+   Returns nil."
+  [ctx session-id provider-ids]
+  (dispatch/dispatch! ctx :session/logout
+                      {:session-id session-id
+                       :provider-ids provider-ids
+                       :oauth-ctx (:oauth-ctx ctx)}
+                      {:origin :core}))
+
 (defn reload-models-in!
   "Reload user + project custom models from disk for `session-id`'s effective cwd.
    Returns {:error string-or-nil :count int}."

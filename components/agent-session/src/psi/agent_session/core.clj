@@ -126,6 +126,11 @@
   [ctx session-id text]
   (settings/remember-in! ctx session-id text))
 
+(defn login-begin-in!
+  "Begin OAuth login. Returns the oauth begin-login result map."
+  [ctx session-id provider-id]
+  (settings/login-begin-in! ctx session-id provider-id))
+
 (defn reload-models-in!
   "Reload user + project custom models from disk for session's effective cwd.
    Returns {:error string-or-nil :count int}."
