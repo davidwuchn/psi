@@ -40,8 +40,8 @@ value AdapterSignalCommands {
     commands: Set<String> = {"/quit", "/exit", "/resume", "/tree", "/tree <id>"}
 }
 
--- Read-only queries: no state change, formatted from session/EQL data.
--- No dispatch event needed.
+-- Read-only queries: no state change, must go through EQL resolvers
+-- via session/query-in so the pipeline sees every read.
 value ReadOnlyQueryCommands {
     commands: Set<String> = {
         "/status", "/history", "/help", "/?", "/prompts", "/skills",
@@ -50,6 +50,28 @@ value ReadOnlyQueryCommands {
         "/thinking"        -- no-args form: show current level
     }
 }
+
+-- Read-only command resolver coverage:
+--
+-- ALREADY through query-in:
+--   /status   → uses session/query-in with EQL attrs
+--   /worktree → uses session/query-in with EQL attrs
+--
+-- NEED to switch from ss/get-session-data-in to session/query-in:
+--   /help     → :psi.agent-session/prompt-templates, :psi.agent-session/skills,
+--               :psi.extension/command-names (all resolvers exist)
+--   /prompts  → :psi.agent-session/prompt-templates (resolver exists)
+--   /skills   → :psi.agent-session/skills (resolver exists)
+--   /model    → :psi.agent-session/model (resolver exists)
+--   /thinking → :psi.agent-session/thinking-level (resolver exists)
+--
+-- NEED to switch from bg-rt direct read to session/query-in:
+--   /jobs     → :psi.agent-session/background-jobs (resolver exists)
+--   /job <id> → filter from :psi.agent-session/background-jobs
+--
+-- NEED new resolver:
+--   /history  → NEW :psi.agent-session/message-history resolver
+--               (currently reads agent-core atom directly via agent/get-data-in)
 
 -- State-mutating commands: must go through dispatch.
 -- Each has a dispatch event, a *-in! function, and a Pathom mutation.
@@ -219,10 +241,13 @@ invariant MutationAndCommandShareDispatchEvent {
                f calls dispatch!(event)
 }
 
-invariant ReadOnlyCommandsStayPure {
-    description: "Read-only commands use EQL queries or session data reads.
-                  They never call dispatch or produce side effects."
+invariant ReadOnlyCommandsUseResolvers {
+    description: "Read-only commands use session/query-in (EQL resolvers).
+                  They never read the atom directly or call dispatch."
     check: forall cmd in ReadOnlyQueryCommands.commands:
+             execution_path(cmd) calls session/query-in AND
+             execution_path(cmd) does_not_call ss/get-session-data-in AND
+             execution_path(cmd) does_not_call agent/get-data-in AND
              execution_path(cmd) does_not_call dispatch!
 }
 
@@ -273,8 +298,31 @@ invariant EveryMutationHasDispatchEvent {
 --   - Add logout mutation
 --   - Update dispatch-logout-command to call logout-in!
 
--- Slice 6: cleanup
---   - Verify commands.clj has no remaining direct side-effect calls
+-- ── Read-only command convergence (switch to session/query-in) ──
+
+-- Slice 6: /help, /prompts, /skills — switch from ss/get-session-data-in
+--   - Use session/query-in [:psi.agent-session/prompt-templates
+--                           :psi.agent-session/skills
+--                           :psi.extension/command-names]
+--   - Remove direct ss/get-session-data-in and ext/all-commands-in calls
+
+-- Slice 7: /model (show), /thinking (show) — switch from ss/get-session-data-in
+--   - Use session/query-in [:psi.agent-session/model]
+--   - Use session/query-in [:psi.agent-session/thinking-level]
+
+-- Slice 8: /jobs, /job — switch from bg-rt direct reads
+--   - Use session/query-in [:psi.agent-session/background-jobs]
+--   - /job <id>: filter from resolved list
+
+-- Slice 9: /history — new resolver + switch
+--   - Add :psi.agent-session/message-history resolver
+--     (returns truncated message list from agent-core context)
+--   - Switch format-history to use session/query-in
+
+-- Slice 10: cleanup
+--   - Verify commands.clj has no remaining direct atom reads or side-effect calls
+--   - All reads go through session/query-in (EQL resolvers)
+--   - All writes go through *-in! (dispatch pipeline)
 --   - Update prompt-slash-commands.allium with execution model rules
 --   - Update extension mutation op whitelist
 

@@ -27,17 +27,31 @@ mutations call them. They call `dispatch/dispatch!`.
 - `/thinking <level>` → `set-thinking-level-in!` → `dispatch! :session/set-thinking-level`
 - `/tree name` → `set-session-name-in!` → `dispatch! :session/set-session-name`
 - `/new` → lifecycle dispatch events
+- `/status` → `session/query-in` (EQL resolvers)
+- `/worktree` → `session/query-in` (EQL resolvers)
 
-### Migration slices
+### Write slices (state-mutating → dispatch pipeline)
 
-1. `/reload-models` — add dispatch handler `:session/reload-models`, effect `:model-registry/reload`
-2. `/cancel-job` — add dispatch handler `:session/cancel-job`, effect `:background-job/cancel`
-3. `/remember` — add dispatch handler `:session/remember`, effect `:memory/capture`
-4. `/login` — add dispatch handler `:session/login-begin`, effect `:oauth/begin-login`
-5. `/logout` — add dispatch handler `:session/logout`, effect `:oauth/logout`
-6. Cleanup: verify no remaining direct side effects in `commands.clj`
+Each: dispatch handler + effect type + `*-in!` function + mutation + update command.
 
-Each slice: dispatch handler + `*-in!` function + mutation + update command to call `*-in!`.
+1. `/reload-models` — dispatch `:session/reload-models`, effect `:model-registry/reload`
+2. `/cancel-job` — dispatch `:session/cancel-job`, effect `:background-job/cancel`
+3. `/remember` — dispatch `:session/remember`, effect `:memory/capture`
+4. `/login` — dispatch `:session/login-begin`, effect `:oauth/begin-login`
+5. `/logout` — dispatch `:session/logout`, effect `:oauth/logout`
+
+### Read slices (direct atom reads → EQL resolvers)
+
+Each: switch from `ss/get-session-data-in` / `agent/get-data-in` / `bg-rt/*` to `session/query-in`.
+
+6. `/help`, `/prompts`, `/skills` — resolvers exist (`:psi.agent-session/prompt-templates`, `:psi.agent-session/skills`, `:psi.extension/command-names`)
+7. `/model` (show), `/thinking` (show) — resolvers exist (`:psi.agent-session/model`, `:psi.agent-session/thinking-level`)
+8. `/jobs`, `/job` — resolver exists (`:psi.agent-session/background-jobs`); filter for single job
+9. `/history` — **new resolver** `:psi.agent-session/message-history` (returns truncated message list)
+
+### Cleanup
+
+10. Verify `commands.clj` has no direct atom reads or side-effect calls
 
 ## Post-Wave-B Gordian follow-on
 
