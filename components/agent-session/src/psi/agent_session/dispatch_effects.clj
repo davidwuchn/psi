@@ -8,6 +8,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
+   [psi.ai.model-registry :as model-registry]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.session :as session-data]
@@ -252,6 +253,16 @@
   (ext/dispatch-in (:extension-registry ctx)
                    (:event-name effect)
                    (:payload effect)))
+
+;;; Model registry
+
+(defmethod execute-effect! :model-registry/reload [_ctx effect]
+  (let [cwd (:cwd effect)]
+    (model-registry/load-project-models!
+     (str cwd "/.psi/models.edn")
+     (model-registry/default-user-models-path))
+    {:error (model-registry/get-load-error)
+     :count (count (model-registry/all-models-seq))}))
 
 ;;; Auto-compaction — extracted to helper due to size
 

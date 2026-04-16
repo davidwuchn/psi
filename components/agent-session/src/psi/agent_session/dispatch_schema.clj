@@ -102,7 +102,22 @@
      [:event-name :string] [:payload :any]]]
    [:runtime/auto-compact-workflow
     [:map [:effect/type [:= :runtime/auto-compact-workflow]]
-     [:reason :any] [:will-retry? :boolean]]]])
+     [:reason :any] [:will-retry? :boolean]]]
+   [:model-registry/reload
+    [:map [:effect/type [:= :model-registry/reload]]
+     [:cwd :string]]]
+   [:background-job/cancel
+    [:map [:effect/type [:= :background-job/cancel]]
+     [:job-id :string] [:reason :keyword]]]
+   [:memory/capture
+    [:map [:effect/type [:= :memory/capture]]
+     [:text [:maybe :string]]]]
+   [:oauth/begin-login
+    [:map [:effect/type [:= :oauth/begin-login]]
+     [:provider-id :keyword]]]
+   [:oauth/logout
+    [:map [:effect/type [:= :oauth/logout]]
+     [:provider-ids [:vector :keyword]]]]])
 
 (def pure-result-schema
   "Schema for the unified pure handler result shape.

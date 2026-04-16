@@ -118,6 +118,14 @@
       :return {:session-name name}}))
 
   (register-core-handler!
+   :session/reload-models
+   (fn [ctx {:keys [session-id]}]
+     (let [cwd (session/effective-cwd-in ctx session-id)]
+       {:effects [{:effect/type :model-registry/reload
+                   :cwd cwd}]
+        :return-effect-result? true})))
+
+  (register-core-handler!
    :session/set-active-tools
    (fn [_ctx {:keys [session-id tool-maps]}]
      (let [tool-defs (tool-defs/normalize-tool-defs tool-maps)]

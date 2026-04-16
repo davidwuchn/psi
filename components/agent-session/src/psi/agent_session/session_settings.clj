@@ -2,8 +2,7 @@
   (:require
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session :as session]
-   [psi.agent-session.session-state :as ss]
-   [psi.ai.model-registry :as model-registry]))
+   [psi.agent-session.session-state :as ss]))
 
 (defn set-model-in!
   "Set the session model for `session-id`."
@@ -55,9 +54,4 @@
   "Reload user + project custom models from disk for `session-id`'s effective cwd.
    Returns {:error string-or-nil :count int}."
   [ctx session-id]
-  (let [cwd (ss/effective-cwd-in ctx session-id)]
-    (model-registry/load-project-models!
-     (str cwd "/.psi/models.edn")
-     (model-registry/default-user-models-path))
-    {:error (model-registry/get-load-error)
-     :count (count (model-registry/all-models-seq))}))
+  (dispatch/dispatch! ctx :session/reload-models {:session-id session-id} {:origin :core}))
