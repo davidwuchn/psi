@@ -213,6 +213,26 @@
   {:psi.agent-session/session-entry-count
    (count (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id)))})
 
+(pco/defmutation reload-models
+  "Reload user + project custom models from disk for the session's effective cwd.
+   Use after editing .psi/models.edn or ~/.psi/agent/models.edn."
+  [_ {:keys [psi/agent-session-ctx session-id]}]
+  {::pco/op-name 'psi.extension/reload-models
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.model-registry/load-error
+                  :psi.agent-session/model-catalog]}
+  (let [{:keys [error]} (core/reload-models-in! agent-session-ctx session-id)]
+    {:psi.model-registry/load-error  error
+     :psi.agent-session/model-catalog
+     (->> (model-registry/all-models-seq)
+          (map (fn [m]
+                 {:provider  (name (:provider m))
+                  :id        (:id m)
+                  :name      (:name m)
+                  :reasoning (boolean (:supports-reasoning m))}))
+          (sort-by (juxt :provider :id))
+          vec)}))
+
 (def all-mutations
   [set-session-name
    set-model
@@ -223,4 +243,5 @@
    set-rpc-trace
    interrupt
    compact
-   append-entry])
+   append-entry
+   reload-models])

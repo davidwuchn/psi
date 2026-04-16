@@ -252,18 +252,16 @@
   "Reload user + project custom models from disk and return a status string."
   [ctx session-id]
   (let [cwd              (ss/effective-cwd-in ctx session-id)
-        project-path     (str cwd "/.psi/models.edn")
-        user-path        (model-registry/default-user-models-path)]
-    (model-registry/load-project-models! project-path user-path)
-    (if-let [err (model-registry/get-load-error)]
+        {:keys [error count]} (session/reload-models-in! ctx session-id)]
+    (if error
       (str "── Models reloaded (with errors) ─────\n"
            "  cwd   : " cwd "\n"
-           "  error : " err "\n"
-           "  count : " (count (model-registry/all-models-seq)) "\n"
+           "  error : " error "\n"
+           "  count : " count "\n"
            "───────────────────────────────────────")
       (str "── Models reloaded ───────────────────\n"
            "  cwd   : " cwd "\n"
-           "  count : " (count (model-registry/all-models-seq)) "\n"
+           "  count : " count "\n"
            "───────────────────────────────────────"))))
 
 ;; ============================================================

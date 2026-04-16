@@ -77,6 +77,12 @@
   {::pco/output [:ai/registered-providers]}
   {:ai/registered-providers (set (keys @provider-registry))})
 
+(pco/defresolver model-registry-load-error-resolver
+  "Resolve the current model-registry load error string, or nil if clean."
+  [_]
+  {::pco/output [:psi.model-registry/load-error]}
+  {:psi.model-registry/load-error (model-registry/get-load-error)})
+
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Register resolvers with the query component
 ;; ───────────────────────────────────────────────────────────────────────────
@@ -86,7 +92,8 @@
   [ai-model-resolver
    ai-model-list-resolver
    ai-provider-models-resolver
-   ai-provider-registry-resolver])
+   ai-provider-registry-resolver
+   model-registry-load-error-resolver])
 
 (defn register-resolvers-in!
   "Register all AI resolvers into an isolated `qctx` query context and rebuild its env."

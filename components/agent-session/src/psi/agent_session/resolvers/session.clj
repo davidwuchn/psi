@@ -419,6 +419,20 @@
   [agent-session-ctx]
   (accessors/refresh-oauth-authenticated-providers-in! agent-session-ctx))
 
+(defn- registry-configured-provider-ids
+  "Return provider ids that have explicit auth configured in the model registry.
+   Includes custom/local providers defined in models.edn — API-key or no-auth.
+   Built-in providers (anthropic, openai) only appear here when the user
+   explicitly overrides their auth via models.edn."
+  []
+  (->> (model-registry/all-models-seq)
+       (map :provider)
+       distinct
+       (filter #(some? (model-registry/get-auth %)))
+       (map name)
+       sort
+       vec))
+
 (pco/defresolver agent-session-model-catalog
   "Resolve runtime model catalog for frontend model selectors."
   [{:keys [psi/agent-session-ctx]}]
@@ -428,7 +442,9 @@
     {:psi.agent-session/model-catalog (runtime-model-catalog)}))
 
 (pco/defresolver agent-session-authenticated-providers
-  "Resolve provider ids with configured auth for this session."
+  "Resolve provider ids with configured auth for this session.
+   Merges OAuth-authenticated providers with model-registry-configured providers
+   (custom/local providers from models.edn with explicit API keys or no-auth)."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/authenticated-providers
@@ -436,7 +452,9 @@
                  :psi.oauth/last-login-provider
                  :psi.oauth/last-login-at
                  :psi.oauth/pending-login]}
-  (let [ids         (authenticated-provider-ids agent-session-ctx)
+  (let [oauth-ids   (authenticated-provider-ids agent-session-ctx)
+        reg-ids     (registry-configured-provider-ids)
+        ids         (-> (concat oauth-ids reg-ids) distinct sort vec)
         oauth-state (or (accessors/oauth-projection-in agent-session-ctx) {})]
     {:psi.agent-session/authenticated-providers ids
      :psi.oauth/authenticated-providers         ids

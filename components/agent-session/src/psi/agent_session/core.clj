@@ -116,6 +116,12 @@
   [ctx session-id enabled?]
   (settings/set-auto-retry-in! ctx session-id enabled?))
 
+(defn reload-models-in!
+  "Reload user + project custom models from disk for session's effective cwd.
+   Returns {:error string-or-nil :count int}."
+  [ctx session-id]
+  (settings/reload-models-in! ctx session-id))
+
 (defn execute-compaction-in!
   [ctx session-id custom-instructions]
   (compaction-runtime/execute-compaction-in! ctx session-id custom-instructions))
