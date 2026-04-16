@@ -151,10 +151,14 @@
    :task (shell "clojure -M:lint")}
 
   commit-check:rama-cc
-  {:doc  "Run rama-cc against components/ and bases/ with commit-check thresholds."
-   :task (let [result (shell {:continue true}
-                             "rama-cc" "--threshold" "21" "--fail-above" "20" "components/" "bases/")]
-           (System/exit (:exit result)))}
+  {:doc  "Run rama-cc against components/ and bases/ with commit-check thresholds. Skips when rama-cc is not on PATH."
+   :task (do
+           (when (-> (shell {:continue true :out :string :err :string} "which" "rama-cc") :exit pos?)
+             (println "rama-cc not found on PATH, skipping.")
+             (System/exit 0))
+           (let [result (shell {:continue true}
+                               "rama-cc" "--threshold" "21" "--fail-above" "20" "components/" "bases/")]
+             (System/exit (:exit result))))}
 
   commit-check:file-lengths
   {:doc  "Fail when any src/ or test/ file under components/ or bases/ exceeds 800 lines."
