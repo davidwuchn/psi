@@ -120,7 +120,8 @@
      [:oauth-ctx :any]]]
    [:oauth/logout
     [:map [:effect/type [:= :oauth/logout]]
-     [:provider-ids [:vector :keyword]]]]])
+     [:provider-ids [:vector :keyword]]
+     [:oauth-ctx :any]]]])
 
 (def pure-result-schema
   "Schema for the unified pure handler result shape.

@@ -262,6 +262,11 @@
 (defmethod execute-effect! :oauth/begin-login [_ctx effect]
   (oauth/begin-login! (:oauth-ctx effect) (:provider-id effect)))
 
+(defmethod execute-effect! :oauth/logout [_ctx effect]
+  (doseq [provider-id (:provider-ids effect)]
+    (oauth/logout! (:oauth-ctx effect) provider-id))
+  nil)
+
 ;;; Memory capture
 
 (defmethod execute-effect! :memory/capture [_ctx effect]

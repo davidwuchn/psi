@@ -142,6 +142,13 @@
       :return-effect-result? true}))
 
   (register-core-handler!
+   :session/logout
+   (fn [_ctx {:keys [provider-ids oauth-ctx]}]
+     {:effects [{:effect/type :oauth/logout
+                 :provider-ids provider-ids
+                 :oauth-ctx    oauth-ctx}]}))
+
+  (register-core-handler!
    :session/remember
    (fn [_ctx {:keys [text memory-ctx provenance]}]
      {:effects [{:effect/type :memory/capture

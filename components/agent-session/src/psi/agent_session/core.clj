@@ -131,6 +131,11 @@
   [ctx session-id provider-id]
   (settings/login-begin-in! ctx session-id provider-id))
 
+(defn logout-in!
+  "Logout the given OAuth providers."
+  [ctx session-id provider-ids]
+  (settings/logout-in! ctx session-id provider-ids))
+
 (defn reload-models-in!
   "Reload user + project custom models from disk for session's effective cwd.
    Returns {:error string-or-nil :count int}."

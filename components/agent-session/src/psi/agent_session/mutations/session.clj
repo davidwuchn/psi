@@ -264,6 +264,15 @@
     {:psi.oauth/url         (:url result)
      :psi.oauth/provider-id (:provider-id result)}))
 
+(pco/defmutation logout
+  "Logout one or more OAuth providers."
+  [_ {:keys [psi/agent-session-ctx session-id provider-ids]}]
+  {::pco/op-name 'psi.extension/logout
+   ::pco/params  [:psi/agent-session-ctx :session-id :provider-ids]
+   ::pco/output  [:psi.oauth/logged-out?]}
+  (core/logout-in! agent-session-ctx session-id provider-ids)
+  {:psi.oauth/logged-out? true})
+
 (def all-mutations
   [set-session-name
    set-model
@@ -278,4 +287,5 @@
    reload-models
    cancel-job
    remember
-   login-begin])
+   login-begin
+   logout])

@@ -540,15 +540,14 @@
              :message (str "✗ Login failed: " (ex-message e))}))))))
 
 (defn- dispatch-logout-command
-  [oauth-ctx]
+  [ctx session-id oauth-ctx]
   (if-not oauth-ctx
     {:type :text :message "OAuth not available."}
     (let [logged-in (oauth/logged-in-providers oauth-ctx)]
       (if (empty? logged-in)
         {:type :text :message "No OAuth providers logged in. Use /login first."}
         (do
-          (doseq [p logged-in]
-            (oauth/logout! oauth-ctx (:id p)))
+          (session/logout-in! (assoc ctx :oauth-ctx oauth-ctx) session-id (mapv :id logged-in))
           {:type    :logout
            :message (str "✓ Logged out of: "
                          (str/join ", " (map :name logged-in)))})))))
@@ -628,7 +627,7 @@
        :skills {:type :text :message (format-skills ctx session-id)}
        :worktree {:type :text :message (format-worktree ctx session-id)}
        :reload-models {:type :text :message (format-reload-models ctx session-id)}
-       :logout (dispatch-logout-command oauth-ctx)
+       :logout (dispatch-logout-command ctx session-id oauth-ctx)
        nil)
      (dispatch-prefixed-command ctx session-id trimmed opts)
      (when (str/starts-with? trimmed "/")
