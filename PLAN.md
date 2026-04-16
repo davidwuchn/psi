@@ -4,6 +4,41 @@ Remove completed plan sections once finished; `PLAN.md` should contain active wo
 
 # Active work
 
+## Command-dispatch convergence
+
+Spec: `spec/command-dispatch-convergence.allium`
+
+Goal: every state-mutating slash command executes through the dispatch pipeline,
+sharing the same dispatch event as the corresponding Pathom mutation.
+
+Architecture:
+```
+text → parse (commands.clj)
+     → state mutation? → *-in! → dispatch! → handler → effects
+     → read query?     → EQL → format
+     → adapter signal? → return type marker
+```
+
+`*-in!` functions are the canonical shared execution point. Both commands and
+mutations call them. They call `dispatch/dispatch!`.
+
+### Already converged
+- `/model <p> <id>` → `set-model-in!` → `dispatch! :session/set-model`
+- `/thinking <level>` → `set-thinking-level-in!` → `dispatch! :session/set-thinking-level`
+- `/tree name` → `set-session-name-in!` → `dispatch! :session/set-session-name`
+- `/new` → lifecycle dispatch events
+
+### Migration slices
+
+1. `/reload-models` — add dispatch handler `:session/reload-models`, effect `:model-registry/reload`
+2. `/cancel-job` — add dispatch handler `:session/cancel-job`, effect `:background-job/cancel`
+3. `/remember` — add dispatch handler `:session/remember`, effect `:memory/capture`
+4. `/login` — add dispatch handler `:session/login-begin`, effect `:oauth/begin-login`
+5. `/logout` — add dispatch handler `:session/logout`, effect `:oauth/logout`
+6. Cleanup: verify no remaining direct side effects in `commands.clj`
+
+Each slice: dispatch handler + `*-in!` function + mutation + update command to call `*-in!`.
+
 ## Post-Wave-B Gordian follow-on
 
 Wave B is complete.

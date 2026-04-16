@@ -1,0 +1,301 @@
+-- allium: 2
+
+-- command-dispatch-convergence.allium
+-- Scope: Converge all slash commands onto the dispatch pipeline.
+--
+-- Currently, slash commands are a mixed execution model:
+-- - Some call dispatch (set-model, set-thinking-level, set-session-name)
+-- - Some call side-effect functions directly (reload-models, cancel-job,
+--   remember, login, logout)
+-- - Some are read-only EQL queries (status, history, help, etc.)
+-- - Some are adapter routing signals (quit, resume, tree-open, tree-switch)
+--
+-- Goal: every state-mutating command executes through the dispatch pipeline,
+-- sharing the same dispatch event as the corresponding Pathom mutation.
+-- Read-only commands stay as EQL queries. Adapter signals stay as return values.
+--
+-- Architecture:
+--   text → parse (commands.clj)
+--        → read query?   → EQL → format → {:type :text}
+--        → adapter signal? → {:type :quit/:resume/...}
+--        → state mutation? → *-in! → dispatch! → handler → effects
+--                                              → format result → {:type :text/...}
+--
+-- The *-in! function is the canonical shared execution point.
+-- Both commands and mutations call it. It calls dispatch/dispatch!.
+-- The mutation layer is a Pathom wrapper providing the same operation
+-- to extensions and RPC. Commands are a text parser + formatter layer.
+
+use "./event-dispatch.allium" as dispatch
+use "./session-core.allium" as core
+use "./prompt-slash-commands.allium" as slash
+
+------------------------------------------------------------
+-- Command classification
+------------------------------------------------------------
+
+-- Adapter signals: no state change, adapter routes the result type.
+-- No dispatch event needed.
+value AdapterSignalCommands {
+    commands: Set<String> = {"/quit", "/exit", "/resume", "/tree", "/tree <id>"}
+}
+
+-- Read-only queries: no state change, formatted from session/EQL data.
+-- No dispatch event needed.
+value ReadOnlyQueryCommands {
+    commands: Set<String> = {
+        "/status", "/history", "/help", "/?", "/prompts", "/skills",
+        "/worktree", "/jobs", "/job <id>",
+        "/model",          -- no-args form: show current model
+        "/thinking"        -- no-args form: show current level
+    }
+}
+
+-- State-mutating commands: must go through dispatch.
+-- Each has a dispatch event, a *-in! function, and a Pathom mutation.
+value StateMutatingCommands {
+    commands: Set<String> = {
+        "/model <provider> <id>",
+        "/thinking <level>",
+        "/tree name <id> <name>",
+        "/reload-models",
+        "/cancel-job <id>",
+        "/remember [text]",
+        "/new",
+        "/login [provider]",
+        "/logout"
+    }
+}
+
+------------------------------------------------------------
+-- Execution layers
+------------------------------------------------------------
+
+-- Layer 1: Dispatch events (the canonical interface)
+-- Every state change is a named dispatch event.
+-- Handlers are pure: (state, event) → {state', effects}
+-- Both commands and mutations converge here.
+
+value DispatchEvent {
+    event_type: String
+    session_id: core/SessionId?
+    params: Map<String, Any>
+}
+
+-- Layer 2: *-in! functions (the shared execution point)
+-- Thin wrappers that call dispatch/dispatch! with the right event.
+-- Live in session-settings.clj or appropriate focused namespace.
+-- Facade in core.clj.
+
+value SessionFunction {
+    name: String               -- e.g. "reload-models-in!"
+    dispatch_event: String     -- e.g. ":session/reload-models"
+    namespace: String          -- e.g. "psi.agent-session.session-settings"
+}
+
+-- Layer 3a: Commands (text surface)
+-- Parse text → validate → call *-in! → format result → command result map
+-- No direct side effects. All state changes through *-in!.
+
+-- Layer 3b: Mutations (Pathom surface)
+-- Call *-in! → return Pathom output attrs.
+-- Registered in mutation catalog. Called by extensions via mutate-fn.
+
+------------------------------------------------------------
+-- Current state → target state
+------------------------------------------------------------
+
+-- ALREADY ON DISPATCH (no change needed):
+
+rule ModelSetAlreadyOnDispatch {
+    current_flow: "/model <p> <id>" -> session/set-model-in! -> dispatch! :session/set-model
+    mutation: psi.extension/set-model -> dispatch! :session/set-model
+    status: converged
+}
+
+rule ThinkingSetAlreadyOnDispatch {
+    current_flow: "/thinking <level>" -> session/set-thinking-level-in! -> dispatch! :session/set-thinking-level
+    mutation: -- (missing, add to catalog)
+    status: converged
+}
+
+rule TreeNameAlreadyOnDispatch {
+    current_flow: "/tree name <id> <name>" -> session/set-session-name-in! -> dispatch! :session/set-session-name
+    mutation: psi.extension/set-session-name -> dispatch! :session/set-session-name
+    status: converged
+}
+
+rule NewSessionPartiallyOnDispatch {
+    current_flow: "/new" -> on-new-session! -> session/new-session-in! -> dispatch! :session/new-initialize
+    mutation: psi.extension/create-session -> dispatch!
+    status: converged (lifecycle events already dispatch internally)
+}
+
+-- NEED DISPATCH EVENT (currently direct side-effect calls):
+
+rule ReloadModelsNeedsDispatch {
+    current_flow: "/reload-models" -> session/reload-models-in! -> model-registry/load-project-models! (direct)
+    target_flow:  "/reload-models" -> session/reload-models-in! -> dispatch! :session/reload-models -> handler -> effect
+
+    dispatch_event: ":session/reload-models"
+    in_function:    "reload-models-in!"
+    mutation:       "psi.extension/reload-models"
+
+    handler_returns: { effects: [:model-registry/reload {:cwd cwd}] }
+    effect_executor: model-registry/load-project-models!
+    status: needs_migration
+}
+
+rule CancelJobNeedsDispatch {
+    current_flow: "/cancel-job <id>" -> bg-rt/cancel-background-job-in! (direct)
+    target_flow:  "/cancel-job <id>" -> session/cancel-job-in! -> dispatch! :session/cancel-job -> handler -> effect
+
+    dispatch_event: ":session/cancel-job"
+    in_function:    "cancel-job-in!"
+    mutation:       "psi.extension/cancel-job"
+
+    handler_returns: { effects: [:background-job/cancel {:job-id id, :reason :user}] }
+    effect_executor: bg-rt/cancel-background-job-in!
+    status: needs_migration
+}
+
+rule RememberNeedsDispatch {
+    current_flow: "/remember [text]" -> memory/propose! (direct)
+    target_flow:  "/remember [text]" -> session/remember-in! -> dispatch! :session/remember -> handler -> effect
+
+    dispatch_event: ":session/remember"
+    in_function:    "remember-in!"
+    mutation:       "psi.extension/remember"
+
+    handler_returns: { effects: [:memory/capture {:session-id sid, :text text}] }
+    effect_executor: memory capture pipeline
+    status: needs_migration
+}
+
+rule LoginNeedsDispatch {
+    current_flow: "/login [provider]" -> oauth/begin-login! (direct)
+    target_flow:  "/login [provider]" -> session/login-begin-in! -> dispatch! :session/login-begin -> handler -> effect
+
+    dispatch_event: ":session/login-begin"
+    in_function:    "login-begin-in!"
+    mutation:       "psi.extension/login-begin"
+
+    handler_returns: { effects: [:oauth/begin-login {:provider-id id}] }
+    effect_executor: oauth/begin-login!
+    status: needs_migration
+}
+
+rule LogoutNeedsDispatch {
+    current_flow: "/logout" -> oauth/logout! (direct, loops over providers)
+    target_flow:  "/logout" -> session/logout-in! -> dispatch! :session/logout -> handler -> effect
+
+    dispatch_event: ":session/logout"
+    in_function:    "logout-in!"
+    mutation:       "psi.extension/logout"
+
+    handler_returns: { effects: [:oauth/logout {:provider-ids ids}] }
+    effect_executor: oauth/logout!
+    status: needs_migration
+}
+
+------------------------------------------------------------
+-- Structural invariants
+------------------------------------------------------------
+
+invariant CommandsNeverDirectlySideEffect {
+    description: "commands.clj contains only parsing, validation, and formatting.
+                  All state changes go through *-in! functions."
+    check: forall cmd in StateMutatingCommands.commands:
+             execution_path(cmd) passes_through dispatch_pipeline
+}
+
+invariant MutationAndCommandShareDispatchEvent {
+    description: "For every state-mutating command, the mutation and the command
+                  call the same *-in! function, which dispatches the same event."
+    check: forall cmd in StateMutatingCommands.commands:
+             exists f: *-in! function.
+               command(cmd) calls f AND
+               mutation(cmd) calls f AND
+               f calls dispatch!(event)
+}
+
+invariant ReadOnlyCommandsStayPure {
+    description: "Read-only commands use EQL queries or session data reads.
+                  They never call dispatch or produce side effects."
+    check: forall cmd in ReadOnlyQueryCommands.commands:
+             execution_path(cmd) does_not_call dispatch!
+}
+
+invariant EveryMutationHasDispatchEvent {
+    description: "Every Pathom mutation dispatches a named event.
+                  No mutation performs side effects outside the dispatch pipeline."
+    check: forall m in mutations:
+             exists e: dispatch_event.
+               m calls dispatch!(e) OR m calls *-in!(which calls dispatch!(e))
+}
+
+------------------------------------------------------------
+-- Migration slices (ordered by dependency)
+------------------------------------------------------------
+
+-- Slice 1: reload-models  (model-registry is global, not session state)
+--   - Add dispatch handler :session/reload-models
+--   - Handler returns effect {:effect/type :model-registry/reload}
+--   - Effect executor calls model-registry/load-project-models!
+--   - Update reload-models-in! to dispatch instead of direct call
+--   - Command and mutation unchanged (they already call reload-models-in!)
+
+-- Slice 2: cancel-job
+--   - Add dispatch handler :session/cancel-job
+--   - Handler returns effect {:effect/type :background-job/cancel}
+--   - Add cancel-job-in! to session-settings → core facade
+--   - Add cancel-job mutation
+--   - Update dispatch-cancel-job-command to call cancel-job-in!
+
+-- Slice 3: remember
+--   - Add dispatch handler :session/remember
+--   - Handler returns effect {:effect/type :memory/capture}
+--   - Add remember-in! to appropriate namespace → core facade
+--   - Add remember mutation
+--   - Update dispatch-remember-command to call remember-in!
+
+-- Slice 4: login
+--   - Add dispatch handler :session/login-begin
+--   - Handler returns effect {:effect/type :oauth/begin-login}
+--   - Add login-begin-in! → core facade
+--   - Add login-begin mutation
+--   - Update dispatch-login-command to call login-begin-in!
+
+-- Slice 5: logout
+--   - Add dispatch handler :session/logout
+--   - Handler returns effect {:effect/type :oauth/logout}
+--   - Add logout-in! → core facade
+--   - Add logout mutation
+--   - Update dispatch-logout-command to call logout-in!
+
+-- Slice 6: cleanup
+--   - Verify commands.clj has no remaining direct side-effect calls
+--   - Update prompt-slash-commands.allium with execution model rules
+--   - Update extension mutation op whitelist
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface CommandDispatchConvergence {
+    facing caller: AllCommandSurfaces
+
+    provides:
+        -- Every state-mutating command produces a dispatch event
+        CommandDispatched(command_text, dispatch_event)
+        -- Every dispatch event is traceable
+        CommandTraced(dispatch_event, dispatch_id)
+
+    @guidance
+        -- commands.clj is the text parser + formatter layer only.
+        -- *-in! functions are the canonical shared execution point.
+        -- Mutations are Pathom wrappers around *-in! for extension access.
+        -- Dispatch events are the single source of truth for state changes.
+        -- Read-only commands stay as EQL queries (no dispatch needed).
+        -- Adapter signals stay as typed return values (no dispatch needed).
+}
