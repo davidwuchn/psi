@@ -244,13 +244,13 @@
                                          {:error (.getMessage e)})))
                                 all-handlers)
         result-overrides  (reduce (fn [xs r]
-                                    (if (contains? r :result)
+                                    (if (and (map? r) (contains? r :result))
                                       (conj xs (:result r))
                                       xs))
                                   []
                                   results)
         comp-overrides    (reduce (fn [xs r]
-                                    (if (contains? r :compaction)
+                                    (if (and (map? r) (contains? r :compaction))
                                       (conj xs (:compaction r))
                                       xs))
                                   []
@@ -286,9 +286,10 @@
                                         :content      (:content result)
                                         :details      (:details result)
                                         :is-error     is-error?})]
-    (first (filter #(or (contains? % :content) (contains? % :details)
-                        (contains? % :is-error))
-                   (remove :error results)))))
+    (first (filter #(and (map? %)
+                         (or (contains? % :content) (contains? % :details)
+                             (contains? % :is-error)))
+                   results))))
 
 (defn wrap-tool-executor
   "Wrap a tool executor fn with extension pre/post hooks.

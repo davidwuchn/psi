@@ -2055,7 +2055,8 @@
    "session_switch"
    (fn [_ev]
      (remove-run-workflows!)
-     (reset! (:next-run-id @state) 1)))
+     (reset! (:next-run-id @state) 1)
+     nil))
 
   (refresh-widgets-later!)
   (notify! (str "mcp-tasks-run loaded (ui=" (name (ui-type)) ")") :info))

@@ -66,6 +66,18 @@
              (set (keys (:commands @state)))))
       (is (= 1 (count (get-in @state [:handlers "session_switch"])))))))
 
+(deftest session-switch-handler-returns-nil-test
+  (testing "session_switch handler returns nil (safe for extension dispatch)"
+    ;; When current-wt is nil (no worktree in session), refresh-default-branch-cache!
+    ;; takes the early-exit path and returns nil.  This proves the handler never
+    ;; returns a non-map value that would crash dispatch-in's contains? checks.
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path  "/test/work_on.clj"
+                                :query-fn (with-session-query {})})]
+      (sut/init api)
+      (let [handler (first (get-in @state [:handlers "session_switch"]))]
+        (is (nil? (handler {:reason :new})))))))
+
 (deftest work-on-command-happy-path-test
   (testing "/work-on creates worktree and a distinct session and prints deterministic summary"
     (let [created-session (atom nil)

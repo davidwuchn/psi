@@ -478,7 +478,8 @@
          :path (:path api))
   ((:on api) "session_switch"
              (fn [_]
-               (refresh-default-branch-cache!)))
+               (refresh-default-branch-cache!)
+               nil))
   ((:register-command api) "work-on"
                            {:description "Create a sibling git worktree + branch and continue there"
                             :handler handle-work-on-command})

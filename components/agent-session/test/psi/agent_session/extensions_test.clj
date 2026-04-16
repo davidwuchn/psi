@@ -214,6 +214,35 @@
       (is (nil? (:override result)))
       (is (= [] (:results result))))))
 
+(deftest dispatch-non-map-return-test
+  (testing "handler returning a String does not throw and produces no override"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-handler-in! reg "/ext/a" "session_switch"
+                                 (fn [_] "some-branch-name"))
+      (let [result (ext/dispatch-in reg "session_switch" {:reason :new})]
+        (is (false? (:cancelled? result)))
+        (is (nil? (:override result)))
+        (is (false? (:override-present? result))))))
+
+  (testing "handler returning a Long does not throw and produces no override"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-handler-in! reg "/ext/a" "session_switch" (fn [_] 1))
+      (let [result (ext/dispatch-in reg "session_switch" {:reason :new})]
+        (is (false? (:cancelled? result)))
+        (is (nil? (:override result)))
+        (is (false? (:override-present? result))))))
+
+  (testing "non-map return does not suppress a canonical :result override from another handler"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-extension-in! reg "/ext/b")
+      (ext/register-handler-in! reg "/ext/a" "e" (fn [_] "plain-string"))
+      (ext/register-handler-in! reg "/ext/b" "e" (fn [_] {:result "override-val"}))
+      (let [result (ext/dispatch-in reg "e" {})]
+        (is (= "override-val" (:override result)))))))
+
 (deftest dispatch-exception-test
   (testing "handler exception is captured and does not abort dispatch"
     (let [reg    (ext/create-registry)
@@ -365,6 +394,16 @@
                                                (fn [_] {:is-error true}))
           wrapped    (ext/wrap-tool-executor reg execute-fn)]
       (is (= {:content "result" :is-error true}
+             (wrapped "read" {"path" "test.txt"})))))
+
+  (testing "tool_result handler returning non-map is silently ignored"
+    (let [reg        (ext/create-registry)
+          execute-fn (fn [_tool-name _args] {:content "original" :is-error false})
+          _          (ext/register-extension-in! reg "/ext/a")
+          _          (ext/register-handler-in! reg "/ext/a" "tool_result"
+                                               (fn [_] "not-a-map"))
+          wrapped    (ext/wrap-tool-executor reg execute-fn)]
+      (is (= {:content "original" :is-error false}
              (wrapped "read" {"path" "test.txt"}))))))
 
 ;; ── Introspection: handler event names ──────────────────────────────────────

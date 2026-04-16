@@ -1007,3 +1007,14 @@
           (is (= fake-model (nth @captured 3)))
           (is (= {:turn-ctx-atom nil} (nth @captured 4)))
           (is (= resume-session (:step-session result))))))))
+
+(deftest session-switch-handler-returns-nil-test
+  (testing "session_switch handler returns nil (safe for extension dispatch)"
+    ;; dispatch-in calls contains? on every handler return value to detect
+    ;; :result / :compaction overrides.  A non-map return (e.g. Long from reset!)
+    ;; used to throw ClassCastException.  Verify the handler explicitly returns nil.
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/mcp_tasks_run.clj"})]
+      (sut/init api)
+      (let [handler (first (get-in @state [:handlers "session_switch"]))]
+        (is (nil? (handler {})))))))
