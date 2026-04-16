@@ -1,8 +1,10 @@
 (ns psi.agent-session.session-settings
   (:require
+   [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session :as session]
-   [psi.agent-session.session-state :as ss]))
+   [psi.agent-session.session-state :as ss]
+   [psi.memory.core :as memory]))
 
 (defn set-model-in!
   "Set the session model for `session-id`."
@@ -57,6 +59,32 @@
   (dispatch/dispatch! ctx :session/cancel-job
                       {:session-id session-id :job-id job-id :reason reason}
                       {:origin :core}))
+
+(defn- remember-provenance
+  [ctx session-id]
+  (let [cwd        (ss/effective-cwd-in ctx session-id)
+        git-branch (try
+                     (:psi.agent-session/git-branch
+                      ((requiring-resolve 'psi.agent-session.core/query-in)
+                       ctx session-id [:psi.agent-session/git-branch]))
+                     (catch Exception _
+                       nil))]
+    {:source :remember
+     :sessionId session-id
+     :cwd cwd
+     :gitBranch git-branch}))
+
+(defn remember-in!
+  "Capture a remember note for `session-id`.
+   Returns the memory capture result."
+  [ctx session-id text]
+  (let [reason (or (not-empty (some-> text str/trim)) "manual /remember")]
+    (dispatch/dispatch! ctx :session/remember
+                        {:session-id  session-id
+                         :text        reason
+                         :memory-ctx  (:memory-ctx ctx)
+                         :provenance  (remember-provenance ctx session-id)}
+                        {:origin :core})))
 
 (defn reload-models-in!
   "Reload user + project custom models from disk for `session-id`'s effective cwd.

@@ -244,6 +244,15 @@
     {:psi.background-job/job-id (:job-id job)
      :psi.background-job/status (:status job)}))
 
+(pco/defmutation remember
+  "Capture a memory note for future sessions."
+  [_ {:keys [psi/agent-session-ctx session-id text]}]
+  {::pco/op-name 'psi.extension/remember
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.memory.remember/ok?]}
+  (let [result (core/remember-in! agent-session-ctx session-id text)]
+    {:psi.memory.remember/ok? (boolean (:ok? result))}))
+
 (def all-mutations
   [set-session-name
    set-model
@@ -256,4 +265,5 @@
    compact
    append-entry
    reload-models
-   cancel-job])
+   cancel-job
+   remember])

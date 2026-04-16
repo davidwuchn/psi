@@ -134,6 +134,15 @@
         :return job})))
 
   (register-core-handler!
+   :session/remember
+   (fn [_ctx {:keys [text memory-ctx provenance]}]
+     {:effects [{:effect/type :memory/capture
+                 :text        text
+                 :memory-ctx  memory-ctx
+                 :provenance  provenance}]
+      :return-effect-result? true}))
+
+  (register-core-handler!
    :session/reload-models
    (fn [ctx {:keys [session-id]}]
      (let [cwd (session/effective-cwd-in ctx session-id)]

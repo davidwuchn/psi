@@ -121,6 +121,11 @@
   [ctx session-id job-id reason]
   (settings/cancel-job-in! ctx session-id job-id reason))
 
+(defn remember-in!
+  "Capture a remember note. Returns the memory capture result."
+  [ctx session-id text]
+  (settings/remember-in! ctx session-id text))
+
 (defn reload-models-in!
   "Reload user + project custom models from disk for session's effective cwd.
    Returns {:error string-or-nil :count int}."

@@ -111,7 +111,9 @@
      [:job-id :string] [:job [:maybe :map]] [:reason :keyword]]]
    [:memory/capture
     [:map [:effect/type [:= :memory/capture]]
-     [:text [:maybe :string]]]]
+     [:text [:maybe :string]]
+     [:memory-ctx :any]
+     [:provenance :map]]]
    [:oauth/begin-login
     [:map [:effect/type [:= :oauth/begin-login]]
      [:provider-id :keyword]]]

@@ -9,6 +9,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.ai.model-registry :as model-registry]
+   [psi.memory.core :as memory]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.session :as session-data]
@@ -253,6 +254,16 @@
   (ext/dispatch-in (:extension-registry ctx)
                    (:event-name effect)
                    (:payload effect)))
+
+;;; Memory capture
+
+(defmethod execute-effect! :memory/capture [_ctx effect]
+  (memory/remember-in!
+   (:memory-ctx effect)
+   {:content-type :note
+    :content      (:text effect)
+    :tags         [:remember :manual]
+    :provenance   (:provenance effect)}))
 
 ;;; Background job cancel
 

@@ -33,8 +33,7 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as ai-models]
-   [psi.ai.model-registry :as model-registry]
-   [psi.memory.core :as memory]))
+   [psi.ai.model-registry :as model-registry]))
 
 ;; ============================================================
 ;; Formatting helpers (pure — return strings, no side effects)
@@ -277,29 +276,9 @@
   [ctx]
   (= :ready (:psi.memory/status (session/query-in ctx [:psi.memory/status] {}))))
 
-(defn- remember-provenance
-  [ctx session-id]
-  (let [cwd        (ss/effective-cwd-in ctx session-id)
-        git-branch (try
-                     (:psi.agent-session/git-branch
-                      (session/query-in ctx session-id [:psi.agent-session/git-branch]))
-                     (catch Exception _
-                       nil))]
-    {:source :remember
-     :sessionId session-id
-     :cwd cwd
-     :gitBranch git-branch}))
-
-(defn- remember-text!
-  [ctx session-id text]
-  (let [reason (or (not-empty (some-> text str/trim)) "manual /remember")
-        result (memory/remember-in!
-                (:memory-ctx ctx)
-                {:content-type :note
-                 :content reason
-                 :tags [:remember :manual]
-                 :provenance (remember-provenance ctx session-id)})
-        store-result (:store result)]
+(defn- format-remember-result
+  [result]
+  (let [store-result (:store result)]
     (if (:ok? result)
       (if (false? (:ok? store-result))
         (str "⚠ Remembered with store fallback"
@@ -481,9 +460,10 @@
        :message (str "✗ Remember blocked"
                      "\n  reason: memory_capture_prerequisites_not_ready"
                      "\n  detail: :psi.memory/status must be :ready")}
-      (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)]
+      (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)
+            result (session/remember-in! (assoc ctx :memory-ctx memory-ctx) session-id reason)]
         {:type :text
-         :message (remember-text! (assoc ctx :memory-ctx memory-ctx) session-id reason)}))
+         :message (format-remember-result result)}))
     {:type :text
      :message "✗ Memory context not configured."}))
 
