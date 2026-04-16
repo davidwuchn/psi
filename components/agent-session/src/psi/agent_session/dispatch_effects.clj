@@ -257,6 +257,14 @@
                    (:event-name effect)
                    (:payload effect)))
 
+(defmethod execute-effect! :runtime/schedule-extension-dispatch [ctx effect]
+  ((:daemon-thread-fn ctx)
+   (fn []
+     (Thread/sleep ^long (:delay-ms effect))
+     (ext/dispatch-in (:extension-registry ctx)
+                      (:event-name effect)
+                      (:payload effect)))))
+
 ;;; OAuth
 
 (defmethod execute-effect! :oauth/begin-login [_ctx effect]

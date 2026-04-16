@@ -18,3 +18,17 @@
       (is (= "hello-wrap"
              (get-in @state [:tools "hello-wrap" :name])))
       (is (= 1 (count (get-in @state [:handlers "session_switch"])))))))
+
+(deftest nullable-api-schedule-event-test
+  (testing "nullable extension api records scheduled events"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/schedule_event.clj"})]
+      ((:mutate api) 'psi.extension/schedule-event
+       {:delay-ms 250
+        :event-name "rename-checkpoint"
+        :payload {:session-id "s1" :turn-count 2}})
+      (is (= [{:ext-path "/test/schedule_event.clj"
+               :delay-ms 250
+               :event-name "rename-checkpoint"
+               :payload {:session-id "s1" :turn-count 2}}]
+             (:scheduled-events @state))))))

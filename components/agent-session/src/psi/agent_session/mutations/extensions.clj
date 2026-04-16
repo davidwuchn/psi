@@ -2,6 +2,7 @@
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.agent-session.background-job-runtime :as bg-rt]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]))
 
@@ -110,6 +111,25 @@
             (catch Exception _ nil)))))
     {:psi.extension/message msg}))
 
+(pco/defmutation schedule-event
+  "Schedule a delayed extension event dispatch."
+  [_ {:keys [psi/agent-session-ctx session-id delay-ms event-name payload]}]
+  {::pco/op-name 'psi.extension/schedule-event
+   ::pco/params  [:psi/agent-session-ctx :session-id :delay-ms :event-name]
+   ::pco/output  [:psi.extension/scheduled?
+                  :psi.extension/event-name
+                  :psi.extension/delay-ms]}
+  (let [result (dispatch/dispatch! agent-session-ctx
+                                   :session/schedule-extension-event
+                                   {:session-id session-id
+                                    :delay-ms delay-ms
+                                    :event-name event-name
+                                    :payload payload}
+                                   {:origin :mutations})]
+    {:psi.extension/scheduled? (boolean (:scheduled? result))
+     :psi.extension/event-name (:event-name result)
+     :psi.extension/delay-ms   (:delay-ms result)}))
+
 (def all-mutations
   [register-tool
    register-command
@@ -118,4 +138,5 @@
    set-allowed-events
    register-shortcut
    add-extension
-   send-message])
+   send-message
+   schedule-event])

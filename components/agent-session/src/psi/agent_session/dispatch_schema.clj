@@ -100,6 +100,9 @@
    [:notify/extension-dispatch
     [:map [:effect/type [:= :notify/extension-dispatch]]
      [:event-name :string] [:payload :any]]]
+   [:runtime/schedule-extension-dispatch
+    [:map [:effect/type [:= :runtime/schedule-extension-dispatch]]
+     [:delay-ms pos-int?] [:event-name :string] [:payload :any]]]
    [:runtime/auto-compact-workflow
     [:map [:effect/type [:= :runtime/auto-compact-workflow]]
      [:reason :any] [:will-retry? :boolean]]]

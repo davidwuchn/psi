@@ -630,6 +630,21 @@
           api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
       (is (= "key-for-openai" ((:get-api-key api) "openai")))))
 
+  (testing "API schedule-event delegates to runtime mutate fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:mutate-fn (fn [op params] {:op op :params params})}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= {:op 'psi.extension/schedule-event
+              :params {:delay-ms 250
+                       :event-name "rename-checkpoint"
+                       :payload {:session-id "s1"}
+                       :ext-path "/ext/test"}}
+             ((:mutate api) 'psi.extension/schedule-event
+              {:delay-ms 250
+               :event-name "rename-checkpoint"
+               :payload {:session-id "s1"}})))))
+
   (testing "API prompt contribution helpers delegate to runtime"
     (let [reg   (ext/create-registry)
           _     (ext/register-extension-in! reg "/ext/test")

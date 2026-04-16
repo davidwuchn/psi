@@ -28,6 +28,7 @@
          :status-lines         []
          :entries              []
          :messages             []
+         :scheduled-events     []
          :workflow-types       {}
          :workflows            {}
          :prompt-contributions {}
@@ -212,6 +213,12 @@
   {:psi.extension/prompt-accepted? true
    :psi.extension/prompt-delivery :prompt})
 
+(defn- schedule-event! [state params]
+  (swap! state update :scheduled-events conj params)
+  {:psi.extension/scheduled? true
+   :psi.extension/event-name (:event-name params)
+   :psi.extension/delay-ms (:delay-ms params)})
+
 (defn- register-post-tool-processor! [state params]
   (let [entry {:name (:name params)
                :ext-path (:ext-path params)
@@ -261,6 +268,7 @@
    'psi.extension/append-entry append-entry!
    'psi.extension/send-message send-message!
    'psi.extension/send-prompt send-prompt!
+   'psi.extension/schedule-event schedule-event!
    'psi.extension/register-post-tool-processor register-post-tool-processor!
    'psi.extension/ensure-service ensure-service!
    'psi.extension/stop-service stop-service!

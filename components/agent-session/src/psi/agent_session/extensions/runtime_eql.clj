@@ -25,7 +25,8 @@
     'psi.extension/run-tool-plan
     'psi.extension.tool/chain
     'psi.extension/send-message
-    'psi.extension/send-prompt})
+    'psi.extension/send-prompt
+    'psi.extension/schedule-event})
 
 (def ^:private lifecycle-extension-mutation-param-builders
   {'psi.extension/create-session

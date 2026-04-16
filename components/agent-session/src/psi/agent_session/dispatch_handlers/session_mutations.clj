@@ -441,6 +441,17 @@
                          :message message}}]}))
 
   (register-core-handler!
+   :session/schedule-extension-event
+   (fn [_ctx {:keys [delay-ms event-name payload]}]
+     {:effects [{:effect/type :runtime/schedule-extension-dispatch
+                 :delay-ms delay-ms
+                 :event-name event-name
+                 :payload payload}]
+      :return {:scheduled? true
+               :delay-ms delay-ms
+               :event-name event-name}}))
+
+  (register-core-handler!
    :session/add-tool
    (fn [ctx {:keys [session-id tool]}]
      (let [tools     (:tools (agent/get-data-in (session/agent-ctx-in ctx session-id)))
