@@ -192,6 +192,14 @@
     {:psi.agent-session/skills           (:skills sd)
      :psi.agent-session/prompt-templates (:prompt-templates sd)}))
 
+(pco/defresolver agent-session-message-history
+  "Resolve the current agent-core message history for the session."
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
+   ::pco/output [:psi.agent-session/message-history]}
+  {:psi.agent-session/message-history
+   (vec (or (support/agent-core-messages agent-session-ctx session-id) []))})
+
 ;; ── Extension summary ───────────────────────────────────
 
 (pco/defresolver agent-session-extensions
@@ -503,6 +511,7 @@
    agent-session-queues
    agent-session-retry-compact
    agent-session-resources
+   agent-session-message-history
    agent-session-extensions
    agent-session-context-usage
    agent-session-cwd

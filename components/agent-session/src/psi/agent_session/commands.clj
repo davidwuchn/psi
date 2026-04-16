@@ -78,7 +78,8 @@
 (defn format-history
   "Return a history string for the current message list."
   [ctx session-id]
-  (let [msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))]
+  (let [msgs (:psi.agent-session/message-history
+              (session/query-in ctx session-id [:psi.agent-session/message-history]))]
     (str "── Message history ────────────────────\n"
          (if (empty? msgs)
            "  (empty)"
