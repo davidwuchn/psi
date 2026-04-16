@@ -114,10 +114,13 @@
 (defn format-help
   "Return a help string listing all available commands."
   [ctx session-id]
-  (let [sd            (ss/get-session-data-in ctx session-id)
-        templates     (:prompt-templates sd)
-        loaded-skills (:skills sd)
-        ext-cmds      (ext/all-commands-in (:extension-registry ctx))]
+  (let [d             (session/query-in ctx session-id
+                                        [:psi.agent-session/prompt-templates
+                                         :psi.agent-session/skills
+                                         :psi.extension/command-names])
+        templates     (:psi.agent-session/prompt-templates d)
+        loaded-skills (:psi.agent-session/skills d)
+        ext-cmds      (:psi.extension/command-names d)]
     (str "── Commands ───────────────────────────\n"
          "  /quit    — exit the session\n"
          "  /status  — show session diagnostics\n"
@@ -157,9 +160,7 @@
            (str "\n  ── Extension Commands ───────────────\n"
                 (str/join "\n"
                           (map (fn [c]
-                                 (str "  /" (:name c)
-                                      (when (:description c)
-                                        (str " — " (:description c)))))
+                                 (str "  /" c))
                                ext-cmds))))
          "\n  (anything else is sent to the agent)\n"
          "───────────────────────────────────────")))
@@ -167,8 +168,8 @@
 (defn format-prompts
   "Return a string listing available prompt templates."
   [ctx session-id]
-  (let [sd        (ss/get-session-data-in ctx session-id)
-        templates (:prompt-templates sd)]
+  (let [templates (:psi.agent-session/prompt-templates
+                   (session/query-in ctx session-id [:psi.agent-session/prompt-templates]))]
     (str "── Prompt Templates ───────────────────\n"
          (if (empty? templates)
            "  (none discovered)"
@@ -186,8 +187,8 @@
 (defn format-skills
   "Return a string listing available skills."
   [ctx session-id]
-  (let [sd            (ss/get-session-data-in ctx session-id)
-        loaded-skills (:skills sd)]
+  (let [loaded-skills (:psi.agent-session/skills
+                       (session/query-in ctx session-id [:psi.agent-session/skills]))]
     (str "── Skills ─────────────────────────────\n"
          (if (empty? loaded-skills)
            "  (none discovered)"
