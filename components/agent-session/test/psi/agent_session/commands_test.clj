@@ -14,6 +14,7 @@
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.extensions :as ext]
    [psi.agent-core.core :as agent]
+   [psi.ai.model-registry :as model-registry]
    [psi.memory.core :as memory]
    [psi.memory.store :as store]
    [psi.query.core :as query]))
@@ -488,6 +489,7 @@
         s          (commands/format-help ctx session-id)]
     (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume" "/tree"
                  "/login" "/logout" "/remember" "/worktree"
+                 "/reload-models"
                  "/jobs" "/job" "/cancel-job"
                  "/help" "/prompts" "/skills"]]
       (is (str/includes? s cmd) (str "help should mention " cmd)))))
@@ -501,4 +503,32 @@
   (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-skills ctx session-id)]
     (is (str/includes? s "(none discovered)"))))
+
+;; ── /reload-models ──────────────────────────────────────────
+
+(deftest reload-models-command-test
+  (testing "/reload-models returns :text result with count"
+    (let [[ctx session-id] (make-test-ctx)
+          result (commands/dispatch-in ctx session-id "/reload-models" cmd-opts)]
+      (is (= :text (:type result)))
+      (is (str/includes? (:message result) "Models reloaded"))
+      (is (str/includes? (:message result) "count"))))
+
+  (testing "/reload-models picks up a new project models.edn"
+    (let [cwd (test-support/temp-cwd)
+          _   (.mkdirs (java.io.File. (str cwd "/.psi")))
+          _   (spit (str cwd "/.psi/models.edn")
+                    (pr-str {:providers
+                             {"local" {:base-url "http://localhost:11434/v1"
+                                       :api      :openai-completions
+                                       :models   [{:id   "test-llm"
+                                                   :name "Test LLM"}]}}}))
+          [ctx session-id] (create-session-context {:cwd cwd :persist? false})
+          result (commands/dispatch-in ctx session-id "/reload-models" cmd-opts)]
+      (is (= :text (:type result)))
+      (is (str/includes? (:message result) "Models reloaded"))
+      (is (some? (model-registry/find-model :local "test-llm")))
+      ;; cleanup: reset registry to built-ins only
+      (model-registry/init! {:user-models-path    nil
+                              :project-models-path nil}))))
 

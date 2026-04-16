@@ -134,6 +134,7 @@
          "  /thinking [level] — show current thinking level or set level\n"
          "  /remember [text] — capture a memory note for future ψ\n"
          "  /worktree — show git worktree context\n"
+         "  /reload-models — reload custom model definitions from disk\n"
          "  /jobs [status ...] — list background jobs (default: running,pending-cancel)\n"
          "  /job <job-id> — inspect a background job\n"
          "  /cancel-job <job-id> — request background job cancellation\n"
@@ -242,6 +243,28 @@
                                      (str "  " marker " " path " [" branch* "]")))
                                  worktrees))))
            "\n───────────────────────────────────────"))))
+
+;; ============================================================
+;; Reload models
+;; ============================================================
+
+(defn- format-reload-models
+  "Reload user + project custom models from disk and return a status string."
+  [ctx session-id]
+  (let [cwd              (ss/effective-cwd-in ctx session-id)
+        project-path     (str cwd "/.psi/models.edn")
+        user-path        (model-registry/default-user-models-path)]
+    (model-registry/load-project-models! project-path user-path)
+    (if-let [err (model-registry/get-load-error)]
+      (str "── Models reloaded (with errors) ─────\n"
+           "  cwd   : " cwd "\n"
+           "  error : " err "\n"
+           "  count : " (count (model-registry/all-models-seq)) "\n"
+           "───────────────────────────────────────")
+      (str "── Models reloaded ───────────────────\n"
+           "  cwd   : " cwd "\n"
+           "  count : " (count (model-registry/all-models-seq)) "\n"
+           "───────────────────────────────────────"))))
 
 ;; ============================================================
 ;; Provider env var hint (for login error messages)
@@ -585,6 +608,7 @@
     "/skills" :skills
     "/worktree" :worktree
     "/logout" :logout
+    "/reload-models" :reload-models
     nil))
 
 (defn- prefixed-command
@@ -625,6 +649,7 @@
        :prompts {:type :text :message (format-prompts ctx session-id)}
        :skills {:type :text :message (format-skills ctx session-id)}
        :worktree {:type :text :message (format-worktree ctx session-id)}
+       :reload-models {:type :text :message (format-reload-models ctx session-id)}
        :logout (dispatch-logout-command oauth-ctx)
        nil)
      (dispatch-prefixed-command ctx session-id trimmed opts)
