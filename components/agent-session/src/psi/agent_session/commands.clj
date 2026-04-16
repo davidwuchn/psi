@@ -24,14 +24,12 @@
      nil            — not a command (pass through to agent)"
   (:require
    [clojure.string :as str]
-   [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as session]
    [psi.app-runtime.background-job-view :as app-bg-view]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.oauth.core :as oauth]
-   [psi.agent-core.core :as agent]
    [psi.ai.models :as ai-models]
    [psi.ai.model-registry :as model-registry]))
 
@@ -93,13 +91,6 @@
                                    (subs text 0 (min 120 (count text))))))
                           msgs)))
          "\n───────────────────────────────────────")))
-
-(defn- safe-pr-str
-  [x]
-  (try
-    (pr-str x)
-    (catch Exception _
-      "<unprintable>")))
 
 (def ^:private valid-job-statuses
   #{:running :pending-cancel :completed :failed :cancelled :timed-out})
@@ -362,11 +353,24 @@
 
 (defn- tree-sessions
   [ctx session-id]
-  (let [sd        (ss/get-session-data-in ctx session-id)
-        sessions0 (vec (or (ss/list-context-sessions-in ctx) []))]
+  (let [d         (session/query-in ctx session-id
+                                    [:psi.agent-session/session-id
+                                     :psi.agent-session/session-name
+                                     :psi.agent-session/cwd
+                                     {:psi.agent-session/context-sessions
+                                      [:psi.session-info/id
+                                       :psi.session-info/worktree-path
+                                       :psi.session-info/name]}])
+        sessions0 (mapv (fn [s]
+                          {:session-id    (:psi.session-info/id s)
+                           :session-name  (:psi.session-info/name s)
+                           :worktree-path (:psi.session-info/worktree-path s)})
+                        (or (:psi.agent-session/context-sessions d) []))]
     (if (seq sessions0)
       sessions0
-      [(select-keys sd [:session-id :session-name :worktree-path])])))
+      [{:session-id    (:psi.agent-session/session-id d)
+        :session-name  (:psi.agent-session/session-name d)
+        :worktree-path (:psi.agent-session/cwd d)}])))
 
 (defn- match-session-in-context
   [sessions arg]
