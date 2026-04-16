@@ -470,10 +470,10 @@
 
 (defn- dispatch-model-command
   [ctx session-id trimmed]
-  (let [args (-> (str/replace trimmed #"^/model\s*" "") str/trim)
-        sd   (ss/get-session-data-in ctx session-id)]
+  (let [args (-> (str/replace trimmed #"^/model\s*" "") str/trim)]
     (if (str/blank? args)
-      (let [m (:model sd)]
+      (let [m (:psi.agent-session/model
+               (session/query-in ctx session-id [:psi.agent-session/model]))]
         {:type :text
          :message (if m
                     (str "Current model: " (:provider m) " " (:id m))
@@ -499,11 +499,13 @@
 
 (defn- dispatch-thinking-command
   [ctx session-id trimmed]
-  (let [args (-> (str/replace trimmed #"^/thinking\s*" "") str/trim)
-        sd   (ss/get-session-data-in ctx session-id)]
+  (let [args (-> (str/replace trimmed #"^/thinking\s*" "") str/trim)]
     (if (str/blank? args)
       {:type :text
-       :message (str "Current thinking level: " (name (or (:thinking-level sd) :off)))}
+       :message (str "Current thinking level: "
+                     (name (or (:psi.agent-session/thinking-level
+                                (session/query-in ctx session-id [:psi.agent-session/thinking-level]))
+                               :off)))}
       (let [tokens (str/split args #"\s+")]
         (if (not= 1 (count tokens))
           {:type :text
