@@ -108,7 +108,7 @@
      [:cwd :string]]]
    [:background-job/cancel
     [:map [:effect/type [:= :background-job/cancel]]
-     [:job-id :string] [:reason :keyword]]]
+     [:job-id :string] [:job [:maybe :map]] [:reason :keyword]]]
    [:memory/capture
     [:map [:effect/type [:= :memory/capture]]
      [:text [:maybe :string]]]]

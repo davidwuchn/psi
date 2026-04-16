@@ -6,6 +6,7 @@
   (:require
    [clojure.string :as str]
    [psi.agent-core.core :as agent]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-handlers.session-state :as ss]
    [psi.agent-session.post-tool :as post-tool]
@@ -116,6 +117,21 @@
       :effects [{:effect/type :persist/journal-append-session-info-entry
                  :name name}]
       :return {:session-name name}}))
+
+  (register-core-handler!
+   :session/cancel-job
+   (fn [ctx {:keys [session-id job-id reason]}]
+     (let [store  (session/get-state-value-in ctx (session/state-path :background-jobs))
+           state' (bg-jobs/request-cancel store {:thread-id session-id
+                                                 :job-id    job-id
+                                                 :requested-by (or reason :user)})
+           job    (get-in state' [:jobs-by-id job-id])]
+       {:root-state-update #(assoc-in % [:background-jobs :store] state')
+        :effects [{:effect/type :background-job/cancel
+                   :job-id      job-id
+                   :job         job
+                   :reason      (or reason :user)}]
+        :return job})))
 
   (register-core-handler!
    :session/reload-models

@@ -469,7 +469,7 @@
   (let [job-id (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)]
     (if (str/blank? job-id)
       {:type :text :message "Usage: /cancel-job <job-id>"}
-      (let [job (bg-rt/cancel-background-job-in! ctx session-id job-id :user)]
+      (let [job (session/cancel-job-in! ctx session-id job-id :user)]
         {:type :text
          :message (:job/message (app-bg-view/cancel-job-summary job-id job))}))))
 

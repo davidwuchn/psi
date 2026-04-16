@@ -254,6 +254,27 @@
                    (:event-name effect)
                    (:payload effect)))
 
+;;; Background job cancel
+
+(defmethod execute-effect! :background-job/cancel [ctx effect]
+  (let [job (:job effect)]
+    ;; Abort the workflow if the job is workflow-backed
+    (when (= :workflow (:job-kind job))
+      (try
+        (when (and (:workflow-ext-path job) (:workflow-id job))
+          (let [wf-reg (:workflow-registry ctx)]
+            (when wf-reg
+              ((requiring-resolve 'psi.agent-session.workflows/abort-workflow-in!)
+               wf-reg
+               (:workflow-ext-path job)
+               (:workflow-id job)
+               "cancel requested"))))
+        (catch Exception _ nil)))
+    ;; Refresh background job UI
+    (when-let [refresh-fn (some-> ctx :background-job-ui-refresh-fn deref)]
+      (refresh-fn ctx (:session-id effect)))
+    job))
+
 ;;; Model registry
 
 (defmethod execute-effect! :model-registry/reload [_ctx effect]

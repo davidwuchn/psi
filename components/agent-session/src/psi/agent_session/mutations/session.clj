@@ -233,6 +233,17 @@
           (sort-by (juxt :provider :id))
           vec)}))
 
+(pco/defmutation cancel-job
+  "Cancel a background job by job-id."
+  [_ {:keys [psi/agent-session-ctx session-id job-id]}]
+  {::pco/op-name 'psi.extension/cancel-job
+   ::pco/params  [:psi/agent-session-ctx :session-id :job-id]
+   ::pco/output  [:psi.background-job/job-id
+                  :psi.background-job/status]}
+  (let [job (core/cancel-job-in! agent-session-ctx session-id job-id :user)]
+    {:psi.background-job/job-id (:job-id job)
+     :psi.background-job/status (:status job)}))
+
 (def all-mutations
   [set-session-name
    set-model
@@ -244,4 +255,5 @@
    interrupt
    compact
    append-entry
-   reload-models])
+   reload-models
+   cancel-job])

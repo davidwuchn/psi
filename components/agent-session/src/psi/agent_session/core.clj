@@ -116,6 +116,11 @@
   [ctx session-id enabled?]
   (settings/set-auto-retry-in! ctx session-id enabled?))
 
+(defn cancel-job-in!
+  "Cancel a background job. Returns the job map."
+  [ctx session-id job-id reason]
+  (settings/cancel-job-in! ctx session-id job-id reason))
+
 (defn reload-models-in!
   "Reload user + project custom models from disk for session's effective cwd.
    Returns {:error string-or-nil :count int}."

@@ -50,6 +50,14 @@
   [ctx session-id enabled?]
   (dispatch/dispatch! ctx :session/set-auto-retry {:session-id session-id :enabled? enabled?} {:origin :core}))
 
+(defn cancel-job-in!
+  "Cancel a background job for `session-id`.
+   Returns the job map."
+  [ctx session-id job-id reason]
+  (dispatch/dispatch! ctx :session/cancel-job
+                      {:session-id session-id :job-id job-id :reason reason}
+                      {:origin :core}))
+
 (defn reload-models-in!
   "Reload user + project custom models from disk for `session-id`'s effective cwd.
    Returns {:error string-or-nil :count int}."
