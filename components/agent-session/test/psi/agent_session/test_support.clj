@@ -153,7 +153,7 @@
                        :emit-background-job-terminal-messages-fn bg-rt/maybe-emit-background-job-terminal-messages!
                        :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
                        :daemon-thread-fn             (fn [f] (doto (Thread. ^Runnable f) (.setDaemon true) (.start)))
-                       :effective-cwd-fn             (fn [ctx session-id] (ss/effective-cwd-in ctx session-id))
+                       :effective-cwd-fn             (fn [ctx session-id] (ss/session-worktree-path-in ctx session-id))
                        :journal-append-fn            (fn [_ctx _session-id _entry] nil)}
         _             (dispatch-handlers/register-all! ctx)
         actions-fn     (dispatch-handlers/make-actions-fn ctx)

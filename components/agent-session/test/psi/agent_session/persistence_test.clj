@@ -116,7 +116,8 @@
         (is (= 1 (count lines)))
         (is (= :session (:type header)))
         (is (= "sess-1" (:id header)))
-        (is (= "/my/project" (:cwd header)))
+        (is (= "/my/project" (:worktree-path header)))
+        (is (nil? (:cwd header)))
         (is (nil? (:parent-session-id header)))
         (is (nil? (:parent-session header))))
       (.delete f)
@@ -264,7 +265,8 @@
       (let [loaded (p/load-session-file f)]
         (is (some? loaded))
         (is (= "sess-rt" (get-in loaded [:header :id])))
-        (is (= "/my/cwd" (get-in loaded [:header :cwd])))
+        (is (= "/my/cwd" (get-in loaded [:header :worktree-path])))
+        (is (nil? (get-in loaded [:header :cwd])))
         (is (= 3 (count (:entries loaded))))
         (is (= :thinking-level (:kind (first (:entries loaded)))))
         (is (= "hello"
@@ -403,31 +405,20 @@
       (.delete f)
       (.delete dir)))
 
-  (testing "SessionInfo prefers persisted worktree-path over legacy cwd"
+  (testing "SessionInfo uses persisted worktree-path"
     (let [dir (tmp-dir)
           f   (io/file dir "worktree-bound.ndedn")]
-      (spit f (str "{:type :session :version 4 :id \"sess-worktree\" :timestamp #inst \"2024-01-01T00:00:00Z\" :cwd \"/legacy/cwd\" :worktree-path \"/repo/feature-x\"}\n"
+      (spit f (str "{:type :session :version 4 :id \"sess-worktree\" :timestamp #inst \"2024-01-01T00:00:00Z\" :worktree-path \"/repo/feature-x\"}\n"
                    "{:id \"e1\" :parent-id nil :timestamp #inst \"2024-01-01T00:00:01Z\" :kind :session-info :data {:name \"Feature X\"}}\n"
                    "{:id \"e2\" :parent-id \"e1\" :timestamp #inst \"2024-01-01T00:00:02Z\" :kind :message :data {:message {:role \"assistant\" :content [{:type :text :text \"hi\"}]}}}\n"))
       (let [sessions (p/list-sessions dir)
             info     (first sessions)]
-        (is (= "/legacy/cwd" (:cwd info)))
+        (is (= "/repo/feature-x" (:cwd info)))
         (is (= "/repo/feature-x" (:worktree-path info)))
         (is (= "Feature X" (:name info))))
       (.delete f)
       (.delete dir)))
 
-  (testing "list-sessions falls back to cwd when persisted worktree-path is absent"
-    (let [dir (tmp-dir)
-          f   (io/file dir "legacy-cwd-only.ndedn")]
-      (spit f (str "{:type :session :version 3 :id \"sess-legacy\" :timestamp #inst \"2024-01-01T00:00:00Z\" :cwd \"/repo/main\"}\n"
-                   "{:id \"e1\" :parent-id nil :timestamp #inst \"2024-01-01T00:00:01Z\" :kind :message :data {:message {:role \"assistant\" :content [{:type :text :text \"legacy\"}]}}}\n"))
-      (let [sessions (p/list-sessions dir)
-            info     (first sessions)]
-        (is (= "/repo/main" (:cwd info)))
-        (is (= "/repo/main" (:worktree-path info))))
-      (.delete f)
-      (.delete dir)))
 
   (testing "skips invalid files silently"
     (let [dir  (tmp-dir)

@@ -46,7 +46,7 @@
         qctx                (query/create-query-context)
         _                   (register-resolvers! qctx false)
         _                   (register-mutations! qctx (:all-mutations ctx) true)
-        git-ctx             (history-git/create-context (ss/effective-cwd-in ctx session-id))
+        git-ctx             (history-git/create-context (ss/session-worktree-path-in ctx session-id))
         seed                {:psi/agent-session-ctx ctx
                              :git/context git-ctx}
         full-params         (let [base-params (assoc params

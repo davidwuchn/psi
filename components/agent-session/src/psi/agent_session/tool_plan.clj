@@ -188,7 +188,7 @@
                      "Tool execution was blocked by an extension")
        :is-error true
        :details  {:blocked true}}
-      (let [opts     {:cwd          (ss/effective-cwd-in ctx session-id)
+      (let [opts     {:cwd          (ss/session-worktree-path-in ctx session-id)
                       :overrides    (:tool-output-overrides (ss/get-session-data-in ctx session-id))
                       :tool-call-id tool-call-id}
             result   (try

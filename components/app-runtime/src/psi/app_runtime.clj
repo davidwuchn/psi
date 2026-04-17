@@ -236,7 +236,7 @@ Available: " (str/join ", " (map name (keys all))))
    Startup prompts have been removed; the new session relies on the canonical
    session bootstrap/runtime state and then snapshots its transcript/tool state.
 
-   Reloads project-local custom models from the new session's effective cwd so
+   Reloads project-local custom models from the new session's worktree path so
    that models.edn changes are picked up when switching between sessions with
    different worktree paths.
 
@@ -247,11 +247,11 @@ Available: " (str/join ", " (map name (keys all))))
     :tool-calls {...}
     :tool-order [...]}"
   [ctx source-session-id ai-ctx ai-model]
-  (let [sd  (session/new-session-in! ctx source-session-id {})
-        sid (:session-id sd)
-        cwd (ss/effective-cwd-in ctx sid)]
+  (let [sd            (session/new-session-in! ctx source-session-id {})
+        sid           (:session-id sd)
+        worktree-path (ss/session-worktree-path-in ctx sid)]
     (model-registry/load-project-models!
-     (str cwd "/.psi/models.edn")
+     (str worktree-path "/.psi/models.edn")
      (model-registry/default-user-models-path))
     (assoc (startup-rehydrate-from-current-session! ctx sid ai-ctx ai-model)
            :session-id sid)))

@@ -39,7 +39,7 @@ Guardrails for follow-on commits:
 
 Goal:
 - remove remaining internal backward-compatibility scaffolding now that canonical runtime shapes are established
-- prioritize internal migration bridges before persisted-data or external-provider compatibility
+- prioritize internal migration bridges before external-provider compatibility
 
 Checklist:
 - shared-session prompt-path seams
@@ -66,6 +66,12 @@ Checklist:
   - [x] remove backward-compatible `/tree` action payload alist handling; standardize on canonical action payloads
   - [x] remove legacy footer `:stats-line` fallback; require structured `:usage-parts` + `:model-text`
   - [x] remove any now-dead Emacs compatibility helpers once backend-owned projections are fully authoritative
+- session directory invariant
+  - [x] require runtime sessions to carry explicit `:worktree-path`
+  - [x] remove runtime fallback from session worktree to context `:cwd`
+  - [x] remove persisted-session fallback from legacy header `:cwd` to `:worktree-path`
+  - [x] switch canonical helper usage to `session-worktree-path-in`
+  - [~] collapse persisted header shape so `:worktree-path` is authoritative and duplicated session `:cwd` is retired where possible
 - proof and cleanup
   - [~] strengthen RPC tests for canonical-only payload shapes on `session/updated`, `context/updated`, `footer/updated`, `ui/frontend-action-requested`, and `/tree`
     - canonical footer payload assertions now prefer structured fields (`:usage-parts`, `:model-text`, `:status-line`)

@@ -185,8 +185,8 @@
                                    {:path "/test/agent.clj"
                                     :query-fn (fn [q]
                                                 (cond
-                                                  (= q [:psi.agent-session/cwd])
-                                                  {:psi.agent-session/cwd (System/getProperty "user.dir")}
+                                                  (= q [:psi.agent-session/worktree-path])
+                                                  {:psi.agent-session/worktree-path (System/getProperty "user.dir")}
 
                                                   (= q [:psi.agent-session/model])
                                                   {:psi.agent-session/model {:provider :anthropic
@@ -219,8 +219,8 @@
                                    {:path "/test/agent.clj"
                                     :query-fn (fn [q]
                                                 (cond
-                                                  (= q [:psi.agent-session/cwd])
-                                                  {:psi.agent-session/cwd (System/getProperty "user.dir")}
+                                                  (= q [:psi.agent-session/worktree-path])
+                                                  {:psi.agent-session/worktree-path (System/getProperty "user.dir")}
 
                                                   (= q [:psi.agent-session/prompt-mode])
                                                   {:psi.agent-session/prompt-mode :lambda}
@@ -438,8 +438,8 @@
                                               (= q [:psi.agent-session/system-prompt])
                                               {:psi.agent-session/system-prompt "base"}
 
-                                              (= q [:psi.agent-session/cwd])
-                                              {:psi.agent-session/cwd (System/getProperty "user.dir")}
+                                              (= q [:psi.agent-session/worktree-path])
+                                              {:psi.agent-session/worktree-path (System/getProperty "user.dir")}
 
                                               (= q [:psi.agent-session/skills])
                                               {:psi.agent-session/skills [{:name "coding"

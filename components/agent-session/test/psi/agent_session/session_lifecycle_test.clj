@@ -401,12 +401,12 @@
             resumed-id         (:session-id sd)
             ctx                (retarget ctx sd)
             sd                 (ss/get-session-data-in ctx resumed-id)
-            result             (session/query-in ctx resumed-id [:psi.agent-session/cwd
+            result             (session/query-in ctx resumed-id [:psi.agent-session/worktree-path
                                                                  :psi.agent-session/session-name
                                                                  :psi.agent-session/system-prompt])]
         (is (= "/repo/feature-x" (:worktree-path sd)))
-        (is (= "/repo/feature-x" (ss/effective-cwd-in ctx resumed-id)))
-        (is (= "/repo/feature-x" (:psi.agent-session/cwd result)))
+        (is (= "/repo/feature-x" (ss/session-worktree-path-in ctx resumed-id)))
+        (is (= "/repo/feature-x" (:psi.agent-session/worktree-path result)))
         (is (= "Feature X" (:session-name sd)))
         (is (= "Feature X" (:psi.agent-session/session-name result)))
         (is (= "base prompt" (:psi.agent-session/system-prompt result))))))

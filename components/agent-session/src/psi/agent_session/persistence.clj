@@ -327,13 +327,12 @@
 ;;; ============================================================
 
 (defn- make-header
-  [session-id cwd parent-session-id parent-session-path]
+  [session-id worktree-path parent-session-id parent-session-path]
   {:type              :session
    :version           current-version
    :id                session-id
    :timestamp         (Instant/now)
-   :cwd               (str cwd)
-   :worktree-path     (str cwd)
+   :worktree-path     (str worktree-path)
    :parent-session-id (when parent-session-id (str parent-session-id))
    :parent-session    (when parent-session-path (str parent-session-path))})
 
@@ -670,8 +669,8 @@
         modified      (or last-activity (:timestamp header))]
     {:path                file-path
      :id                  (:id header)
-     :cwd                 (:cwd header)
-     :worktree-path       (or (:worktree-path header) (:cwd header))
+     :cwd                 (:worktree-path header)
+     :worktree-path       (:worktree-path header)
      :name                name
      :parent-session-id   (:parent-session-id header)
      :parent-session-path (:parent-session header)

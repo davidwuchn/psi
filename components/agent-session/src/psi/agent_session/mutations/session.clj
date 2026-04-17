@@ -43,7 +43,7 @@
    ::pco/params  [:psi/agent-session-ctx :parent-session-id]
    ::pco/output  [:psi.agent-session/session-id
                   :psi.agent-session/session-name
-                  :psi.agent-session/cwd
+                  :psi.agent-session/worktree-path
                   :psi.agent-session/thinking-level]}
   (let [sd      (core/new-session-in! agent-session-ctx parent-session-id {:session-name  session-name
                                                                            :worktree-path worktree-path})
@@ -55,7 +55,7 @@
         sd      (ss/get-session-data-in agent-session-ctx new-sid)]
     {:psi.agent-session/session-id     (:session-id sd)
      :psi.agent-session/session-name   (:session-name sd)
-     :psi.agent-session/cwd            (:worktree-path sd)
+     :psi.agent-session/worktree-path  (:worktree-path sd)
      :psi.agent-session/thinking-level (:thinking-level sd)}))
 
 (pco/defmutation create-child-session
@@ -161,12 +161,12 @@
    ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/session-id
                   :psi.agent-session/session-name
-                  :psi.agent-session/cwd]}
+                  :psi.agent-session/worktree-path]}
   (let [origin-session-id (or source-session-id session-id)
         sd                (core/ensure-session-loaded-in! agent-session-ctx origin-session-id session-id)]
-    {:psi.agent-session/session-id   (:session-id sd)
-     :psi.agent-session/session-name (:session-name sd)
-     :psi.agent-session/cwd          (:worktree-path sd)}))
+    {:psi.agent-session/session-id    (:session-id sd)
+     :psi.agent-session/session-name  (:session-name sd)
+     :psi.agent-session/worktree-path (:worktree-path sd)}))
 
 (pco/defmutation set-rpc-trace
   "Enable, disable, or toggle RPC trace logging for the current session."
@@ -228,7 +228,7 @@
    (count (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id)))})
 
 (pco/defmutation reload-models
-  "Reload user + project custom models from disk for the session's effective cwd.
+  "Reload user + project custom models from disk for the session worktree path.
    Use after editing .psi/models.edn or ~/.psi/agent/models.edn."
   [_ {:keys [psi/agent-session-ctx session-id]}]
   {::pco/op-name 'psi.extension/reload-models

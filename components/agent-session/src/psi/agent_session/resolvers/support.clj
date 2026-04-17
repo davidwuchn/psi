@@ -13,6 +13,14 @@
   [agent-session-ctx session-id]
   (session/get-session-data-in agent-session-ctx session-id))
 
+(defn session-worktree-path
+  "Get the required worktree-path for an explicit session-id."
+  [agent-session-ctx session-id]
+  (or (:worktree-path (session-data agent-session-ctx session-id))
+      (throw (ex-info "session is missing required :worktree-path"
+                      {:session-id session-id
+                       :callback :session-worktree-path}))))
+
 (defn agent-data
   "Get agent-core data for an explicit session-id."
   [agent-session-ctx session-id]

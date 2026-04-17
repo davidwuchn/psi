@@ -6,7 +6,7 @@
 (deftest footer-model-from-data-builds-canonical-lines-test
   (let [home  (System/getProperty "user.home")
         model (footer/footer-model-from-data
-               {:psi.agent-session/cwd (str home "/projects/hugoduncan/psi/psi-main")
+               {:psi.agent-session/worktree-path (str home "/projects/hugoduncan/psi/psi-main")
                 :psi.agent-session/git-branch "master"
                 :psi.agent-session/session-name "xhig"
                 :psi.agent-session/session-display-name "xhig"
@@ -39,7 +39,7 @@
 (deftest footer-model-from-data-prefers-session-display-name-test
   (testing "derived display name wins when explicit session name is absent"
     (let [model (footer/footer-model-from-data
-                 {:psi.agent-session/cwd "/repo/project"
+                 {:psi.agent-session/worktree-path "/repo/project"
                   :psi.agent-session/git-branch "master"
                   :psi.agent-session/session-name nil
                   :psi.agent-session/session-display-name "Investigate failing tests"
@@ -55,7 +55,7 @@
 (deftest footer-model-from-data-handles-missing-usage-test
   (testing "footer still produces context/model text when usage counters are zero or absent"
     (let [model (footer/footer-model-from-data
-                 {:psi.agent-session/cwd "/repo/project"
+                 {:psi.agent-session/worktree-path "/repo/project"
                   :psi.agent-session/context-fraction nil
                   :psi.agent-session/context-window 400000
                   :psi.agent-session/auto-compaction-enabled false
@@ -75,7 +75,7 @@
 (deftest footer-model-from-data-ignores-keyword-sentinels-test
   (testing "keyword sentinel values are treated as absent instead of seqable collections/strings"
     (let [model (footer/footer-model-from-data
-                 {:psi.agent-session/cwd "/repo/project"
+                 {:psi.agent-session/worktree-path "/repo/project"
                   :psi.agent-session/git-branch :pathom/unknown
                   :psi.agent-session/session-display-name :pathom/unknown
                   :psi.agent-session/context-window 400000

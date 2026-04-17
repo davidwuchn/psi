@@ -123,8 +123,7 @@
     :tool-call-id  (:id tool-call)
     :tool-args     args
     :tool-result   tool-result
-    :worktree-path (or (:worktree-path (session/get-session-data-in ctx session-id))
-                       (:cwd ctx))}))
+    :worktree-path (session/session-worktree-path-in ctx session-id)}))
 
 (defn execute-tool-call!
   "Execute one tool call and return a shaped result map before recording.
@@ -143,7 +142,7 @@
                             :arguments (:arguments tool-call)
                             :parsed-args args)))
     (let [sd              (session/get-session-data-in ctx session-id)
-          opts            {:cwd          (or (:worktree-path sd) (:cwd ctx))
+          opts            {:cwd          (session/session-worktree-path-in ctx session-id)
                            :overrides    (:tool-output-overrides sd)
                            :tool-call-id call-id
                            :on-update    (fn [{:keys [content details is-error]}]

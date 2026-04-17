@@ -30,7 +30,6 @@
                  {:psi.agent-session/context-sessions
                   [:psi.session-info/id
                    :psi.session-info/path
-                   :psi.session-info/cwd
                    :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/display-name
@@ -53,7 +52,6 @@
      (mapv (fn [m]
              {:psi.session-info/id                  (:session-id m)
               :psi.session-info/path                (:session-file m)
-              :psi.session-info/cwd                 (:worktree-path m)
               :psi.session-info/worktree-path       (:worktree-path m)
               :psi.session-info/name                (:session-name m)
               :psi.session-info/display-name        (:display-name m)
@@ -302,24 +300,20 @@
     (catch Exception _ nil)))
 
 (pco/defresolver agent-session-cwd
-  "Resolve working directory for the current session context.
-   Prefers session-bound worktree-path over process context cwd."
+  "Resolve the session worktree path for the current session context.
+   Sessions must carry an explicit worktree-path."
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
   {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
-   ::pco/output [:psi.agent-session/cwd]}
-  (let [sd (support/session-data agent-session-ctx session-id)]
-    {:psi.agent-session/cwd (or (:worktree-path sd)
-                                (:cwd agent-session-ctx))}))
+   ::pco/output [:psi.agent-session/worktree-path]}
+  {:psi.agent-session/worktree-path (support/session-worktree-path agent-session-ctx session-id)})
 
 (pco/defresolver agent-session-git-branch
-  "Resolve current git branch for the explicit session worktree/cwd.
+  "Resolve current git branch for the explicit session worktree path.
    Returns nil outside git repos and \"detached\" for detached HEAD."
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
   {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:psi.agent-session/git-branch]}
-  (let [sd  (support/session-data agent-session-ctx session-id)
-        cwd (or (:worktree-path sd)
-                (:cwd agent-session-ctx))]
+  (let [cwd (support/session-worktree-path agent-session-ctx session-id)]
     {:psi.agent-session/git-branch (git-branch-from-cwd cwd)}))
 
 (pco/defresolver runtime-nrepl-info
@@ -341,14 +335,12 @@
      :psi.runtime/nrepl-endpoint endpoint}))
 
 (pco/defresolver agent-session-git-context
-  "Bridge resolver: derive :git/context from the explicit session worktree/cwd so
+  "Bridge resolver: derive :git/context from the explicit session worktree path so
    history resolvers can be queried from in-session app-query-tool roots."
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
   {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:git/context]}
-  (let [sd  (support/session-data agent-session-ctx session-id)
-        cwd (or (:worktree-path sd)
-                (:cwd agent-session-ctx))]
+  (let [cwd (support/session-worktree-path agent-session-ctx session-id)]
     (if (seq cwd)
       {:git/context (git/create-context cwd)}
       {})))

@@ -6,7 +6,7 @@
    [psi.agent-session.session-state :as ss]))
 
 (def footer-query
-  [:psi.agent-session/cwd
+  [:psi.agent-session/worktree-path
    :psi.agent-session/git-branch
    :psi.agent-session/session-name
    :psi.agent-session/session-display-name
@@ -127,14 +127,14 @@
     (str "(" provider-label ") " right-base)))
 
 (defn- path-text
-  [d fallback-cwd]
-  (let [cwd                  (or (string-value (:psi.agent-session/cwd d))
-                                 (string-value fallback-cwd)
+  [d fallback-worktree-path]
+  (let [worktree-path        (or (string-value (:psi.agent-session/worktree-path d))
+                                 (string-value fallback-worktree-path)
                                  "")
         git-branch           (present-string (:psi.agent-session/git-branch d))
         session-display-name (or (present-string (:psi.agent-session/session-display-name d))
                                  (present-string (:psi.agent-session/session-name d)))
-        path0                (replace-home-with-tilde cwd)
+        path0                (replace-home-with-tilde worktree-path)
         path1                (if git-branch
                                (str path0 " (" git-branch ")")
                                path0)]
@@ -169,14 +169,14 @@
 (defn footer-model-from-data
   ([d]
    (footer-model-from-data d {}))
-  ([d {:keys [cwd]}]
+  ([d {:keys [worktree-path]}]
    (let [context-fraction  (:psi.agent-session/context-fraction d)
          context-window    (:psi.agent-session/context-window d)
          auto-compact?     (boolean (:psi.agent-session/auto-compaction-enabled d))
          context-text      (footer-context-text context-fraction context-window auto-compact?)
          usage-parts*      (usage-parts d context-text)
          model-text*       (model-text d)
-         path-text*        (path-text d cwd)
+         path-text*        (path-text d worktree-path)
          statuses*         (status-items (:psi.ui/statuses d))
          status-line       (->> statuses*
                                 (map :status/text)
@@ -184,7 +184,9 @@
                                 (str/join " "))
          stats-line        (str/join " " (concat usage-parts* [model-text*]))
          thinking-level    (normalize-thinking-level (:psi.agent-session/thinking-level d))]
-     {:footer/path {:cwd                  (or (:psi.agent-session/cwd d) cwd "")
+     {:footer/path {:cwd                  (or (:psi.agent-session/worktree-path d)
+                                              worktree-path
+                                              "")
                     :git-branch           (:psi.agent-session/git-branch d)
                     :session-name         (:psi.agent-session/session-name d)
                     :session-display-name (or (:psi.agent-session/session-display-name d)
@@ -214,4 +216,4 @@
 (defn footer-model
   [ctx session-id]
   (footer-model-from-data (footer-data ctx session-id)
-                          {:cwd (ss/effective-cwd-in ctx session-id)}))
+                          {:worktree-path (ss/session-worktree-path-in ctx session-id)}))

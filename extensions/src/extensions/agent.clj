@@ -186,16 +186,16 @@
        :tools              (some-> (:tools frontmatter) str/trim not-empty)
        :system-prompt      (str/trim body)})))
 
-(declare current-session-cwd)
+(declare current-session-worktree-path)
 (declare widget-placement)
 
 (defn- normalize-agent-name [x]
   (some-> x str str/trim (str/replace #"^@" "") str/lower-case not-empty))
 
-(defn- current-session-cwd [query-fn]
+(defn- current-session-worktree-path [query-fn]
   (when query-fn
-    (:psi.agent-session/cwd
-     (query-fn [:psi.agent-session/cwd]))))
+    (:psi.agent-session/worktree-path
+     (query-fn [:psi.agent-session/worktree-path]))))
 
 (defn global-agents-dirs
   "Return supported global agent definition directories in precedence order.
@@ -206,8 +206,8 @@
    (str (System/getProperty "user.home") "/.psi/agents")])
 
 (defn- project-agents-dir [query-fn]
-  (when-let [cwd (current-session-cwd query-fn)]
-    (str cwd "/.psi/agents")))
+  (when-let [worktree-path (current-session-worktree-path query-fn)]
+    (str worktree-path "/.psi/agents")))
 
 (defn load-agent-defs
   "Load agent definitions from a directory of markdown files.

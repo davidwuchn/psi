@@ -30,9 +30,7 @@
                                    (:cwd ctx))
             session-name       (:session-name opts)
             session-file       (when (:persist? ctx)
-                                 (let [session-dir (persist/session-dir-for (or (session/effective-cwd-in ctx source-session-id)
-                                                                                worktree-path
-                                                                                (:cwd ctx)))
+                                 (let [session-dir (persist/session-dir-for worktree-path)
                                        file        (persist/new-session-file-path session-dir new-session-id)]
                                    (str file)))]
         (dispatch/dispatch! ctx
@@ -110,7 +108,7 @@
                                  :session-path      session-path
                                  :header            header
                                  :entries           entries
-                                 :worktree-path     (or (:worktree-path header) (:cwd header))
+                                 :worktree-path     (:worktree-path header)
                                  :entry-count       (count entries)
                                  :thinking-level    thinking-level
                                  :model             model
@@ -185,7 +183,7 @@
           branch-entries      (fork-branch-entries ctx parent-session-id entry-id)
           messages            (compaction/rebuild-messages-from-journal-entries branch-entries)
           session-file        (when (:persist? ctx)
-                                (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx parent-session-id))
+                                (let [session-dir (persist/session-dir-for (session/session-worktree-path-in ctx parent-session-id))
                                       file        (persist/new-session-file-path session-dir new-session-id)]
                                   (str file)))]
       (dispatch/dispatch! ctx
@@ -217,7 +215,7 @@
         (let [file (io/file session-file)]
           (persist/flush-journal! file
                                   new-session-id
-                                  (session/effective-cwd-in ctx new-session-id)
+                                  (session/session-worktree-path-in ctx new-session-id)
                                   parent-session-id
                                   parent-session-file
                                   branch-entries)))

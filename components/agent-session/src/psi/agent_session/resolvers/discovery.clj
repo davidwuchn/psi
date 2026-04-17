@@ -97,10 +97,9 @@
 (defn- session-info->eql
   "Convert a SessionInfo map to :psi.session-info/* attributes."
   [info]
-  (let [worktree-path (or (:worktree-path info) (:cwd info))]
+  (let [worktree-path (:worktree-path info)]
     {:psi.session-info/path                (:path info)
      :psi.session-info/id                  (:id info)
-     :psi.session-info/cwd                 worktree-path
      :psi.session-info/worktree-path       worktree-path
      :psi.session-info/name                (:name info)
      :psi.session-info/parent-session-id   (:parent-session-id info)
@@ -112,13 +111,12 @@
      :psi.session-info/all-messages-text   (:all-messages-text info)}))
 
 (pco/defresolver session-list-resolver
-  "Resolve all sessions for the current session's cwd, sorted by modified desc."
+  "Resolve all sessions for the current session's worktree path, sorted by modified desc."
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
   {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [{:psi.session/list
                   [:psi.session-info/path
                    :psi.session-info/id
-                   :psi.session-info/cwd
                    :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/parent-session-id
@@ -132,8 +130,7 @@
    (mapv session-info->eql
          (persist/list-sessions
           (persist/session-dir-for
-           (or (:worktree-path (support/session-data agent-session-ctx session-id))
-               (:cwd agent-session-ctx)))))})
+           (support/session-worktree-path agent-session-ctx session-id))))})
 
 (pco/defresolver session-list-all-resolver
   "Resolve all sessions across all project directories, sorted by modified desc."
@@ -142,7 +139,6 @@
    ::pco/output [{:psi.session/list-all
                   [:psi.session-info/path
                    :psi.session-info/id
-                   :psi.session-info/cwd
                    :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/parent-session-id

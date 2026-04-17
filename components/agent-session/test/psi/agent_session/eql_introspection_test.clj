@@ -55,7 +55,7 @@
       (is (= prompt (:psi.agent-session/system-prompt result)))
       (is (= prompt (:system-prompt (agent-core/get-data-in (ss/agent-ctx-in ctx session-id)))))))
 
-  (testing "new-session-in! preserves stable prompt (cwd frozen at context creation)"
+  (testing "new-session-in! preserves stable prompt (bootstrap cwd frozen at context creation)"
     (let [[ctx session-id] (create-session-context {:cwd "/tmp/main"})
           base      (str "Prompt body"
                          "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
@@ -267,13 +267,13 @@
                                           :psi.agent-session/model-id
                                           :psi.agent-session/model-reasoning
                                           :psi.agent-session/effective-reasoning-effort
-                                          :psi.agent-session/cwd
+                                          :psi.agent-session/worktree-path
                                           :psi.agent-session/git-branch])]
         (is (= "openai" (:psi.agent-session/model-provider result)))
         (is (= "gpt-5.3-codex" (:psi.agent-session/model-id result)))
         (is (true? (:psi.agent-session/model-reasoning result)))
         (is (nil? (:psi.agent-session/effective-reasoning-effort result)))
-        (is (string? (:psi.agent-session/cwd result)))
+        (is (string? (:psi.agent-session/worktree-path result)))
         (is (contains? result :psi.agent-session/git-branch)))))
 
   (testing "query-in resolves tool summary"
@@ -285,12 +285,12 @@
         (is (= ["foo"] (:psi.tool/names summary)))
         (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name]))))))
 
-  (testing "effective-cwd-in prefers session worktree-path over context cwd"
+  (testing "session-worktree-path-in prefers session worktree-path over bootstrap context cwd"
     (let [[ctx session-id] (create-session-context {:cwd "/repo/main"
                                                     :session-defaults {:worktree-path "/repo/feature-x"}})]
-      (is (= "/repo/feature-x" (ss/effective-cwd-in ctx session-id)))
+      (is (= "/repo/feature-x" (ss/session-worktree-path-in ctx session-id)))
       (dispatch/dispatch! ctx :session/set-worktree-path {:session-id session-id :worktree-path "/repo/feature-y"} {:origin :core})
-      (is (= "/repo/feature-y" (ss/effective-cwd-in ctx session-id)))))
+      (is (= "/repo/feature-y" (ss/session-worktree-path-in ctx session-id)))))
 
   (testing "query-in resolves effective reasoning effort for reasoning models"
     (let [[ctx session-id] (create-session-context {:session-defaults {:model {:provider "openai"

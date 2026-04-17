@@ -121,8 +121,8 @@
                (not (str/blank? (:head git-sync)))
                (true? (:notify-extensions? classification)))
       (let [payload {:session-id session-id
-                     :workspace-dir (ss/effective-cwd-in ctx session-id)
-                     :cwd (ss/effective-cwd-in ctx session-id)
+                     :workspace-dir (ss/session-worktree-path-in ctx session-id)
+                     :cwd (ss/session-worktree-path-in ctx session-id)
                      :head (:head git-sync)
                      :previous-head (:previous-head git-sync)
                      :reason "head-changed"
@@ -136,7 +136,7 @@
   [ctx session-id]
   (try
     (let [git-sync (invoke-git-head-sync!
-                    {:cwd (ss/effective-cwd-in ctx session-id)
+                    {:cwd (ss/session-worktree-path-in ctx session-id)
                      :memory-ctx (:memory-ctx ctx)})]
       (try
         (maybe-trigger-recursion-from-git-sync! ctx git-sync)

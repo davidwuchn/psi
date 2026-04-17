@@ -194,29 +194,29 @@
          "\n───────────────────────────────────────")))
 
 (defn format-worktree
-  "Return a deterministic git worktree status string for the session cwd."
+  "Return a deterministic git worktree status string for the session worktree path."
   [ctx session-id]
   (let [d (session/query-in ctx session-id
-                            [:psi.agent-session/cwd
+                            [:psi.agent-session/worktree-path
                              :psi.agent-session/git-branch
                              :git.worktree/inside-repo?
                              :git.worktree/list
                              :git.worktree/current
                              :git.worktree/count])
-        inside?   (boolean (:git.worktree/inside-repo? d))
-        cwd       (:psi.agent-session/cwd d)
-        branch    (:psi.agent-session/git-branch d)
+        inside?       (boolean (:git.worktree/inside-repo? d))
+        worktree-path (:psi.agent-session/worktree-path d)
+        branch        (:psi.agent-session/git-branch d)
         current   (:git.worktree/current d)
         worktrees (vec (or (:git.worktree/list d) []))
         count*    (or (:git.worktree/count d) (count worktrees))]
     (if-not inside?
       (str "── Git worktrees ─────────────────────\n"
-           "  cwd      : " cwd "\n"
+           "  worktree : " worktree-path "\n"
            "  inside   : false\n"
            "  worktrees: 0\n"
            "───────────────────────────────────────")
       (str "── Git worktrees ─────────────────────\n"
-           "  cwd      : " cwd "\n"
+           "  worktree : " worktree-path "\n"
            "  branch   : " (or branch "(none)") "\n"
            "  current  : " (or (:git.worktree/path current) "(unknown)") "\n"
            "  worktrees: " count* "\n"
@@ -243,16 +243,16 @@
 (defn- format-reload-models
   "Reload user + project custom models from disk and return a status string."
   [ctx session-id]
-  (let [cwd              (ss/effective-cwd-in ctx session-id)
+  (let [worktree-path      (ss/session-worktree-path-in ctx session-id)
         {:keys [error count]} (session/reload-models-in! ctx session-id)]
     (if error
       (str "── Models reloaded (with errors) ─────\n"
-           "  cwd   : " cwd "\n"
+           "  worktree : " worktree-path "\n"
            "  error : " error "\n"
            "  count : " count "\n"
            "───────────────────────────────────────")
       (str "── Models reloaded ───────────────────\n"
-           "  cwd   : " cwd "\n"
+           "  worktree : " worktree-path "\n"
            "  count : " count "\n"
            "───────────────────────────────────────"))))
 
@@ -356,7 +356,7 @@
   (let [d         (session/query-in ctx session-id
                                     [:psi.agent-session/session-id
                                      :psi.agent-session/session-name
-                                     :psi.agent-session/cwd
+                                     :psi.agent-session/worktree-path
                                      {:psi.agent-session/context-sessions
                                       [:psi.session-info/id
                                        :psi.session-info/worktree-path
@@ -370,7 +370,7 @@
       sessions0
       [{:session-id    (:psi.agent-session/session-id d)
         :session-name  (:psi.agent-session/session-name d)
-        :worktree-path (:psi.agent-session/cwd d)}])))
+        :worktree-path (:psi.agent-session/worktree-path d)}])))
 
 (defn- match-session-in-context
   [sessions arg]

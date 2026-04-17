@@ -76,7 +76,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"p1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"assistant/message\" \"session/updated\" \"footer/updated\" \"error\"]}}\n"
                        "{:id \"r1\" :kind :request :op \"prompt\" :params {:message \"hi\"}}\n")
-          footer-data {:psi.agent-session/cwd "/repo/project"
+          footer-data {:psi.agent-session/worktree-path "/repo/project"
                        :psi.agent-session/git-branch :pathom/unknown
                        :psi.agent-session/session-display-name :pathom/unknown
                        :psi.agent-session/context-window 400000

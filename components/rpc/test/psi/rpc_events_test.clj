@@ -19,7 +19,7 @@
                                 (fn [_ctx sid q]
                                   (is (= session-id sid))
                                   (is (= @#'rpc.events/footer-query q))
-                                  {:psi.agent-session/cwd cwd
+                                  {:psi.agent-session/worktree-path cwd
                                    :psi.agent-session/git-branch "master"
                                    :psi.agent-session/session-name "xhig"
                                    :psi.agent-session/session-display-name "xhig"
@@ -57,7 +57,7 @@
                                 (fn [_ctx sid q]
                                   (is (= session-id sid))
                                   (is (= @#'rpc.events/footer-query q))
-                                  {:psi.agent-session/cwd cwd
+                                  {:psi.agent-session/worktree-path cwd
                                    :psi.agent-session/git-branch "master"
                                    :psi.agent-session/session-name nil
                                    :psi.agent-session/session-display-name "Investigate failing tests"

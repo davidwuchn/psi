@@ -221,7 +221,6 @@
                                         {:psi.agent-session/context-sessions
                                          [:psi.session-info/id
                                           :psi.session-info/path
-                                          :psi.session-info/cwd
                                           :psi.session-info/worktree-path
                                           :psi.session-info/name
                                           :psi.session-info/display-name
@@ -229,7 +228,6 @@
           persisted-result   (q-in ctx [{:psi.session/list
                                          [:psi.session-info/id
                                           :psi.session-info/path
-                                          :psi.session-info/cwd
                                           :psi.session-info/worktree-path
                                           :psi.session-info/name
                                           :psi.session-info/message-count]}])
@@ -242,7 +240,7 @@
       (is (some #(= path-2 (:psi.session-info/path %)) context-sessions))
       (is (some #(= "alpha" (:psi.session-info/display-name %)) context-sessions))
       (is (some #(= "beta" (:psi.session-info/display-name %)) context-sessions))
-      (is (every? #(= cwd (:psi.session-info/cwd %)) context-sessions))
+      (is (every? #(= cwd (:psi.session-info/worktree-path %)) context-sessions))
       (is (every? #(= cwd (:psi.session-info/worktree-path %)) context-sessions))
       (is (every? #(instance? java.time.Instant (:psi.session-info/created %)) context-sessions))
 
@@ -251,7 +249,7 @@
       (is (some #(= sid-2 (:psi.session-info/id %)) persisted))
       (is (some #(= "alpha" (:psi.session-info/name %)) persisted))
       (is (some #(= "beta" (:psi.session-info/name %)) persisted))
-      (is (every? #(= cwd (:psi.session-info/cwd %)) persisted))
+      (is (every? #(= cwd (:psi.session-info/worktree-path %)) persisted))
       (is (every? #(= cwd (:psi.session-info/worktree-path %)) persisted))
       (is (every? integer? (map :psi.session-info/message-count persisted))))))
 
@@ -373,12 +371,12 @@
       (when (pos? (:git.worktree/count result))
         (is (map? (:git.worktree/current result))))))
 
-  (testing ":psi.agent-session/cwd prefers session worktree-path"
+  (testing ":psi.agent-session/worktree-path is canonical"
     (let [[ctx _] (create-session-context {:cwd "/repo/main"
                                            :session-defaults {:worktree-path "/repo/feature-x"}
                                            :persist? false})
-          result (q-in ctx [:psi.agent-session/cwd])]
-      (is (= "/repo/feature-x" (:psi.agent-session/cwd result))))))
+          result (q-in ctx [:psi.agent-session/worktree-path])]
+      (is (= "/repo/feature-x" (:psi.agent-session/worktree-path result))))))
 
 ;; ── Background jobs introspection ───────────────────────
 

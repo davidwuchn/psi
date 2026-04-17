@@ -137,7 +137,7 @@
   (settings/logout-in! ctx session-id provider-ids))
 
 (defn reload-models-in!
-  "Reload user + project custom models from disk for session's effective cwd.
+  "Reload user + project custom models from disk for the session worktree path.
    Returns {:error string-or-nil :count int}."
   [ctx session-id]
   (settings/reload-models-in! ctx session-id))

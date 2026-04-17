@@ -140,7 +140,7 @@
                                                       (throw (ex-info "effective-cwd-fn requires explicit session-id"
                                                                       {:callback :effective-cwd-fn})))
                                                      ([ctx session-id]
-                                                      (ss/effective-cwd-in ctx session-id)))
+                                                      (ss/session-worktree-path-in ctx session-id)))
    :daemon-thread-fn                               dispatch-handlers/daemon-thread
    :drop-trailing-overflow-error-fn                dispatch-effects/drop-trailing-overflow-error!
    :validate-dispatch-result-fn                    dispatch/validate-dispatch-schemas

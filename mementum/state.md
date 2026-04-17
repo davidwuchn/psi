@@ -15,6 +15,17 @@ Bootstrapped on 2026-04-02.
 
 ## Current work state
 - Compatibility scaffold removal has advanced materially.
+- Session directory semantics were tightened into an explicit invariant:
+  - runtime sessions now require `:worktree-path`
+  - runtime/tool/resolver/app-runtime code no longer falls back from session worktree to context `:cwd`
+  - persisted session load/listing no longer falls back from legacy header `:cwd` to `:worktree-path`
+  - canonical helper usage now goes through `session-worktree-path-in`
+  - persisted headers now write `:worktree-path` as the authoritative session directory field
+  - `SessionInfo` now projects `:cwd` from `:worktree-path` for compatibility instead of exposing legacy persisted `:cwd`
+  - `:psi.session-info/cwd` query usage was removed from internal resolver/tests in favor of `:psi.session-info/worktree-path`
+  - canonical public session attr `:psi.agent-session/worktree-path` now exists
+  - legacy public alias `:psi.agent-session/cwd` has now been removed
+  - internal command/footer/extension consumers and tests now query `:psi.agent-session/worktree-path`
 - Adapter/UI compatibility cleanup now landed in Emacs:
   - removed footer `:stats-line` fallback parsing; footer now relies on canonical structured `:usage-parts` + `:model-text`
   - removed frontend session-tree label reconstruction; backend `:label` is now authoritative

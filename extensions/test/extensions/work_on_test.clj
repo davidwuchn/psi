@@ -9,7 +9,7 @@
   [:psi.agent-session/session-id
    :psi.agent-session/session-name
    :psi.agent-session/session-file
-   :psi.agent-session/cwd
+   :psi.agent-session/worktree-path
    :psi.agent-session/system-prompt
    :psi.agent-session/host-sessions
    :git.worktree/current
@@ -89,10 +89,10 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-main"
-                                             :psi.agent-session/cwd "/repo/main"
+                                             :psi.agent-session/worktree-path "/repo/main"
                                              :psi.agent-session/system-prompt "prompt"
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
-                                                                                :psi.session-info/cwd "/repo/main"
+                                                                                :psi.session-info/worktree-path "/repo/main"
                                                                                 :psi.session-info/name "main"}]
                                              :git.worktree/current {:git.worktree/path "/repo/main"
                                                                     :git.worktree/branch-name "main"}
@@ -109,7 +109,7 @@
                                                                   :head "abc123"}
                                                psi.extension/create-session {:psi.agent-session/session-id "s-created"
                                                                              :psi.agent-session/session-name (:session-name params)
-                                                                             :psi.agent-session/cwd (:worktree-path params)}
+                                                                             :psi.agent-session/worktree-path (:worktree-path params)}
                                                nil))})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
@@ -143,10 +143,10 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-main"
-                                             :psi.agent-session/cwd "/repo/main"
+                                             :psi.agent-session/worktree-path "/repo/main"
                                              :psi.agent-session/system-prompt "prompt"
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
-                                                                                :psi.session-info/cwd "/repo/main"
+                                                                                :psi.session-info/worktree-path "/repo/main"
                                                                                 :psi.session-info/name "main"}]
                                              :git.worktree/current {:git.worktree/path "/repo/main"
                                                                     :git.worktree/branch-name "main"}
@@ -167,7 +167,7 @@
                                                                       :head "abc123"}))
                                                psi.extension/create-session {:psi.agent-session/session-id "s-branch-existing"
                                                                              :psi.agent-session/session-name (:session-name params)
-                                                                             :psi.agent-session/cwd (:worktree-path params)}
+                                                                             :psi.agent-session/worktree-path (:worktree-path params)}
                                                nil))})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
@@ -191,13 +191,13 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-main"
-                                             :psi.agent-session/cwd "/repo/main"
+                                             :psi.agent-session/worktree-path "/repo/main"
                                              :psi.agent-session/system-prompt "prompt"
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
-                                                                                :psi.session-info/cwd "/repo/main"
+                                                                                :psi.session-info/worktree-path "/repo/main"
                                                                                 :psi.session-info/name "main"}
                                                                                {:psi.session-info/id "s-existing"
-                                                                                :psi.session-info/cwd "/repo/fix-repeated-thinking-output"
+                                                                                :psi.session-info/worktree-path "/repo/fix-repeated-thinking-output"
                                                                                 :psi.session-info/name "Fix repeated thinking output in emacs"}]
                                              :git.worktree/current {:git.worktree/path "/repo/main"
                                                                     :git.worktree/branch-name "main"}
@@ -241,7 +241,7 @@
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s2"
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
-                                                                                :psi.session-info/cwd "/repo/main"
+                                                                                :psi.session-info/worktree-path "/repo/main"
                                                                                 :psi.session-info/name "main"}]
                                              :git.worktree/current {:git.worktree/path "/repo/feature-x"
                                                                     :git.worktree/branch-name "feature-x"}
@@ -300,7 +300,7 @@
                                                git.branch/delete! {:deleted true}
                                                psi.extension/create-session (let [sd {:psi.agent-session/session-id "s-main-created"
                                                                                       :psi.agent-session/session-name (:session-name params)
-                                                                                      :psi.agent-session/cwd (:worktree-path params)}]
+                                                                                      :psi.agent-session/worktree-path (:worktree-path params)}]
                                                                               (swap! created conj sd)
                                                                               sd)
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
@@ -315,7 +315,7 @@
              (run-work-command! state "work-done"))))
       (is (= [{:psi.agent-session/session-id "s-main-created"
                :psi.agent-session/session-name "main"
-               :psi.agent-session/cwd "/repo/main"}]
+               :psi.agent-session/worktree-path "/repo/main"}]
              @created))
       (is (= ["s-main-created"] @switched))
       (is (re-find #"Fast-forwarded `feature-x` into `main`" (first @printed))))))
@@ -331,7 +331,7 @@
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-feature"
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
-                                                                                :psi.session-info/cwd "/repo/main"
+                                                                                :psi.session-info/worktree-path "/repo/main"
                                                                                 :psi.session-info/name "main"}]
                                              :git.worktree/current {:git.worktree/path "/repo/feature-x"
                                                                     :git.worktree/branch-name "feature-x"}
@@ -415,7 +415,7 @@
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-feature"
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
-                                                                                :psi.session-info/cwd "/repo/main"
+                                                                                :psi.session-info/worktree-path "/repo/main"
                                                                                 :psi.session-info/name "main"}]
                                              :git.worktree/current {:git.worktree/path "/repo/feature-x"
                                                                     :git.worktree/branch-name "feature-x"}

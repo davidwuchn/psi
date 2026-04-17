@@ -23,7 +23,7 @@
   [:psi.agent-session/session-id
    :psi.agent-session/session-name
    :psi.agent-session/session-file
-   :psi.agent-session/cwd
+   :psi.agent-session/worktree-path
    :psi.agent-session/system-prompt
    :psi.agent-session/host-sessions
    :git.worktree/current
@@ -91,7 +91,7 @@
   [worktree-path]
   (let [sessions (or (:psi.agent-session/host-sessions (current-session-query)) [])]
     (some (fn [s]
-            (when (= worktree-path (:psi.session-info/cwd s))
+            (when (= worktree-path (:psi.session-info/worktree-path s))
               s))
           sessions)))
 

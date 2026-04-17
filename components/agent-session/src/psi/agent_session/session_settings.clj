@@ -62,17 +62,17 @@
 
 (defn- remember-provenance
   [ctx session-id]
-  (let [cwd        (ss/effective-cwd-in ctx session-id)
-        git-branch (try
+  (let [worktree-path (ss/session-worktree-path-in ctx session-id)
+        git-branch    (try
                      (:psi.agent-session/git-branch
                       ((requiring-resolve 'psi.agent-session.core/query-in)
                        ctx session-id [:psi.agent-session/git-branch]))
                      (catch Exception _
                        nil))]
-    {:source :remember
-     :sessionId session-id
-     :cwd cwd
-     :gitBranch git-branch}))
+    {:source       :remember
+     :sessionId    session-id
+     :worktreePath worktree-path
+     :gitBranch    git-branch}))
 
 (defn remember-in!
   "Capture a remember note for `session-id`.
@@ -107,7 +107,7 @@
                       {:origin :core}))
 
 (defn reload-models-in!
-  "Reload user + project custom models from disk for `session-id`'s effective cwd.
+  "Reload user + project custom models from disk for `session-id`'s worktree path.
    Returns {:error string-or-nil :count int}."
   [ctx session-id]
   (dispatch/dispatch! ctx :session/reload-models {:session-id session-id} {:origin :core}))

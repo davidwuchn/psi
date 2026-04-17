@@ -166,14 +166,16 @@
   (swap! (:state* ctx) f)
   @(:state* ctx))
 
-;;; Effective CWD
+;;; Worktree path
 
-(defn effective-cwd-in
-  "Return the effective working directory for `session-id`.
-   Prefers session-scoped :worktree-path over context :cwd."
+(defn session-worktree-path-in
+  "Return the required worktree-path for `session-id`.
+   Sessions must always carry an explicit :worktree-path."
   [ctx session-id]
   (or (:worktree-path (get-session-data-in ctx session-id))
-      (:cwd ctx)))
+      (throw (ex-info "session is missing required :worktree-path"
+                      {:session-id session-id
+                       :callback :session-worktree-path-in}))))
 
 ;;; Journal
 
@@ -188,7 +190,7 @@
         (persist/persist-entry-in!
          ctx
          session-id
-         (effective-cwd-in ctx session-id)
+         (session-worktree-path-in ctx session-id)
          (:parent-session-id sd)
          session-file)))))
 
