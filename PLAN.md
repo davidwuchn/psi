@@ -52,7 +52,10 @@ Checklist:
   - [~] remove any remaining shared-session prompt semantics still split across `system_prompt.clj`, `conversation.clj`, or extension-local string composition
     - base system prompt assembly no longer appends prompt contributions directly
     - prompt contribution application is now centralized in prompt handlers + request preparation
-    - next follow-on is to converge any remaining skill/profile prelude composition into request preparation
+    - developer layer assembly now happens in request preparation instead of bootstrap fallback composition
+    - agent profiles now flow through child-session `:developer-prompt` / `:developer-prompt-source` instead of being merged into base system prompts
+    - fallback developer-prompt mirroring of base system prompt has been removed
+    - next follow-on is to converge `/skill:` expansion / skill-prelude composition into request preparation
 - adapter/UI fallback payload compatibility
   - [x] remove Emacs "no session id means accept event" compatibility from `psi-events.el`
   - [x] decide and enforce canonical per-event session targeting expectations
@@ -116,9 +119,15 @@ Current status:
 - lifecycle execution now supports RPC/TUI streaming, extension-initiated prompts, startup prompts, and tool-use continuations.
 - continuation turns preserve effective API key availability via prepared-request fallback.
 - context usage is updated from prompt execution results on the lifecycle path.
+- effective system prompt assembly in request preparation now composes:
+  - base system prompt
+  - optional developer layer
+  - prompt contributions
+- agent profile prompts now flow as explicit developer layers rather than being merged into base system prompts.
+- bootstrap no longer creates a fallback developer layer mirroring the base system prompt.
 
 Next active slices:
-1. converge agent profile / skill injection into request preparation for shared-session prompt paths
+1. converge `/skill:` expansion / skill-prelude injection into request preparation for shared-session prompt paths
 2. simplify or remove remaining prompt-path seams, comments, and test hooks once they are no longer needed
 
 ## LSP integration on top of managed services + post-tool processing
