@@ -1,0 +1,1 @@
+💡 Auto-session-name inference must read journal-backed session entries, not agent-core `message-history`. For rename/title inference, the canonical source is the session journal projected to visible user/assistant text. Agent-core message-history was the wrong surface for this feature and can diverge from the journal-backed transcript state.

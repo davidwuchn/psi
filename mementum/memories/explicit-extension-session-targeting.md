@@ -1,0 +1,1 @@
+💡 Scheduled extension handlers need explicit source-session targeting. Delayed extension events cannot safely rely on ambient/session-local extension scope, so psi needed extension API support for `:query-session` and `:mutate-session`. Use those whenever extension work acts on a specific source session after deferral or indirection.
