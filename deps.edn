@@ -79,24 +79,24 @@
                        "specs"
                        "tests.edn"
                        "extensions/tests.edn"]}
-  :run-test {:extra-paths ["test-support"
-                           "bases/main/test"
-                           "components/app-runtime/test"
-                           "components/ai/test"
-                           "components/query/test"
-                           "components/history/test"
-                           "components/introspection/test"
-                           "components/memory/test"
-                           "components/recursion/test"
-                           "components/tui/test"
-                           "components/rpc/test"
-                           "components/agent-core/test"
-                           "components/agent-session/test"
-                           "extensions/test"
-                           "components/extension-test-helpers/src"]
-             :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}
-                           nrepl/nrepl         {:mvn/version "1.5.1"}}
-             :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]}
+  :test-paths {:extra-paths ["test-support"
+                             "bases/main/test"
+                             "components/app-runtime/test"
+                             "components/ai/test"
+                             "components/query/test"
+                             "components/history/test"
+                             "components/introspection/test"
+                             "components/memory/test"
+                             "components/recursion/test"
+                             "components/tui/test"
+                             "components/rpc/test"
+                             "components/agent-core/test"
+                             "components/agent-session/test"
+                             "extensions/test"
+                             "components/extension-test-helpers/src"]
+               :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}
+                             nrepl/nrepl         {:mvn/version "1.5.1"}}
+               :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]}
   :test  {:extra-paths ["test-support"
                         "bases/main/test"
                         "bases/main/src"
