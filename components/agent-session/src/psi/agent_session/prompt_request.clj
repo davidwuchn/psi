@@ -5,7 +5,6 @@
    canonical session state + journal + prompt layers -> prepared request."
   (:require
    [clojure.string :as str]
-   [psi.ai.models :as ai-models]
    [psi.ai.model-registry :as model-registry]
    [psi.agent-session.conversation :as conv]
    [psi.agent-session.oauth.core :as oauth]
@@ -94,13 +93,7 @@
   [session-model]
   (let [provider (some-> (:provider session-model) keyword)
         model-id (:id session-model)]
-    (or (model-registry/find-model provider model-id)
-        ;; Fallback: scan built-in models for backward compatibility
-        (some (fn [[_ model]]
-                (when (and (= provider (:provider model))
-                           (= model-id (:id model)))
-                  model))
-              ai-models/all-models))))
+    (model-registry/find-model provider model-id)))
 
 (defn- sorted-contributions
   [session-data]
