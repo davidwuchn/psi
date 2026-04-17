@@ -117,18 +117,53 @@
     :payload    {:session-id session-id
                  :turn-count turn-count}}))
 
+(defn- helper-session? [session-id]
+  (contains? (:helper-session-ids @state) session-id))
+
+(defn- remember-helper-session! [session-id]
+  (swap! state update :helper-session-ids (fnil conj #{}) session-id)
+  session-id)
+
+(defn- query-message-history [api session-id]
+  (:psi.agent-session/message-history
+   ((:query-session api) session-id [:psi.agent-session/message-history])))
+
+(defn- infer-session-title [api source-session-id]
+  (let [lines  (sanitize-message-history (query-message-history api source-session-id))
+        prompt (build-rename-prompt lines)]
+    (when (seq prompt)
+      (let [child ((:mutate-session api) source-session-id 'psi.extension/create-child-session
+                   {:session-name   "auto-session-name"
+                    :tool-defs      []
+                    :thinking-level :off})
+            child-session-id (:psi.agent-session/session-id child)]
+        (when child-session-id
+          (remember-helper-session! child-session-id)
+          (let [run-result ((:mutate-session api) child-session-id 'psi.extension/run-agent-loop-in-session
+                            {:prompt prompt})
+                title      (some-> (:psi.agent-session/agent-run-text run-result)
+                                   normalize-title)]
+            (when (and (true? (:psi.agent-session/agent-run-ok? run-result))
+                       (valid-title? title))
+              ((:mutate-session api) source-session-id 'psi.extension/set-session-name
+               {:name title})
+              title)))))))
+
 (defn- on-turn-finished [api payload]
   (when-let [session-id (normalize-session-id payload)]
-    (let [n        (increment-turn-count! session-id)
-          interval (:turn-interval @state)]
-      (when (checkpoint-due? n interval)
-        (schedule-checkpoint! api session-id n)))))
+    (when-not (helper-session? session-id)
+      (let [n        (increment-turn-count! session-id)
+            interval (:turn-interval @state)]
+        (when (checkpoint-due? n interval)
+          (schedule-checkpoint! api session-id n))))))
 
-(defn- on-checkpoint [_api payload]
+(defn- on-checkpoint [api payload]
   (when-let [session-id (normalize-session-id payload)]
-    (when-let [count* (:turn-count payload)]
-      (notify! (checkpoint-text {:session-id session-id
-                                 :turn-count count*})))))
+    (when-not (helper-session? session-id)
+      (or (infer-session-title api session-id)
+          (when-let [count* (:turn-count payload)]
+            (notify! (checkpoint-text {:session-id session-id
+                                       :turn-count count*})))))))
 
 (defn init [api]
   (swap! state assoc
