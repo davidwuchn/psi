@@ -2,7 +2,6 @@
   "Shared runtime helpers for prompt execution across CLI, TUI, and RPC.
 
    Provides one path for:
-   - input expansion (skills/templates)
    - memory recover/remember hooks
    - user message journaling
    - API key resolution"
@@ -10,12 +9,10 @@
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
-   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
-   [psi.memory.runtime :as memory-runtime]
    [psi.recursion.core :as recursion]
    [taoensso.timbre :as timbre]))
 
@@ -45,32 +42,6 @@
   (let [user-msg (make-user-message text images)]
     (ss/journal-append-in! ctx session-id (persist/message-entry user-msg))
     user-msg))
-
-(defn expand-input-in
-  "Expand user input through request-preparation-owned skill/template logic.
-
-   Returns:
-   {:text <expanded-text>
-    :expansion {:kind :skill|:template :name string} | nil}"
-  [ctx session-id text]
-  (let [session-data (ss/get-session-data-in ctx session-id)
-        commands     (ext/command-names-in (:extension-registry ctx))
-        user-message (make-user-message text)]
-    (if-let [{expanded :user-message
-              expansion :expansion}
-             (prompt-request/expand-user-message session-data user-message commands)]
-      {:text      (get-in expanded [:content 0 :text])
-       :expansion expansion}
-      {:text      text
-       :expansion nil})))
-
-(defn safe-recover-memory!
-  "Trigger memory recovery for the given query text. No-op on failure."
-  [query-text]
-  (try
-    (memory-runtime/recover-for-query! query-text)
-    (catch Exception _
-      nil)))
 
 (defn resolve-api-key-in
   "Resolve API key for ai-model provider from session oauth context, if any.
@@ -180,7 +151,7 @@
       nil)))
 
 (defn- submit-prompt-turn-in!
-  "Dispatch the shared prompt lifecycle for an already-expanded user message."
+  "Dispatch the shared prompt lifecycle for a raw user message."
   [ctx session-id text images {:keys [progress-queue runtime-opts sync-on-git-head-change?]}]
   (when-not (ss/idle-in? ctx session-id)
     (throw (ex-info "Session is not idle" {:phase (ss/sc-phase-in ctx session-id)})))
@@ -213,8 +184,8 @@
    runner in a background thread.
 
    The runner fn is (fn [text source]) — it waits until the session is idle,
-   uses the shared expansion path for memory-recovery parity, resolves runtime
-   opts, and routes the original text through the dispatch-visible prompt lifecycle.
+   resolves runtime opts, and routes the text through the dispatch-visible
+   prompt lifecycle.
 
    Call this once after bootstrap, passing the live ai-ctx and ai-model."
   ([ctx session-id _ai-ctx ai-model]
@@ -222,9 +193,7 @@
                   (try
                     (loop [attempt 0]
                       (if (ss/idle-in? ctx session-id)
-                        (let [{preview-text :text} (expand-input-in ctx session-id text)
-                              _        (safe-recover-memory! preview-text)
-                              api-key  (resolve-api-key-in ctx session-id ai-model)]
+                        (let [api-key  (resolve-api-key-in ctx session-id ai-model)]
                           (dispatch/dispatch! ctx :session/set-model
                                               {:session-id session-id
                                                :model {:provider  (some-> (:provider ai-model) name)

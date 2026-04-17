@@ -89,7 +89,14 @@
                           :prepared-at         (now-inst)})
             api-key            (assoc :runtime-api-key api-key)
             steering-consumed? (assoc :steering-messages [])))
-        :effects (cond-> [{:effect/type      :runtime/prompt-execute-and-record
+        :effects (cond-> [{:effect/type :memory/recover-query
+                           :query-text (or (get-in prepared-request [:prepared-request/user-message :content 0 :text])
+                                           (some->> (:prepared-request/queued-steering-messages prepared-request)
+                                                    first
+                                                    :content
+                                                    first
+                                                    :text))}
+                          {:effect/type      :runtime/prompt-execute-and-record
                            :prepared-request prepared-request
                            :progress-queue   progress-queue}]
                    steering-consumed?

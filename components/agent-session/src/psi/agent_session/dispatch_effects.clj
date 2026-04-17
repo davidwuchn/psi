@@ -11,6 +11,7 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.ai.model-registry :as model-registry]
    [psi.memory.core :as memory]
+   [psi.memory.runtime :as memory-runtime]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
@@ -284,6 +285,10 @@
     :content      (:text effect)
     :tags         [:remember :manual]
     :provenance   (:provenance effect)}))
+
+(defmethod execute-effect! :memory/recover-query [_ctx effect]
+  (when-let [query-text (:query-text effect)]
+    (memory-runtime/recover-for-query! query-text)))
 
 ;;; OAuth
 

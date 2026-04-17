@@ -158,21 +158,14 @@ Available: " (str/join ", " (map name (keys all))))
   "Submit prompt text through the shared prompt lifecycle used by app-runtime
    callers.
 
-   Request preparation now owns skill/template expansion. This helper only uses
-   the shared expansion path for pre-submit UX and memory recovery parity,
-   then routes the original text through `session/prompt-in!`.
+   Request preparation owns skill/template expansion and memory recovery.
 
    Returns:
    {:assistant-message message?
-    :expansion expansion?
+    :prepared-request map?
     :ai-model model?}"
-  [ctx session-id fallback-ai-model text images {:keys [progress-queue on-expansion sync-on-git-head-change?]}]
-  (let [{preview-text :text expansion :expansion}
-        (runtime/expand-input-in ctx session-id text)
-        _        (when on-expansion
-                   (on-expansion expansion))
-        _        (runtime/safe-recover-memory! preview-text)
-        ai-model (current-ai-model-in ctx session-id fallback-ai-model)
+  [ctx session-id fallback-ai-model text images {:keys [progress-queue sync-on-git-head-change?]}]
+  (let [ai-model (current-ai-model-in ctx session-id fallback-ai-model)
         _        (when ai-model
                    (dispatch/dispatch! ctx :session/set-model
                                        {:session-id session-id
@@ -181,14 +174,14 @@ Available: " (str/join ", " (map name (keys all))))
                                                 :reasoning (boolean (:supports-reasoning ai-model))}
                                         :scope :session}
                                        {:origin :core}))
-        _        (session/prompt-in! ctx session-id text images
+        prepared  (session/prompt-in! ctx session-id text images
                                      (cond-> {}
                                        progress-queue
                                        (assoc :progress-queue progress-queue)))
-        _        (when sync-on-git-head-change?
-                   (runtime/safe-maybe-sync-on-git-head-change! ctx session-id))]
+        _         (when sync-on-git-head-change?
+                    (runtime/safe-maybe-sync-on-git-head-change! ctx session-id))]
     {:assistant-message (session/last-assistant-message-in ctx session-id)
-     :expansion expansion
+     :prepared-request (:prepared-request prepared)
      :ai-model ai-model}))
 
 ;; print-status, print-history, print-help, print-prompts, print-skills
@@ -204,10 +197,10 @@ Available: " (str/join ", " (map name (keys all))))
   "Send `text` to `session-id` and block until done, printing the response.
    Uses the shared prompt lifecycle for parity with RPC/TUI."
   [ctx session-id _ai-ctx ai-model text]
-  (let [{:keys [assistant-message]}
+  (let [{:keys [assistant-message prepared-request]}
         (submit-prompt-in! ctx session-id ai-model text nil
-                           {:sync-on-git-head-change? true
-                            :on-expansion output/print-expansion-banner!})]
+                           {:sync-on-git-head-change? true})]
+    (output/print-expansion-banner! (:prepared-request/input-expansion prepared-request))
     (output/print-assistant-message assistant-message)))
 
 (defn- graph-capabilities-in

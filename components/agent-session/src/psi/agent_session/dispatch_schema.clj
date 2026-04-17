@@ -117,6 +117,9 @@
      [:text [:maybe :string]]
      [:memory-ctx :any]
      [:provenance :map]]]
+   [:memory/recover-query
+    [:map [:effect/type [:= :memory/recover-query]]
+     [:query-text [:maybe :string]]]]
    [:oauth/begin-login
     [:map [:effect/type [:= :oauth/begin-login]]
      [:provider-id :keyword]
