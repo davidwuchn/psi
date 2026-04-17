@@ -88,8 +88,8 @@
         (is (true? @loop-called?)
             "execute-prepared-request-fn must be called when dispatch returns nil")))))
 
-(deftest rpc-prompt-expands-skill-input-before-agent-loop-test
-  (testing "non-command /skill prompt is expanded through shared runtime path"
+(deftest rpc-prompt-expands-skill-input-during-request-preparation-test
+  (testing "non-command /skill prompt is expanded during request preparation"
     (let [skill-file   (java.io.File/createTempFile "psi-rpc-skill-" ".md")
           _           (.deleteOnExit skill-file)
           _           (spit skill-file "# Skill Body\nUse this carefully.")

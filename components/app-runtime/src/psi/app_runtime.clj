@@ -60,6 +60,7 @@
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.app-runtime.background-job-ui :as background-job-ui]
    [psi.app-runtime.nrepl-runtime :as app-nrepl]
    [psi.app-runtime.output :as output]
@@ -158,20 +159,20 @@ Available: " (str/join ", " (map name (keys all))))
   "Submit prompt text through the shared prompt lifecycle used by app-runtime
    callers.
 
-   Expands skills/templates before submission, runs memory recovery on the
-   expanded text, ensures the session carries the resolved runtime model for the
-   turn, then routes through `session/prompt-in!`.
+   Request preparation now owns skill/template expansion. This helper only uses
+   the shared expansion path for pre-submit UX and memory recovery parity,
+   then routes the original text through `session/prompt-in!`.
 
    Returns:
    {:assistant-message message?
     :expansion expansion?
     :ai-model model?}"
   [ctx session-id fallback-ai-model text images {:keys [progress-queue on-expansion sync-on-git-head-change?]}]
-  (let [{expanded-text :text expansion :expansion}
+  (let [{preview-text :text expansion :expansion}
         (runtime/expand-input-in ctx session-id text)
         _        (when on-expansion
                    (on-expansion expansion))
-        _        (runtime/safe-recover-memory! expanded-text)
+        _        (runtime/safe-recover-memory! preview-text)
         ai-model (current-ai-model-in ctx session-id fallback-ai-model)
         _        (when ai-model
                    (dispatch/dispatch! ctx :session/set-model
@@ -181,7 +182,7 @@ Available: " (str/join ", " (map name (keys all))))
                                                 :reasoning (boolean (:supports-reasoning ai-model))}
                                         :scope :session}
                                        {:origin :core}))
-        _        (session/prompt-in! ctx session-id expanded-text images
+        _        (session/prompt-in! ctx session-id text images
                                      (cond-> {}
                                        progress-queue
                                        (assoc :progress-queue progress-queue)))

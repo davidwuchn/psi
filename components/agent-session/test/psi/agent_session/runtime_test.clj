@@ -65,6 +65,28 @@
           (is (= "hello from extension" (get-in user-msg [:content 0 :text])))
           (is (= "assistant" (:role assistant))))))))
 
+(deftest expand-input-in-previews-request-preparation-expansion-test
+  (let [skill-file  (java.io.File/createTempFile "psi-runtime-skill-" ".md")
+        _           (.deleteOnExit skill-file)
+        _           (spit skill-file "# Skill Body\nUse this carefully.")
+        skill       {:name "demo"
+                     :description "Demo skill"
+                     :file-path (.getAbsolutePath skill-file)
+                     :base-dir (.getParent skill-file)
+                     :source :path
+                     :disable-model-invocation false}
+        session-id  "runtime-expand"
+        [ctx sid]   (test-support/make-session-ctx
+                     {:agent-ctx {}
+                      :session-data {:session-id session-id
+                                     :skills [skill]
+                                     :prompt-templates []}})
+        result      (runtime/expand-input-in ctx sid "/skill:demo apply this")]
+    (is (= :skill (get-in result [:expansion :kind])))
+    (is (= "demo" (get-in result [:expansion :name])))
+    (is (str/includes? (:text result) "<skill name=\"demo\""))
+    (is (str/includes? (:text result) "apply this"))))
+
 (deftest safe-maybe-sync-on-git-head-change-triggers-recursion-hook-test
   (let [recursion-ctx       (recursion/create-context)
         maybe-sync-calls    (atom [])

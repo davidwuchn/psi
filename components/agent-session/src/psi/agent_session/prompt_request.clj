@@ -197,9 +197,25 @@
                                    (when (= :text (:type block))
                                      (:text block))))
                            first)]
-    (let [{:keys [text expansion]} (input-expansion session-data text commands)]
-      {:user-message (assoc user-message :content [{:type :text :text text}])
+    (let [{expanded-text :text expansion :expansion} (input-expansion session-data text commands)]
+      {:user-message (update user-message :content
+                             (fn [blocks]
+                               (let [replaced? (atom false)]
+                                 (mapv (fn [block]
+                                         (if (and (= :text (:type block)) (not @replaced?))
+                                           (do (reset! replaced? true)
+                                               (assoc block :text expanded-text))
+                                           block))
+                                       blocks))))
        :expansion expansion})))
+
+(defn- replace-current-user-message
+  [base-messages user-message]
+  (if (and user-message
+           (seq base-messages)
+           (= "user" (:role (peek base-messages))))
+    (conj (pop (vec base-messages)) user-message)
+    base-messages))
 
 (defn- queued-steering-messages
   [session-data user-message]
@@ -226,7 +242,8 @@
         {:keys [user-message expansion]} (or (expand-user-message session-data user-message commands)
                                             {:user-message user-message
                                              :expansion nil})
-        base-messages      (session->provider-messages ctx session-id)
+        base-messages      (-> (session->provider-messages ctx session-id)
+                               (replace-current-user-message user-message))
         steering-messages  (queued-steering-messages session-data user-message)
         messages           (cond-> base-messages
                              (seq steering-messages) (into steering-messages))

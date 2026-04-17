@@ -213,8 +213,8 @@
    runner in a background thread.
 
    The runner fn is (fn [text source]) — it waits until the session is idle,
-   expands input through the shared path, resolves runtime opts, and routes
-   through the dispatch-visible prompt lifecycle.
+   uses the shared expansion path for memory-recovery parity, resolves runtime
+   opts, and routes the original text through the dispatch-visible prompt lifecycle.
 
    Call this once after bootstrap, passing the live ai-ctx and ai-model."
   ([ctx session-id _ai-ctx ai-model]
@@ -222,8 +222,8 @@
                   (try
                     (loop [attempt 0]
                       (if (ss/idle-in? ctx session-id)
-                        (let [{expanded-text :text} (expand-input-in ctx session-id text)
-                              _        (safe-recover-memory! expanded-text)
+                        (let [{preview-text :text} (expand-input-in ctx session-id text)
+                              _        (safe-recover-memory! preview-text)
                               api-key  (resolve-api-key-in ctx session-id ai-model)]
                           (dispatch/dispatch! ctx :session/set-model
                                               {:session-id session-id
@@ -232,7 +232,7 @@
                                                        :reasoning (boolean (:supports-reasoning ai-model))}
                                                :scope :session}
                                               {:origin :core})
-                          (submit-prompt-turn-in! ctx session-id expanded-text nil
+                          (submit-prompt-turn-in! ctx session-id text nil
                                                   {:runtime-opts (cond-> {}
                                                                    api-key (assoc :api-key api-key))
                                                    :sync-on-git-head-change? true}))

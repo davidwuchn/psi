@@ -97,7 +97,7 @@
                                         {:keys [text]} (runtime/expand-input-in ctx session-id message)
                                         _           (runtime/safe-recover-memory! text)
                                         api-key     (runtime/resolve-api-key-in ctx session-id ai-model)
-                                        _           (session/prompt-in! ctx session-id text images
+                                        _           (session/prompt-in! ctx session-id message images
                                                                         {:progress-queue progress-q
                                                                          :runtime-opts (cond-> {}
                                                                                          api-key (assoc :api-key api-key))})
