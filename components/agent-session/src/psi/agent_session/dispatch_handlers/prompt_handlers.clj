@@ -11,6 +11,12 @@
 
 ;;; Prompt contribution pure helpers
 
+(defn- effective-prompt
+  [base contributions]
+  (sys-prompt/apply-prompt-contributions
+   (or base "")
+   (session/sorted-prompt-contributions contributions)))
+
 (defn- normalize-prompt-contribution [ext-path id contribution]
   (let [now (java.time.Instant/now)
         c   (or contribution {})]
@@ -51,15 +57,13 @@
            ;; When build opts are stored, rebuild the assembled base prompt first,
            ;; then apply extension contributions as a distinct final layer so
            ;; request preparation and introspection can observe the split.
-           [base prompt]
-           (if-let [build-opts (:system-prompt-build-opts sd)]
-             (let [base* (sys-prompt/build-system-prompt
-                          (assoc build-opts
-                                 :prompt-mode (:prompt-mode sd :lambda)
-                                 :prompt-contributions nil))]
-               [base* (sys-prompt/apply-prompt-contributions base* contrib)])
-             (let [b (or (:base-system-prompt sd) (:system-prompt sd) "")]
-               [b (sys-prompt/apply-prompt-contributions b contrib)]))]
+           base    (if-let [build-opts (:system-prompt-build-opts sd)]
+                     (sys-prompt/build-system-prompt
+                      (assoc build-opts
+                             :prompt-mode (:prompt-mode sd :lambda)
+                             :prompt-contributions nil))
+                     (or (:base-system-prompt sd) (:system-prompt sd) ""))
+           prompt  (effective-prompt base contrib)]
        {:root-state-update (session/session-update session-id #(assoc %
                                                            :base-system-prompt base
                                                            :system-prompt prompt))
@@ -71,7 +75,7 @@
    (fn [ctx {:keys [session-id prompt]}]
      (let [base*   (or prompt "")
            contrib (session/list-prompt-contributions-in ctx session-id)
-           prompt* (sys-prompt/apply-prompt-contributions base* contrib)]
+           prompt* (effective-prompt base* contrib)]
        {:root-state-update (session/session-update session-id #(assoc %
                                                            :base-system-prompt base*
                                                            :system-prompt prompt*))
@@ -91,9 +95,7 @@
                                   xs))
            next*     (conj xs* norm)
            base      (or (:base-system-prompt sd) (:system-prompt sd) "")
-           prompt*   (sys-prompt/apply-prompt-contributions
-                      base
-                      (session/sorted-prompt-contributions next*))]
+           prompt*   (effective-prompt base next*)]
        {:root-state-update
         (session/session-update session-id
          #(assoc %
@@ -127,9 +129,7 @@
                                  c))
                              xs)
                base    (or (:base-system-prompt sd) (:system-prompt sd) "")
-               prompt* (sys-prompt/apply-prompt-contributions
-                        base
-                        (session/sorted-prompt-contributions next*))]
+               prompt* (effective-prompt base next*)]
            {:root-state-update (session/session-update session-id #(assoc %
                                                                :prompt-contributions next*
                                                                :system-prompt prompt*))
@@ -153,9 +153,7 @@
        (if-not removed?
          {:return {:removed? false :count (count xs)}}
          (let [base    (or (:base-system-prompt sd) (:system-prompt sd) "")
-               prompt* (sys-prompt/apply-prompt-contributions
-                        base
-                        (session/sorted-prompt-contributions next*))]
+               prompt* (effective-prompt base next*)]
            {:root-state-update (session/session-update session-id #(assoc %
                                                                :prompt-contributions next*
                                                                :system-prompt prompt*))
