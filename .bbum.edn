@@ -1,0 +1,9 @@
+{:sources {},
+ :tasks
+ {:ref-report
+  {:source :bb-tasks-lib,
+   :lib hugoduncan/bb-task-lib,
+   :install :explicit,
+   :lock
+   #:local{:path
+           "/Users/duncan/projects/hugoduncan/bb-task-lib/add-tasks"}}}}
