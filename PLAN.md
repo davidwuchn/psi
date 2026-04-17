@@ -44,12 +44,15 @@ Goal:
 Checklist:
 - shared-session prompt-path seams
   - [x] remove prompt-runtime targeted-test compatibility sentinels from `prompt_runtime.clj`
-  - [ ] update focused prompt tests to use only canonical prompt-stream timeout/aborted sentinels
+  - [x] update focused prompt tests to use only canonical prompt-stream timeout/aborted sentinels
   - [x] remove built-in `ai-models/all-models` fallback scan from `prompt_request.clj/resolve-runtime-model`
   - [x] make `model-registry` the only shared-session model resolution path
   - [x] remove remaining prompt-path migration hooks/comments in `prompt_request.clj`, `prompt_runtime.clj`, `prompt_turn.clj`, `system_prompt.clj`, and `conversation.clj`
   - [x] verify request preparation is the explicit home for prompt layer assembly, cache breakpoint projection, and provider request shaping
-  - [ ] remove any remaining shared-session prompt semantics still split across `system_prompt.clj`, `conversation.clj`, or extension-local string composition
+  - [~] remove any remaining shared-session prompt semantics still split across `system_prompt.clj`, `conversation.clj`, or extension-local string composition
+    - base system prompt assembly no longer appends prompt contributions directly
+    - prompt contribution application is now centralized in prompt handlers + request preparation
+    - next follow-on is to converge any remaining skill/profile prelude composition into request preparation
 - adapter/UI fallback payload compatibility
   - [x] remove Emacs "no session id means accept event" compatibility from `psi-events.el`
   - [x] decide and enforce canonical per-event session targeting expectations
@@ -59,7 +62,10 @@ Checklist:
   - [x] remove legacy footer `:stats-line` fallback; require structured `:usage-parts` + `:model-text`
   - [x] remove any now-dead Emacs compatibility helpers once backend-owned projections are fully authoritative
 - proof and cleanup
-  - [ ] strengthen RPC tests for canonical-only payload shapes on `session/updated`, `context/updated`, `footer/updated`, `ui/frontend-action-requested`, and `/tree`
+  - [~] strengthen RPC tests for canonical-only payload shapes on `session/updated`, `context/updated`, `footer/updated`, `ui/frontend-action-requested`, and `/tree`
+    - canonical footer payload assertions now prefer structured fields (`:usage-parts`, `:model-text`, `:status-line`)
+    - canonical `ui/frontend-action-requested` assertions now require backend-owned `:ui/action` and no top-level `:action-name`
+    - `session/updated` and `context/updated` tests now assert tighter canonical key sets
   - [x] strengthen Emacs tests so compat branches can be deleted confidently
   - [x] remove tests that exist only to preserve legacy internal payload shapes
   - [ ] run `bb clojure:test`
