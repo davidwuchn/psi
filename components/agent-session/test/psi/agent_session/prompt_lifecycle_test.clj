@@ -216,7 +216,7 @@
                          :contribution {:content "Hint B" :priority 20 :enabled true}}
                         {:origin :core})
     ;; Simulate stale cached :system-prompt state: request preparation should
-    ;; rebuild from canonical base + contribution layers instead.
+    ;; rebuild from canonical base prompt + contribution layers instead.
     (test-support/update-state! ctx :session-data assoc :system-prompt "stale")
     (let [prepared (psi.agent-session.prompt-request/build-prepared-request
                     ctx session-id {:turn-id "t2"

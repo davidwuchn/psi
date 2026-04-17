@@ -106,9 +106,10 @@
    This makes request preparation the explicit home for the final
    base-plus-contributions projection used for provider execution."
   [session-data]
-  (system-prompt/apply-prompt-contributions
-   (:base-system-prompt session-data)
-   (sorted-contributions session-data)))
+  (let [base (:base-system-prompt session-data)]
+    (system-prompt/apply-prompt-contributions
+     base
+     (sorted-contributions session-data))))
 
 (defn build-provider-conversation
   "Project canonical session prompt state, messages, and tools into the
