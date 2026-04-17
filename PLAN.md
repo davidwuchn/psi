@@ -218,3 +218,39 @@ Acceptance criteria:
 - Insert a cache breakpoint so the reusable skill prelude is separated from the variable tail of the conversation.
 - Goal: reduce end-of-conversation breakpoints from 3 to 2 for this flow.
 - Expected benefit: better caching for repeated prompts that reuse the same skill.
+
+## Auto session name extension
+
+Completed so far:
+- extension MVP landed in `extensions.auto-session-name`
+- prompt lifecycle now emits canonical extension event `session_turn_finished`
+- extensions can request delayed extension dispatch via `psi.extension/schedule-event`
+- extension API now supports explicit session targeting via:
+  - `:query-session`
+  - `:mutate-session`
+- rename flow now:
+  - reads journal-backed source session entries
+  - sanitizes visible user/assistant text
+  - creates a helper child session
+  - runs one sync helper turn
+  - applies validated inferred titles to the source session
+- extension-local guards now prevent:
+  - recursive helper-session checkpoint scheduling
+  - stale checkpoint overwrite
+  - overwrite when the current name diverges from the last auto-applied name
+
+Next active slices:
+1. helper model selection for rename inference
+2. formalize session-name source metadata (`:manual` vs `:auto`) beyond extension-local heuristics
+3. make helper sessions/internal runs explicitly non-user-facing by runtime contract
+4. consider persistence/reload semantics for extension-owned rename state if needed
+
+## Model selection hierarchy
+
+Design note landed: `doc/design-model-selection-hierarchy.md`
+
+Next active slices:
+1. introduce task-class-based model selection requests for helper/background work
+2. separate hard capability filtering from soft preference ranking
+3. use the selector for auto-session-name helper execution before broader agent adoption
+4. expose explainable selection results / fallback reasons

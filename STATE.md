@@ -66,6 +66,8 @@ The bridge-removal plan is complete. Remaining work is follow-on cleanup / next 
 - retire remaining agent-core coupling in some consumers
 - configuration scoping
 - cache stability improvements
+- prompt request-preparation convergence (agent profile / skill injection)
+- model selection hierarchy for helper/background task execution
 - post-Wave-B executor thinning is complete:
   - `psi.agent-session.executor` has been deleted
   - prompt/streaming ownership now lives in `prompt-turn` / `prompt-loop`
@@ -73,6 +75,12 @@ The bridge-removal plan is complete. Remaining work is follow-on cleanup / next 
 Completed follow-on cleanup since Wave B:
 - `psi.ai.providers.openai.common` has been removed after migrating direct callers
 - `psi.app-runtime.background-jobs` has been removed after migrating commands, RPC, widgets, and tests to `background-job-view`
+- auto-session-name extension vertical slice is now landed:
+  - prompt lifecycle emits extension event `session_turn_finished`
+  - extension runtime supports delayed extension dispatch via `psi.extension/schedule-event`
+  - extension API supports explicit source-session targeting via `:query-session` and `:mutate-session`
+  - `extensions.auto-session-name` now infers titles from journal-backed visible session content through a helper child session
+  - extension-local guards prevent helper recursion, stale checkpoint overwrite, and overwrite when the current session name diverges from the last auto-applied name
 
 #### Post-Wave-B check
 

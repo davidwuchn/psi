@@ -171,20 +171,42 @@ Usage:
 
 2 pre-existing failures in unit suite (unrelated: git-test, extensions-test).
 
+## Current work update
+- Auto session name extension is now landed as a real vertical slice.
+- New runtime/extension seams landed to support it:
+  - prompt lifecycle emits canonical extension event `session_turn_finished`
+  - extensions can request delayed extension dispatch via `psi.extension/schedule-event`
+  - extension API now supports explicit source-session targeting via `:query-session` and `:mutate-session`
+- `extensions.auto-session-name` now:
+  - counts completed turns per session
+  - schedules checkpoints every 2 turns
+  - reads journal-backed source session entries rather than agent-core message history
+  - sanitizes visible user/assistant text only
+  - creates a helper child session and runs one sync helper turn
+  - applies inferred validated titles to the original session
+- Extension-local safety guards now exist for:
+  - helper-session recursion avoidance
+  - stale checkpoint suppression
+  - preserving manually changed current names by comparing against the last auto-applied name
+
 ## Suggested next step
-- Custom providers: complete. Next active threads (PLAN.md order):
+- Next active threads are now:
   1. **Prompt lifecycle**: converge agent profile / skill injection into request preparation
-  2. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
-  3. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
-  4. **Dispatch trace**: broaden beyond tool/post-tool path
-  5. **Agent tool skill prelude**: `:skill` arg → synthetic context injection + cache breakpoint
+  2. **Auto session name**: add helper model selection using the new model-selection-hierarchy thread
+  3. **Model selection hierarchy**: task-class helper/background model resolution
+  4. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
+  5. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
 - Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes.
-- Next convergence target: agent profile / skill injection in request preparation for shared-session paths.
+- For auto-session-name specifically, the next highest-leverage step is helper model selection, not more title plumbing.
 
 ## Notes for future ψ
-- `PLAN.md` is the main active-work tracker and now begins with prompt lifecycle work; treat that as the current primary thread.
-- For the just-finished adapter-convergence thread, trust the recent commits and the current docs over older state notes.
-- `ui/frontend-action-requested` should be treated as a canonical `:ui/action` contract; do not reintroduce payload duplication or legacy action-name compatibility without a deliberate compatibility decision.
+- `PLAN.md` is still the main active-work tracker, but auto-session-name and model-selection-hierarchy are now live active threads rather than just design notes.
+- For auto-session-name, trust the journal-backed source-session read path over agent-core `message-history`; the latter was the wrong surface for rename inference.
+- The explicit session-targeting extension API (`:query-session`, `:mutate-session`) now exists because delayed/scheduled extension handlers must not rely on ambient session scope.
+- The current manual-vs-auto protection is intentionally extension-local and heuristic:
+  - last auto-applied name is remembered in extension state
+  - if current name diverges from that remembered value, auto overwrite is blocked
+  - this is not yet first-class runtime metadata
 - Background jobs should now be understood in three layers:
   - canonical summary text/maps in `app_runtime.background_jobs`
   - canonical widget/status projections in `app_runtime.background_job_widgets`
