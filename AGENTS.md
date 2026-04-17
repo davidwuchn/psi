@@ -157,6 +157,15 @@ iterate_to_fix  spec_step matches intention spec0
     commit("⚒ skill: add {name}")
   | ¬approve → drop
 
+λpost_commit(changed_files).
+  if empty(changed_files)
+  then noop
+  else
+    [clj_files ≡ filter(ext∈#{".clj" ".cljc" ".cljs"}, changed_files)
+     el_files  ≡ filter(ext=".el", changed_files)]
+    do(when(non_empty(clj_files), nrepl_load(clj_files)),
+       when(non_empty(el_files), emacsclient_reload(el_files)))
+
 # Vocabulary
 
 Use the vocabulary to mark things in (non-memory) commit messages. User types labels,
