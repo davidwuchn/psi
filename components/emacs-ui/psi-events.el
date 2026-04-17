@@ -229,19 +229,18 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
   "Handle backend `ui/frontend-action-requested` event DATA."
   (when psi-emacs--state
     (setf (psi-emacs-state-pending-frontend-action psi-emacs--state) data)
-    (let* ((action-name (psi-emacs--event-data-get data '(:action-name action-name :actionName actionName)))
-           (ui-action (or (psi-emacs--event-data-get data '(:ui/action ui/action)) '()))
-           (action-key (psi-emacs--frontend-action-key ui-action action-name))
+    (let* ((ui-action (or (psi-emacs--event-data-get data '(:ui/action ui/action)) '()))
+           (action-key (psi-emacs--frontend-action-key ui-action nil))
            (submitted-action-name (cond
                                    ((keywordp action-key) (substring (symbol-name action-key) 1))
                                    ((symbolp action-key) (symbol-name action-key))
                                    ((stringp action-key) action-key)
-                                   (t action-name)))
-           (request-id (psi-emacs--event-data-get data '(:request-id request-id :requestId requestId)))
+                                   (t nil)))
+           (request-id (psi-emacs--event-data-get data '(:request-id request-id)))
            (prompt (or (psi-emacs--event-data-get ui-action '(:ui/prompt ui/prompt))
                        (psi-emacs--event-data-get data '(:prompt prompt))
                        "Select:"))
-           (payload (or (psi-emacs--event-data-get data '(:payload payload)) '()))
+           (payload '())
            (candidates (psi-emacs--frontend-action-map-candidates action-key payload ui-action))
            (selected (condition-case nil
                          (when candidates
