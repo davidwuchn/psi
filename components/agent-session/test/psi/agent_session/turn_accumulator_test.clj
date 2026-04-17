@@ -11,6 +11,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-loop :as prompt-loop]
    [psi.agent-session.prompt-runtime :as prompt-runtime]
+   [psi.agent-session.prompt-stream :as prompt-stream]
    [psi.agent-session.prompt-turn :as prompt-turn]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
@@ -447,6 +448,24 @@
         (is (= :error (get-in td [:last-provider-event :type])))
         (is (= "Timeout waiting for LLM response"
                (get-in td [:last-provider-event :error-message])))))))
+
+(deftest prompt-runtime-wait-for-turn-result-uses-canonical-prompt-stream-sentinels-test
+  (testing "prompt runtime exposes canonical prompt-stream timeout sentinel"
+    (let [done-p            (promise)
+          last-progress-ms  (atom (prompt-stream/now-ms))]
+      (with-redefs [psi.agent-session.prompt-stream/wait-for-turn-result
+                    (fn [_done _last _opts]
+                      ::prompt-stream/timeout)]
+        (is (= ::prompt-runtime/timeout
+               (prompt-runtime/wait-for-turn-result done-p last-progress-ms {}))))))
+  (testing "prompt runtime exposes canonical prompt-stream aborted sentinel"
+    (let [done-p            (promise)
+          last-progress-ms  (atom (prompt-stream/now-ms))]
+      (with-redefs [psi.agent-session.prompt-stream/wait-for-turn-result
+                    (fn [_done _last _opts]
+                      ::prompt-stream/aborted)]
+        (is (= ::prompt-runtime/aborted
+               (prompt-runtime/wait-for-turn-result done-p last-progress-ms {})))))))
 
 (deftest tool-lifecycle-progress-derived-from-canonical-event-test
   (testing "progress projection uses the same canonical lifecycle event shape"
