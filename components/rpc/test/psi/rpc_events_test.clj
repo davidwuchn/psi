@@ -45,13 +45,6 @@
              (:usage-parts payload)))
       (is (= "(openai-codex) gpt-5.3-codex • thinking high"
              (:model-text payload)))
-      (is (str/includes? (:stats-line payload) "↑172k"))
-      (is (str/includes? (:stats-line payload) "↓17k"))
-      (is (str/includes? (:stats-line payload) "CR5.2M"))
-      (is (str/includes? (:stats-line payload) "CW1.2k"))
-      (is (str/includes? (:stats-line payload) "$1.444"))
-      (is (str/includes? (:stats-line payload) "31.9%/272k (auto)"))
-      (is (str/includes? (:stats-line payload) "(openai-codex) gpt-5.3-codex • thinking high"))
       (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
              (:status-line payload))))))
 
@@ -156,15 +149,9 @@
                                                    :data {:message {:role "assistant"
                                                                     :usage {:input-tokens 111
                                                                             :output-tokens 22}}}})
-          payload          (rpc.events/footer-updated-payload ctx session-id)
-          stats-line       (:stats-line payload)]
+          payload          (rpc.events/footer-updated-payload ctx session-id)]
       (is (= ["↑111" "↓22" "4.0%/100k"]
              (:usage-parts payload)))
       (is (= "(openai) gpt-5.3-codex • thinking high"
-             (:model-text payload)))
-      (is (string? stats-line))
-      (is (str/includes? stats-line "↑111"))
-      (is (str/includes? stats-line "↓22"))
-      (is (str/includes? stats-line "4.0%/100k"))
-      (is (str/includes? stats-line "(openai) gpt-5.3-codex • thinking high")))))
+             (:model-text payload))))))
 

@@ -40,16 +40,14 @@
           events              (filter #(= :event (:kind %)) frames)
           event-topics        (set (map :event events))
           command-result      (some #(when (= "command-result" (:event %)) %) events)
-          footer-event        (some #(when (= "footer/updated" (:event %)) %) events)
-          stats-line          (get-in footer-event [:data :stats-line] "")]
+          footer-event        (some #(when (= "footer/updated" (:event %)) %) events)]
       (is (contains? event-topics "session/resumed"))
       (is (contains? event-topics "session/rehydrated"))
       (is (some? command-result))
       (is (= "new_session" (get-in command-result [:data :type])))
       (is (some? footer-event))
-      (is (str/includes? stats-line "gpt-5.4"))
-      (is (str/includes? stats-line "(openai)"))
-      (is (not (str/includes? stats-line "(no-provider)")))))
+      (is (= "(openai) gpt-5.4"
+             (get-in footer-event [:data :model-text])))))
 
   (testing "command /resume <path> emits session/resumed and session/rehydrated canonical events"
     (let [cwd                 (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))

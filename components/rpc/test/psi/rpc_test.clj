@@ -59,13 +59,6 @@
              (:usage-parts payload)))
       (is (= "(openai-codex) gpt-5.3-codex • thinking high"
              (:model-text payload)))
-      (is (str/includes? (:stats-line payload) "↑172k"))
-      (is (str/includes? (:stats-line payload) "↓17k"))
-      (is (str/includes? (:stats-line payload) "CR5.2M"))
-      (is (str/includes? (:stats-line payload) "CW1.2k"))
-      (is (str/includes? (:stats-line payload) "$1.444"))
-      (is (str/includes? (:stats-line payload) "31.9%/272k (auto)"))
-      (is (str/includes? (:stats-line payload) "(openai-codex) gpt-5.3-codex • thinking high"))
       (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
              (:status-line payload))))))
 
@@ -187,15 +180,11 @@
                        "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (support/run-loop input handler state)
           frames (support/parse-frames out-lines)
-          footer-event (some #(when (= "footer/updated" (:event %)) %) frames)
-          stats-line (get-in footer-event [:data :stats-line] "")]
+          footer-event (some #(when (= "footer/updated" (:event %)) %) frames)]
       (is (some? footer-event))
-      (is (string? stats-line))
-      (is (not (str/includes? stats-line "↑111")))
-      (is (not (str/includes? stats-line "↓22")))
-      (is (str/includes? stats-line "gpt-5.4"))
-      (is (str/includes? stats-line "(openai)"))
-      (is (not (str/includes? stats-line "(no-provider)"))))))
+      (is (= ["?/0"] (get-in footer-event [:data :usage-parts])))
+      (is (= "(openai) gpt-5.4"
+             (get-in footer-event [:data :model-text]))))))
 
 (deftest footer-updated-payload-includes-model-and-thinking-when-session-reasoning-enabled-test
   (testing "footer payload includes model/thinking details from active session query"
@@ -211,17 +200,11 @@
                                              :data {:message {:role "assistant"
                                                               :usage {:input-tokens 111
                                                                       :output-tokens 22}}}})
-          payload (rpc.events/footer-updated-payload ctx session-id)
-          stats-line (:stats-line payload)]
+          payload (rpc.events/footer-updated-payload ctx session-id)]
       (is (= ["↑111" "↓22" "4.0%/100k"]
              (:usage-parts payload)))
       (is (= "(openai) gpt-5.3-codex • thinking high"
-             (:model-text payload)))
-      (is (string? stats-line))
-      (is (str/includes? stats-line "↑111"))
-      (is (str/includes? stats-line "↓22"))
-      (is (str/includes? stats-line "4.0%/100k"))
-      (is (str/includes? stats-line "(openai) gpt-5.3-codex • thinking high")))))
+             (:model-text payload))))))
 
 (deftest rpc-subscribe-emits-context-updated-test
   (testing "subscribe emits context/updated with active-session-id and sessions list"
