@@ -228,7 +228,7 @@ command rehydration."
       (psi-emacs--handle-rpc-event
        '((:event . "footer/updated")
          (:data . ((:path-line . "~/psi-main")
-                   (:stats-line . "latency 12ms")))))
+                   (:usage-parts . ["latency" "12ms"])))))
       (let ((buf (buffer-string)))
         (should (string-match-p "Widget line\n────────────────────\n~/psi-main" buf))))))
 
@@ -271,7 +271,7 @@ command rehydration."
       (psi-emacs--handle-rpc-event
        '((:event . "footer/updated")
          (:data . ((:path-line . "~/psi-main")
-                   (:stats-line . "latency 12ms")
+                   (:usage-parts . ["latency" "12ms"])
                    (:status-line . "connected")))))
       (should (string-match-p "ψ: hello" (buffer-string)))
       (should (string-match-p "~/psi-main\nlatency 12ms\nconnected" (buffer-string)))
@@ -292,7 +292,7 @@ command rehydration."
       (psi-emacs--handle-rpc-event
        '((:event . "footer/updated")
          (:data . ((:path-line . "~/psi-main")
-                   (:stats-line . "latency 12ms"))))))
+                   (:usage-parts . ["latency" "12ms"]))))))
     (let* ((buf (buffer-string))
            (lines (split-string buf "\n")))
       (should (equal "ψ: hello" (nth 0 lines)))
@@ -309,7 +309,7 @@ command rehydration."
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "latency 12ms")))))
+                 (:usage-parts . ["latency" "12ms"])))))
     ;; Point remains in draft area above projection/footer block.
     (insert "second prompt")
     (let ((rpc-calls nil))
@@ -332,8 +332,7 @@ command rehydration."
        '((:event . "footer/updated")
          (:data . ((:path-line . "~/psi-main")
                    (:usage-parts . ["↑4.6k" "↓14" "$0.008" "1.7%/272k"])
-                   (:model-text . "(openai) gpt-5.3-codex • thinking off")
-                   (:stats-line . "↑4.6k ↓14 $0.008 1.7%/272k (openai) gpt-5.3-codex • thinking off"))))))
+                   (:model-text . "(openai) gpt-5.3-codex • thinking off"))))))
     (let* ((lines (split-string (buffer-string) "\n" t))
            (stats-line (seq-find (lambda (line)
                                    (string-match-p "↑4\\.6k" line))
@@ -342,24 +341,6 @@ command rehydration."
       (should (string-match-p "  (openai) gpt-5\\.3-codex • thinking off$" stats-line))
       (should (= 70 (string-width stats-line))))))
 
-(ert-deftest psi-extension-ui-footer-updated-falls-back-to-stats-line-parsing-when-structured-fields-absent ()
-  (with-temp-buffer
-    (psi-emacs-mode)
-    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
-    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
-    (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
-               (lambda () 70)))
-      (psi-emacs--handle-rpc-event
-       '((:event . "footer/updated")
-         (:data . ((:path-line . "~/psi-main")
-                   (:stats-line . "↑4.6k ↓14 $0.008 1.7%/272k (openai) gpt-5.3-codex • thinking off"))))))
-    (let* ((lines (split-string (buffer-string) "\n" t))
-           (stats-line (seq-find (lambda (line)
-                                   (string-match-p "↑4\\.6k" line))
-                                 lines)))
-      (should (stringp stats-line))
-      (should (string-match-p "  (openai) gpt-5\\.3-codex • thinking off$" stats-line))
-      (should (= 70 (string-width stats-line))))))
 
 (ert-deftest psi-footer-projection-width-prefers-window-text-width ()
   (with-temp-buffer
@@ -397,7 +378,7 @@ command rehydration."
       (psi-emacs--handle-rpc-event
        '((:event . "footer/updated")
          (:data . ((:path-line . "~/psi-main")
-                   (:stats-line . "latency 12ms")))))
+                   (:usage-parts . ["latency" "12ms"])))))
       (should (= 20 (psi-emacs--input-separator-current-width))))
     ;; Simulate input-separator drift: marker exists but no longer points at a
     ;; separator character. `psi-emacs--ensure-input-area` should repair it.
@@ -430,7 +411,7 @@ command rehydration."
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "stats1")))))
+                 (:usage-parts . ["stats1"])))))
     (psi-emacs--handle-rpc-event
      '((:event . "assistant/message")
        (:data . ((:text . "reply")))))
@@ -438,7 +419,7 @@ command rehydration."
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "stats2")))))
+                 (:usage-parts . ["stats2"])))))
     (let ((buf (buffer-string)))
       (should (string-match-p "ψ: reply" buf))
       (should (string-match-p "stats2" buf)))))
@@ -451,7 +432,7 @@ command rehydration."
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "stats1")))))
+                 (:usage-parts . ["stats1"])))))
     (psi-emacs--handle-rpc-event
      '((:event . "tool/start")
        (:data . ((:tool-id . "t-footer") (:text . "start")))))
@@ -467,7 +448,7 @@ command rehydration."
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "stats2")))))
+                 (:usage-parts . ["stats2"])))))
     (let* ((buf (buffer-string))
            (tool-pos (string-match-p "t-footer success" buf))
            (path-pos (string-match-p "~/psi-main" buf)))
@@ -489,7 +470,7 @@ command rehydration."
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "stats")))))
+                 (:usage-parts . ["stats"])))))
     (psi-emacs--handle-rpc-event
      '((:event . "tool/result")
        (:data . ((:tool-id . "t-toggle-preserve")

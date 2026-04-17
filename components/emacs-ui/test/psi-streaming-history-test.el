@@ -260,7 +260,7 @@
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "latency 12ms")))))
+                 (:usage-parts . ["latency" "12ms"])))))
     (psi-emacs--replace-input-text "draft")
     (goto-char (point-max))
     (psi-emacs-previous-input)
@@ -313,7 +313,7 @@
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
-                 (:stats-line . "latency 12ms")))))
+                 (:usage-parts . ["latency" "12ms"])))))
     (let* ((range (psi-emacs--input-range))
            (start (car range)))
       (should-not (get-text-property start 'read-only))

@@ -342,7 +342,7 @@ B output into A. Switching to B later then produced corrupted transcript state."
        '((:event . "footer/updated")
          (:data . ((:session-id . "s-b")
                    (:path-line . "/repo/b")
-                   (:stats-line . "tokens: 1")))))
+                   (:usage-parts . ["tokens:" "1"])))))
       (should (equal before (buffer-string)))
       (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
 

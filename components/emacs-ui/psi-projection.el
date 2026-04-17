@@ -208,40 +208,11 @@ Returns 80 for non-visible buffers (e.g. tests/background)."
         (max 1 text-width))
     80))
 
-(defun psi-emacs--split-footer-stats-line (line)
-  "Split canonical footer stats LINE into [left right] when possible.
-
-RIGHT is recognized as the provider/model segment that starts with
-`(provider) ...`. Returns (list left right-or-nil)."
-  (let ((s (or line "")))
-    (if (string-match "\\`\\(.*\\) \\(([^)]*) .+\\)\\'" s)
-        (list (string-trim-right (match-string 1 s))
-              (match-string 2 s))
-      (list s nil))))
-
-(defun psi-emacs--align-footer-stats-line (line)
-  "Right-align provider/model segment in canonical footer stats LINE.
-
-When LINE contains a recognizable `(provider) ...` right segment, align it to
-buffer width with at least two spaces between left and right. Otherwise, return
-LINE unchanged."
-  (pcase-let* ((`(,left ,right) (psi-emacs--split-footer-stats-line line)))
-    (if (and (stringp right) (not (string-empty-p right)))
-        (let* ((width (psi-emacs--projection-window-width))
-               (left-w (string-width left))
-               (right-w (string-width right))
-               (min-pad 2)
-               (total (+ left-w min-pad right-w)))
-          (if (<= total width)
-              (concat left (make-string (- width left-w right-w) ?\s) right)
-            line))
-      line)))
-
 (defun psi-emacs--projection-footer-stats-line (data)
   "Return canonical footer stats line text from event DATA.
 
-Prefers structured footer fields so Emacs does not need to re-parse backend
-semantic text. Falls back to legacy `:stats-line` payloads for compatibility."
+Consumes structured footer fields directly so Emacs does not need to re-parse
+backend semantic text."
   (let* ((usage-parts* (psi-emacs--event-data-get data '(:usage-parts usage-parts :usageParts usageParts)))
          (usage-parts (psi-emacs--projection-seq usage-parts*))
          (model-text (psi-emacs--event-data-get data '(:model-text model-text :modelText modelText)))
@@ -256,8 +227,7 @@ semantic text. Falls back to legacy `:stats-line` payloads for compatibility."
                                 " ")))
          (structured-right (and (stringp model-text)
                                 (not (string-empty-p model-text))
-                                model-text))
-         (legacy-line (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine))))
+                                model-text)))
     (cond
      ((and structured-right
            structured-left
@@ -273,8 +243,7 @@ semantic text. Falls back to legacy `:stats-line` payloads for compatibility."
                     structured-right)
           (concat structured-left " " structured-right))))
      (structured-right structured-right)
-     ((and (stringp legacy-line) (not (string-empty-p legacy-line)))
-      (psi-emacs--align-footer-stats-line legacy-line))
+     (structured-left structured-left)
      (t nil))))
 
 (defun psi-emacs--projection-footer-text (data)

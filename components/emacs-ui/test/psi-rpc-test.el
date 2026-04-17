@@ -68,7 +68,7 @@
                    (psi-rpc--handle-frame
                     client
                     '((:kind . :event) (:event . "footer/updated")
-                      (:data . ((:path-line . "x") (:stats-line . "y")))))))))))
+                      (:data . ((:path-line . "x") (:usage-parts . ["y"])))))))))))
     (unwind-protect
         (progn
           (psi-rpc-start! client #'psi-rpc-test--spawn-cat '("cat") psi-rpc-default-topics)
