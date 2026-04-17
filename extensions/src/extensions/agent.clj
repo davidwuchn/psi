@@ -259,30 +259,31 @@
 
 ;;; Public boundary — RunAgent primitive and config resolution
 
+(defn- agent-profile-prompt
+  [agent-def]
+  (when agent-def
+    (str "# Agent Profile: " (:name agent-def) "\n\n"
+         (:system-prompt agent-def))))
+
 (defn resolve-agent-config
   "Resolve agent configuration from name, agents directories, and base prompt.
   `agents-dirs` may be a single directory string or a seq of directories.
-  Returns {:session-name :system-prompt :tools :model :thinking-level :fork-messages}."
+  Returns {:session-name :system-prompt :developer-prompt :developer-prompt-source :tools :model :thinking-level :fork-messages}."
   [agent-name agents-dirs base-system-prompt]
-  (let [norm-name (normalize-agent-name agent-name)
-        dirs      (if (string? agents-dirs) [agents-dirs] (vec agents-dirs))
-        all-defs  (reduce (fn [acc d] (merge acc (load-agent-defs d))) {} dirs)
-        agent-def (when norm-name (get all-defs norm-name))
-        prompt    (if agent-def
-                    (let [base (str/trim (or base-system-prompt ""))
-                          profile (str "[Agent Profile: " (:name agent-def) "]\n"
-                                       (:system-prompt agent-def))]
-                      (if (seq base)
-                        (str base "\n\n" profile)
-                        profile))
-                    base-system-prompt)
-        tools     (tool-schemas-for (:tools agent-def))]
-    {:session-name    norm-name
-     :system-prompt   prompt
-     :tools           tools
-     :model           nil
-     :thinking-level  :off
-     :fork-messages   nil}))
+  (let [norm-name  (normalize-agent-name agent-name)
+        dirs       (if (string? agents-dirs) [agents-dirs] (vec agents-dirs))
+        all-defs   (reduce (fn [acc d] (merge acc (load-agent-defs d))) {} dirs)
+        agent-def  (when norm-name (get all-defs norm-name))
+        tools      (tool-schemas-for (:tools agent-def))
+        profile    (agent-profile-prompt agent-def)]
+    {:session-name            norm-name
+     :system-prompt           base-system-prompt
+     :developer-prompt        profile
+     :developer-prompt-source (when profile :explicit)
+     :tools                   tools
+     :model                   nil
+     :thinking-level          :off
+     :fork-messages           nil}))
 
 (defn run-agent
   "Run an agent to completion via core child session.
@@ -295,10 +296,15 @@
                        (when mutate-fn
                          (:psi.agent-session/session-id
                           (mutate-fn 'psi.extension/create-child-session
-                                     {:session-name    (:session-name config)
-                                      :system-prompt   (:system-prompt config)
-                                      :tool-defs       (:tools config)
-                                      :thinking-level  (:thinking-level config)}))))]
+                                     (cond-> {:session-name   (:session-name config)
+                                              :system-prompt  (:system-prompt config)
+                                              :tool-defs      (:tools config)
+                                              :thinking-level (:thinking-level config)}
+                                       (some? (:developer-prompt config))
+                                       (assoc :developer-prompt (:developer-prompt config))
+
+                                       (some? (:developer-prompt-source config))
+                                       (assoc :developer-prompt-source (:developer-prompt-source config)))))))]
     (if-not session-id
       {:ok?           false
        :text          "Error: could not create child session"

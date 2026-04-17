@@ -391,6 +391,8 @@
                                              {}))}})
         (let [result (sut/run-agent {:config {:session-name "test"
                                               :system-prompt "hi"
+                                              :developer-prompt "# Agent Profile: test\n\nYou test."
+                                              :developer-prompt-source :explicit
                                               :tools []
                                               :thinking-level :off}
                                      :prompt "do thing"
@@ -400,6 +402,13 @@
           (is (= "child-1" (:session-id result)))
           (is (= 2 (count @mutations)))
           (is (= 'psi.extension/create-child-session (ffirst @mutations)))
+          (is (= {:session-name "test"
+                  :system-prompt "hi"
+                  :developer-prompt "# Agent Profile: test\n\nYou test."
+                  :developer-prompt-source :explicit
+                  :tool-defs []
+                  :thinking-level :off}
+                 (second (first @mutations))))
           (is (= 'psi.extension/run-agent-loop-in-session (first (second @mutations)))))))
 
     (testing "reuses existing session-id when provided"
@@ -593,19 +602,22 @@
     (testing "returns base prompt when agent-name is nil"
       (let [config (sut/resolve-agent-config nil nil "base prompt")]
         (is (= "base prompt" (:system-prompt config)))
+        (is (nil? (:developer-prompt config)))
+        (is (nil? (:developer-prompt-source config)))
         (is (nil? (:session-name config)))
         (is (vector? (:tools config)))))
 
-    (testing "composes agent profile into system prompt"
+    (testing "returns agent profile as developer prompt"
       (with-test-agents-dir
         {"planner.md" "---\nname: Planner\ntools: read\n---\nYou plan."}
         (fn []
           (let [agents-dir (str (System/getProperty "user.dir") "/.psi/agents")
                 config     (sut/resolve-agent-config "planner" agents-dir "base")]
             (is (= "planner" (:session-name config)))
-            (is (str/includes? (:system-prompt config) "base"))
-            (is (str/includes? (:system-prompt config) "[Agent Profile: planner]"))
-            (is (str/includes? (:system-prompt config) "You plan."))
+            (is (= "base" (:system-prompt config)))
+            (is (= :explicit (:developer-prompt-source config)))
+            (is (str/includes? (:developer-prompt config) "# Agent Profile: planner"))
+            (is (str/includes? (:developer-prompt config) "You plan."))
             (is (= 1 (count (:tools config))))
             (is (= "read" (:name (first (:tools config)))))))))
 
@@ -641,9 +653,9 @@
               (let [dirs   (concat (sut/global-agents-dirs)
                                    [(.getAbsolutePath project-dir)])
                     config (sut/resolve-agent-config "planner" dirs "base")]
-                (is (str/includes? (:system-prompt config) "Project planner."))
-                (is (not (str/includes? (:system-prompt config) "Preferred planner.")))
-                (is (not (str/includes? (:system-prompt config) "Legacy planner."))))
+                (is (str/includes? (:developer-prompt config) "Project planner."))
+                (is (not (str/includes? (:developer-prompt config) "Preferred planner.")))
+                (is (not (str/includes? (:developer-prompt config) "Legacy planner."))))
               (finally
                 (System/setProperty "user.home" orig-home))))
           (finally

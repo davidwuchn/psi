@@ -61,19 +61,24 @@
   "Create a child session for agent execution without switching active session.
   Returns the child session-id. The child shares the parent's context but has
   its own journal, telemetry, and session data."
-  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level]}]
+  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source]}]
   {::pco/op-name 'psi.extension/create-child-session
    ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/session-id]}
   (let [child-sid (str (java.util.UUID/randomUUID))]
     (dispatch/dispatch! agent-session-ctx
                         :session/create-child
-                        {:session-id       session-id
-                         :child-session-id child-sid
-                         :session-name     session-name
-                         :system-prompt    system-prompt
-                         :tool-defs        tool-defs
-                         :thinking-level   thinking-level}
+                        (cond-> {:session-id       session-id
+                                 :child-session-id child-sid
+                                 :session-name     session-name
+                                 :system-prompt    system-prompt
+                                 :tool-defs        tool-defs
+                                 :thinking-level   thinking-level}
+                          (some? developer-prompt)
+                          (assoc :developer-prompt developer-prompt)
+
+                          (some? developer-prompt-source)
+                          (assoc :developer-prompt-source developer-prompt-source))
                         {:origin :mutations})
     (let [sd    (ss/get-session-data-in agent-session-ctx child-sid)
           fresh (runtime/create-runtime!

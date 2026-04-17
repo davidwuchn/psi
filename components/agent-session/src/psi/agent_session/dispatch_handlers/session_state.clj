@@ -137,20 +137,22 @@
 (defn initialize-child-session-state
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
-  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level]}]
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source]}]
   (let [tool-defs (or tool-defs (:tool-defs parent-sd))
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
-                        {:session-id         child-session-id
-                         :session-name       session-name
-                         :spawn-mode         :agent
-                         :parent-session-id  (:session-id parent-sd)
-                         :system-prompt      (or system-prompt (:system-prompt parent-sd))
-                         :base-system-prompt (or system-prompt (:base-system-prompt parent-sd))
-                         :thinking-level     (or thinking-level :off)
-                         :tool-defs          tool-defs
-                         :model              (:model parent-sd)
-                         :created-at         (java.time.Instant/now)})]
+                        {:session-id              child-session-id
+                         :session-name            session-name
+                         :spawn-mode              :agent
+                         :parent-session-id       (:session-id parent-sd)
+                         :system-prompt           (or system-prompt (:system-prompt parent-sd))
+                         :base-system-prompt      (or system-prompt (:base-system-prompt parent-sd))
+                         :developer-prompt        (or developer-prompt (:developer-prompt parent-sd))
+                         :developer-prompt-source (or developer-prompt-source (:developer-prompt-source parent-sd))
+                         :thinking-level          (or thinking-level :off)
+                         :tool-defs               tool-defs
+                         :model                   (:model parent-sd)
+                         :created-at              (java.time.Instant/now)})]
     (-> state
         (assoc-in (session-data-path child-session-id) child-sd)
         (assoc-in [:agent-session :sessions child-session-id :persistence]

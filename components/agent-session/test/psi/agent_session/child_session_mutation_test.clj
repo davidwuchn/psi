@@ -34,16 +34,21 @@
       (let [result   (mutate 'psi.extension/create-child-session
                              {:session-name "child"
                               :system-prompt "child prompt"
+                              :developer-prompt "# Agent Profile: helper\n\nKeep it brief."
+                              :developer-prompt-source :explicit
                               :tool-defs []
                               :thinking-level :off})
-            child-id (:psi.agent-session/session-id result)]
+            child-id (:psi.agent-session/session-id result)
+            child-sd (ss/get-session-data-in ctx child-id)]
         (is (string? child-id))
         (is (not= session-id child-id))
         (is (= :idle (ss/sc-phase-in ctx session-id)))
         (is (ss/idle-in? ctx child-id))
         (is (some? (ss/agent-ctx-in ctx child-id)))
         (is (some? (ss/sc-session-id-in ctx child-id)))
-        (is (= :agent (:spawn-mode (ss/get-session-data-in ctx child-id))))))))
+        (is (= :explicit (:developer-prompt-source child-sd)))
+        (is (= "# Agent Profile: helper\n\nKeep it brief." (:developer-prompt child-sd)))
+        (is (= :agent (:spawn-mode child-sd)))))))
 
 (deftest run-agent-loop-in-session-targets-child-session-test
   (testing "run-agent-loop-in-session executes against child session while parent is streaming"
