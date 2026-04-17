@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clj-http.client :as http]
             [cheshire.core :as json]
+            [psi.ai.content :as ai-content]
             [psi.ai.models :as models]
             [psi.ai.providers.anthropic.request-schema :as request-schema]
             [psi.ai.providers.anthropic.request-support :as request-support])
@@ -80,19 +81,12 @@
    (with-cache-control (text-block text)
      cache-control)))
 
-(defn- content-text
-  [content]
-  (if (map? content)
-    (or (:text content) "")
-    (str content)))
-
 (defn- user-text-blocks
   [content]
-  (->> content
-       (keep (fn [block]
-               (when (= :text (:kind block))
-                 (text-block (:text block)
-                             (:cache-control block)))))
+  (->> (ai-content/text-blocks content)
+       (map (fn [block]
+              (text-block (:text block)
+                          (:cache-control block))))
        vec))
 
 (defn- provider-text-blocks
@@ -124,7 +118,7 @@
       :else
       ;; Last-resort coercion: wrap whatever arrived as a plain text block so
       ;; the message list is never empty and the API call can still proceed.
-      [(text-block (content-text content))])))
+      [(text-block (ai-content/content-text content))])))
 
 (defn- assistant-thinking-block
   [block]
@@ -162,15 +156,16 @@
 (defn- assistant-content
   [msg canonical-id]
   (if (= :structured (get-in msg [:content :kind]))
-    (mapv (partial assistant-block canonical-id)
-          (get-in msg [:content :blocks]))
-    [(text-block (get-in msg [:content :text] ""))]))
+    (let [{:keys [blocks]} (ai-content/assistant-content-parts msg)]
+      (mapv (partial assistant-block canonical-id)
+            blocks))
+    [(text-block (or (ai-content/content-text msg) ""))]))
 
 (defn- tool-result-block
   [msg canonical-id]
   (cond-> {:type        "tool_result"
            :tool_use_id (canonical-id (:tool-call-id msg))
-           :content     (content-text (:content msg))}
+           :content     (or (ai-content/content-text (:content msg)) "")}
     (:is-error msg) (assoc :is_error true)))
 
 (defn- append-tool-result
@@ -343,17 +338,17 @@
                           (not thinking)      (assoc :temperature (or (:temperature options) 0.7))
                           thinking            (assoc :thinking thinking)
                           (seq tool-defs)     (assoc :tools tool-defs))
-        body*           (request-schema/validate-request-body! body)]
-    (let [base-hdrs (if (:no-auth-header options)
-                     ;; Strip auth headers when explicitly disabled
-                     (dissoc (request-headers api-key thinking prompt-caching?)
-                             "Authorization" "x-api-key")
-                     (request-headers api-key thinking prompt-caching?))
-          headers   (if-let [custom (:headers options)]
-                      (merge base-hdrs custom)
-                      base-hdrs)]
-      {:headers headers
-       :body    (json/generate-string body*)})))
+        body*           (request-schema/validate-request-body! body)
+        base-hdrs       (if (:no-auth-header options)
+                          ;; Strip auth headers when explicitly disabled
+                          (dissoc (request-headers api-key thinking prompt-caching?)
+                                  "Authorization" "x-api-key")
+                          (request-headers api-key thinking prompt-caching?))
+        headers         (if-let [custom (:headers options)]
+                          (merge base-hdrs custom)
+                          base-hdrs)]
+    {:headers headers
+     :body    (json/generate-string body*)}))
 
 (defn- safe-call!
   [f payload]

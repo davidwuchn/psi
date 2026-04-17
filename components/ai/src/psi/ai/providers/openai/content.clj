@@ -1,6 +1,7 @@
 (ns psi.ai.providers.openai.content
   (:require [clojure.string :as str]
-            [cheshire.core :as json])
+            [cheshire.core :as json]
+            [psi.ai.content :as ai-content])
   (:import [java.util UUID Base64]))
 
 (defn normalize-part-type
@@ -68,41 +69,33 @@
 
 (defn content-text
   [content]
-  (if (map? content)
-    (or (:text content) (get content "text") "")
-    (str content)))
+  (or (ai-content/content-text content) ""))
 
 (defn structured-blocks
   [msg]
-  (get-in msg [:content :blocks]))
+  (ai-content/structured-blocks msg))
 
 (defn text-blocks
   [blocks]
-  (filter #(= :text (:kind %)) blocks))
+  (ai-content/text-blocks blocks))
 
 (defn tool-call-blocks
   [blocks]
-  (filter #(= :tool-call (:kind %)) blocks))
-
-(defn block-text
-  [block]
-  (:text block))
+  (ai-content/tool-call-blocks blocks))
 
 (defn join-block-text
   [blocks]
-  (->> blocks
-       (keep block-text)
-       (str/join "\n")))
+  (ai-content/join-text-blocks blocks))
 
 (defn structured-text
   [msg]
-  (join-block-text (text-blocks (structured-blocks msg))))
+  (ai-content/content-text msg))
 
 (defn assistant-structured-content
   [msg]
-  (let [blocks (structured-blocks msg)]
-    {:text (join-block-text (text-blocks blocks))
-     :tool-calls (vec (tool-call-blocks blocks))}))
+  (let [{:keys [text-blocks tool-call-blocks]} (ai-content/assistant-content-parts msg)]
+    {:text (ai-content/join-text-blocks text-blocks)
+     :tool-calls tool-call-blocks}))
 
 (defn user-message-text
   [msg]

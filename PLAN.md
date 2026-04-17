@@ -29,6 +29,139 @@ Completed follow-on slices:
 - OpenAI migration completed; `psi.ai.providers.openai.common` has been deleted
 - background-job façade retirement completed; `psi.app-runtime.background-jobs` has been deleted
 
+Deeper investigation queue from latest Gordian namespace analysis:
+
+Suggested execution order:
+1. `psi.ai.conversation` ↔ `psi.ai.providers.anthropic` — highest current signal because Gordian found hidden coupling in 2 lenses and recommended extraction
+2. background-job family seams — medium/high leverage because the same concepts span runtime, telemetry, projection, and UI layers
+3. `psi.agent-session` family internal structure — broad architectural check with potential to guide several later thinning decisions
+4. adapter-edge family coherence across `psi.rpc`, `psi.app-runtime`, and `psi.tui` — validates that the recent projection convergence work is holding
+5. graph/introspection ownership — important but narrower; likely a clarification/refinement slice unless deeper overlap appears
+
+- [x] investigate `psi.ai.conversation` ↔ `psi.ai.providers.anthropic`
+  - priority: highest
+  - why now: strongest actionable Gordian finding; hidden coupling appears in both conceptual and change lenses
+  - question: what provider-neutral conversation/content abstraction is currently implicit between general conversation modeling and Anthropic-specific shaping?
+  - commands:
+    - `bb gordian explain-pair psi.ai.conversation psi.ai.providers.anthropic`
+    - `bb gordian explain psi.ai.conversation`
+    - `bb gordian explain psi.ai.providers.anthropic`
+  - current findings:
+    - Gordian verdict: likely missing abstraction (`conceptual=0.24`, `change=0.33`, `co-changes=6`)
+    - `psi.ai.conversation` currently owns canonical conversation/message/content structure and only depends on `psi.ai.schemas`
+    - `psi.ai.providers.anthropic` does not depend structurally on `psi.ai.conversation` but reinterprets the same concepts (`message`, `text`, `block`, tool-call/thinking content, system prompt blocks) into Anthropic wire format
+    - the overlap is not primarily about transport mechanics; it is about provider-neutral content semantics being encoded ad hoc in provider transformation functions
+    - the strongest candidate abstraction is a provider-neutral conversation/content projection layer from canonical conversation data to provider-ready intermediate content/message forms
+  - provisional verdict:
+    - yes, a shared abstraction is likely warranted
+    - likely owner family: `psi.ai`
+    - likely shape: extract a small provider-neutral projection/normalization namespace rather than moving Anthropic-specific wire details into `psi.ai.conversation`
+    - avoid making `psi.ai.conversation` provider-aware; keep it as the canonical data model + lifecycle surface
+  - completed slice:
+    - extracted provider-neutral canonical content projection helpers to `components/ai/src/psi/ai/content.clj`
+    - migrated shared text/block reading helpers out of `psi.ai.providers.openai.content`
+    - migrated Anthropic to use shared canonical content readers for user content, assistant block traversal, and tool-result text extraction
+    - added focused tests in `components/ai/test/psi/ai/content_test.clj`
+  - namespace fit check:
+    - `psi.ai.conversation` is not the right home; it currently owns canonical conversation lifecycle/state mutation and should stay provider-agnostic rather than accumulating projection helpers
+    - `psi.ai.schemas` is not the right home; it owns schemas/validation, not operational normalization/projection code
+    - `psi.ai.providers.openai.content` is too provider-specific; moving shared canonical helpers there would invert dependency direction and make Anthropic conceptually depend on an OpenAI family
+    - `psi.agent-session.message-text` has adjacent text-extraction behavior but lives in a higher-level component and is display-oriented; `psi.ai` should not depend upward on `agent-session`
+    - provisional conclusion: no existing namespace is a clean fit for the shared provider-neutral projection helpers
+  - concrete namespace proposal:
+    - candidate namespace: `psi.ai.content`
+    - responsibility: provider-neutral helpers for reading/projecting canonical conversation content and blocks into reusable intermediate forms
+    - should own:
+      - canonical text extraction from `:kind`-based content maps / structured blocks
+      - assistant structured content splitting into text blocks, thinking blocks, and tool-call blocks
+      - shared normalization of tool-result text / content-to-text coercion where provider-neutral
+    - should not own:
+      - conversation lifecycle/state mutation (`psi.ai.conversation`)
+      - wire-format serialization for Anthropic/OpenAI payloads
+      - provider streaming/parsing logic
+  - recommended first extraction slice:
+    - target only provider-neutral canonical content projection helpers first
+    - specifically start with text/block extraction and assistant structured block partitioning now duplicated conceptually between `psi.ai.providers.anthropic` and `psi.ai.providers.openai.content`
+    - leave provider-specific wire shaping of thinking/tool-call/system blocks in provider namespaces for the first slice
+  - acceptance outcome:
+    - `psi.ai.content` was confirmed as the clean namespace for provider-neutral canonical content projection helpers
+    - slice 1 API now covers structured block access, block partitioning, text joining, canonical content text extraction, and assistant content partitioning
+    - first migrated callers are `psi.ai.providers.openai.content` and `psi.ai.providers.anthropic`
+    - follow-on question remains whether any overlap with higher-level display text helpers should be converged later without inverting component dependencies
+
+- [ ] investigate background-job family seams
+  - priority: high
+  - why now: repeated background-job concepts span runtime state, resolver/telemetry reads, shared projections, and UI rendering
+  - scope:
+    - `psi.agent-session.background-job-runtime`
+    - `psi.agent-session.background-jobs`
+    - `psi.agent-session.resolvers.telemetry-basics`
+    - `psi.app-runtime.background-job-ui`
+    - `psi.app-runtime.background-job-view`
+    - `psi.app-runtime.background-job-widgets`
+  - question: do repeated background-job concepts indicate a missing canonical public model/boundary, or are they the expected result of a clean runtime → projection → rendering split?
+  - commands:
+    - `bb gordian explain-pair psi.agent-session.background-job-runtime psi.app-runtime.background-job-widgets`
+    - `bb gordian explain-pair psi.agent-session.resolvers.telemetry-basics psi.app-runtime.background-job-ui`
+    - `bb gordian explain psi.agent-session.background-jobs`
+    - `bb gordian explain psi.app-runtime.background-job-ui`
+  - acceptance criteria:
+    - explicit ownership map for runtime state, public summary/projection, and adapter rendering concerns
+    - decision on whether to extract or rename a canonical shared background-job model namespace
+    - identify any duplicated concepts/fields that should be consolidated
+    - identify at least one minimal next slice, if any
+
+- [ ] investigate `psi.agent-session` family internal structure
+  - priority: medium/high
+  - why now: this is the codebase's dominant family and the likeliest place for gradual mesh growth
+  - question: do prompt, extensions, mutations, resolvers, runtime, and session slices still form crisp strata, or is the family flattening into one broad mesh?
+  - commands:
+    - `bb gordian subgraph psi.agent-session`
+    - `bb gordian explain psi.agent-session.core`
+    - `bb gordian explain psi.agent-session.context`
+    - `bb gordian explain psi.agent-session.resolvers`
+  - acceptance criteria:
+    - explicit family map naming the intended strata inside `psi.agent-session`
+    - identify any namespaces that look overloaded, misplaced, or façade-like
+    - identify one highest-leverage thinning/splitting candidate, if any
+    - confirm whether current dependency direction still matches the intended architecture
+
+- [ ] investigate adapter-edge family coherence across `psi.rpc`, `psi.app-runtime`, and `psi.tui`
+  - priority: medium
+  - why now: recent convergence work moved ownership into app-runtime; this check verifies the adapters remain thin
+  - question: do backend-owned projections and edge rendering responsibilities remain thin, or are selector/tree/session-summary concepts drifting into parallel abstractions across adapter families?
+  - commands:
+    - `bb gordian subgraph psi.rpc`
+    - `bb gordian subgraph psi.app-runtime`
+    - `bb gordian subgraph psi.tui`
+    - `bb gordian explain-pair psi.app-runtime.selectors psi.tui.session-selector`
+    - `bb gordian explain-pair psi.app-runtime.context-summary psi.rpc.session.command-tree`
+  - acceptance criteria:
+    - explicit responsibility map for `rpc` transport/emission, `app-runtime` shared projection semantics, and `tui` rendering
+    - identify any duplicated selector/tree/session-summary concepts that should be unified or renamed
+    - decision on whether current adapter-edge layering is stable enough to leave alone
+    - identify at least one minimal next slice, if any
+
+- [ ] investigate graph/introspection ownership
+  - priority: medium/low
+  - why now: strong conceptual overlap exists, but current evidence suggests a clarification slice before a structural move
+  - scope:
+    - `psi.graph.analysis`
+    - `psi.graph.core`
+    - `psi.introspection.graph`
+    - `psi.introspection.resolvers`
+  - question: should graph analysis and introspection share an extracted concept namespace, add a more explicit dependency edge, or remain separate with clarified ownership?
+  - commands:
+    - `bb gordian explain-pair psi.graph.analysis psi.introspection.graph`
+    - `bb gordian explain-pair psi.graph.core psi.introspection.graph`
+    - `bb gordian explain psi.graph.analysis`
+    - `bb gordian explain psi.introspection.graph`
+  - acceptance criteria:
+    - explicit ownership decision for graph derivation vs introspection projection responsibilities
+    - decision on whether an extracted shared namespace is justified
+    - if separation remains, record the conceptual boundary in one sentence suitable for docs/comments
+    - identify at least one minimal next slice, if any
+
 Guardrails for follow-on commits:
 - keep behavior stable
 - keep tests green
