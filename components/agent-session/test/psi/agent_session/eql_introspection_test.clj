@@ -118,6 +118,7 @@
                                                                   :message-count 2
                                                                   :tool-count 1
                                                                   :system-prompt-chars 42
+                                                                  :input-expansion {:kind :skill :name "demo"}
                                                                   :prepared-at prepared-at}
                                   :last-execution-result-summary {:turn-id "t-1"
                                                                   :turn-outcome :turn.outcome/stop
@@ -129,6 +130,7 @@
                                           :psi.agent-session/last-prepared-message-count
                                           :psi.agent-session/last-prepared-tool-count
                                           :psi.agent-session/last-prepared-system-prompt-chars
+                                          :psi.agent-session/last-prepared-input-expansion
                                           :psi.agent-session/last-prepared-at
                                           :psi.agent-session/last-execution-result-summary
                                           :psi.agent-session/last-execution-turn-id
@@ -140,12 +142,15 @@
                 :message-count 2
                 :tool-count 1
                 :system-prompt-chars 42
+                :input-expansion {:kind :skill :name "demo"}
                 :prepared-at prepared-at}
                (:psi.agent-session/last-prepared-request-summary result)))
         (is (= "t-1" (:psi.agent-session/last-prepared-turn-id result)))
         (is (= 2 (:psi.agent-session/last-prepared-message-count result)))
         (is (= 1 (:psi.agent-session/last-prepared-tool-count result)))
         (is (= 42 (:psi.agent-session/last-prepared-system-prompt-chars result)))
+        (is (= {:kind :skill :name "demo"}
+               (:psi.agent-session/last-prepared-input-expansion result)))
         (is (= prepared-at (:psi.agent-session/last-prepared-at result)))
         (is (= {:turn-id "t-1"
                 :turn-outcome :turn.outcome/stop

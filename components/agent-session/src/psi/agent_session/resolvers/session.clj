@@ -107,6 +107,7 @@
      :psi.agent-session/last-prepared-message-count   (:message-count prepared)
      :psi.agent-session/last-prepared-tool-count      (:tool-count prepared)
      :psi.agent-session/last-prepared-system-prompt-chars (:system-prompt-chars prepared)
+     :psi.agent-session/last-prepared-input-expansion (:input-expansion prepared)
      :psi.agent-session/last-prepared-at              (:prepared-at prepared)
      :psi.agent-session/last-execution-result-summary executed
      :psi.agent-session/last-execution-turn-id        (:turn-id executed)
@@ -134,6 +135,7 @@
                  :psi.agent-session/last-prepared-message-count
                  :psi.agent-session/last-prepared-tool-count
                  :psi.agent-session/last-prepared-system-prompt-chars
+                 :psi.agent-session/last-prepared-input-expansion
                  :psi.agent-session/last-prepared-at
                  :psi.agent-session/last-execution-result-summary
                  :psi.agent-session/last-execution-turn-id

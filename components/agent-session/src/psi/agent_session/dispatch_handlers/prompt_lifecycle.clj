@@ -85,6 +85,7 @@
                           :message-count       (count (:prepared-request/messages prepared-request))
                           :tool-count          (count (:prepared-request/tools prepared-request))
                           :cache-breakpoints   (get-in prepared-request [:prepared-request/session-snapshot :cache-breakpoints])
+                          :input-expansion     (:prepared-request/input-expansion prepared-request)
                           :prepared-at         (now-inst)})
             api-key            (assoc :runtime-api-key api-key)
             steering-consumed? (assoc :steering-messages [])))
