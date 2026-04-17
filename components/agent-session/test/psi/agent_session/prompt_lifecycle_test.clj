@@ -198,7 +198,7 @@
       (is (= "dev" (get-in prepared [:prepared-request/prompt-layers 1 :content])))
       (is (= :explicit (get-in prepared [:prepared-request/prompt-layers 1 :source])))
       (is (= "Hint A" (get-in prepared [:prepared-request/prompt-layers 2 :content])))
-      (is (= "sys\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
+      (is (= "sys\n\ndev\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
              (:prepared-request/system-prompt prepared)))
       (is (= "dev" (get-in prepared [:prepared-request/session-snapshot :developer-prompt])))
       (is (= :explicit (get-in prepared [:prepared-request/session-snapshot :developer-prompt-source]))))))

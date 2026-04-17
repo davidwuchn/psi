@@ -108,6 +108,8 @@
         _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
                                                assoc
                                                :base-system-prompt "base"
+                                               :developer-prompt "# Agent Profile: builder\n\nFollow the build plan carefully."
+                                               :developer-prompt-source :explicit
                                                :system-prompt "stale"
                                                :prompt-contributions [{:id "c1"
                                                                        :ext-path "/ext/a"
@@ -125,7 +127,7 @@
     (with-redefs [psi.agent-session.prompt-runtime/do-stream! stream-fn]
       (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
       (prompt-loop/run-agent-loop! nil session-ctx session-ctx-id stub-model)
-      (is (= "base\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
+      (is (= "base\n\n# Agent Profile: builder\n\nFollow the build plan carefully.\n\n# Extension Prompt Contributions\n\n<prompt_contribution id=\"c1\" ext_path=\"/ext/a\">\nHint A\n</prompt_contribution>"
              (:system-prompt @seen-conv)))
       (is (not= "stale" (:system-prompt @seen-conv))))))
 

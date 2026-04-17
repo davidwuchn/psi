@@ -99,16 +99,25 @@
   [session-data]
   (ss/sorted-prompt-contributions (:prompt-contributions session-data)))
 
+(defn- developer-prompt-section
+  [session-data]
+  (let [dev (:developer-prompt session-data)]
+    (when-not (str/blank? dev)
+      dev)))
+
 (defn effective-system-prompt
   "Assemble the effective provider-visible system prompt from canonical
    request-preparation inputs.
 
    This makes request preparation the explicit home for the final
-   base-plus-contributions projection used for provider execution."
+   base-plus-developer-plus-contributions projection used for provider execution."
   [session-data]
-  (let [base (:base-system-prompt session-data)]
+  (let [base     (:base-system-prompt session-data)
+        dev      (developer-prompt-section session-data)
+        base+dev (cond-> (or base "")
+                   dev (str "\n\n" dev))]
     (system-prompt/apply-prompt-contributions
-     base
+     base+dev
      (sorted-contributions session-data))))
 
 (defn build-provider-conversation
