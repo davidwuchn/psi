@@ -244,7 +244,7 @@ Suggested execution order:
   - minimal next slice:
     - investigate and possibly extract the shared action/result handling seam between `psi.rpc.session.commands` and `psi.rpc.session.frontend-actions`
 
-- [ ] investigate graph/introspection ownership
+- [x] investigate graph/introspection ownership
   - priority: medium/low
   - why now: strong conceptual overlap exists, but current evidence suggests a clarification slice before a structural move
   - scope:
@@ -258,11 +258,27 @@ Suggested execution order:
     - `bb gordian explain-pair psi.graph.core psi.introspection.graph`
     - `bb gordian explain psi.graph.analysis`
     - `bb gordian explain psi.introspection.graph`
-  - acceptance criteria:
-    - explicit ownership decision for graph derivation vs introspection projection responsibilities
-    - decision on whether an extracted shared namespace is justified
-    - if separation remains, record the conceptual boundary in one sentence suitable for docs/comments
-    - identify at least one minimal next slice, if any
+  - current findings:
+    - there is very strong conceptual overlap between `psi.graph.analysis` and `psi.introspection.graph`, and moderate overlap between `psi.graph.core` and `psi.introspection.graph`
+    - inspection shows `psi.graph.analysis` and `psi.introspection.graph` now duplicate the same capability-graph derivation logic almost verbatim
+    - current call sites are split:
+      - `psi.introspection.resolvers`, `psi.memory.runtime`, and `psi.agent-session.resolvers` use `psi.introspection.graph`
+      - `psi.introspection.core` also uses `psi.introspection.graph`
+      - `psi.graph.core` remains a stale simplified compatibility namespace that is not the active owner of current capability-graph derivation semantics
+    - this is no longer just a conceptual boundary question; it is concrete duplicate implementation
+  - ownership decision:
+    - graph derivation should live in `psi.graph.analysis`
+    - introspection should consume graph derivation, not duplicate it
+    - `psi.introspection.graph` should not remain a second implementation of the same capability-graph logic
+  - extracted/shared namespace decision:
+    - yes, the shared namespace already effectively exists: `psi.graph.analysis`
+    - no new namespace is needed
+    - the right move is convergence onto `psi.graph.analysis`, followed by retirement or redirection of duplicated `psi.introspection.graph` logic
+  - conceptual boundary sentence:
+    - `psi.graph.analysis` owns provider-neutral/query-neutral capability-graph derivation; `psi.introspection` owns exposing that derived graph through introspection surfaces.
+  - minimal next slice:
+    - migrate active consumers from `psi.introspection.graph` to `psi.graph.analysis`
+    - then retire the duplicated implementation in `psi.introspection.graph` or reduce it to a compatibility wrapper if needed
 
 Guardrails for follow-on commits:
 - keep behavior stable
