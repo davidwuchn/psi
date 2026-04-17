@@ -133,22 +133,15 @@
           nil)))))
 
 (defn await-assistant-message!
-  "Wait for a live turn to finish and return the final assistant message.
-
-   Supports both canonical prompt-stream timeout/aborted sentinels and the
-   targeted-test compatibility sentinels used in focused prompt tests."
+  "Wait for a live turn to finish and return the final assistant message."
   [turn-ctx done-p last-progress-ms timed-out? {:keys [idle-timeout-ms wait-poll-ms abort-pred wait-fn]}]
   (let [wait!    (or wait-fn wait-for-turn-result)
         result   (wait! done-p last-progress-ms
                         (cond-> {:idle-timeout-ms idle-timeout-ms
                                  :wait-poll-ms    wait-poll-ms}
-                          abort-pred (assoc :abort-pred abort-pred)))
-        timeout? (or (contains? #{::prompt-stream/timeout ::timeout} result)
-                     (and (keyword? result) (= "timeout" (name result))))
-        aborted? (or (contains? #{::prompt-stream/aborted ::aborted} result)
-                     (and (keyword? result) (= "aborted" (name result))))]
+                          abort-pred (assoc :abort-pred abort-pred)))]
     (cond
-      timeout?
+      (= ::timeout result)
       (do (reset! timed-out? true)
           (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
           {:role          "assistant"
@@ -157,7 +150,7 @@
            :error-message "Timeout waiting for LLM response"
            :timestamp     (java.time.Instant/now)})
 
-      aborted?
+      (= ::aborted result)
       (do
         (prompt-stream/abort-turn! turn-ctx)
         (:final-message @(:turn-data turn-ctx)))
