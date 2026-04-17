@@ -3,8 +3,7 @@
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session :as session]
-   [psi.agent-session.session-state :as ss]
-   [psi.memory.core :as memory]))
+   [psi.agent-session.session-state :as ss]))
 
 (defn set-model-in!
   "Set the session model for `session-id`."
@@ -64,13 +63,14 @@
   [ctx session-id]
   (let [worktree-path (ss/session-worktree-path-in ctx session-id)
         git-branch    (try
-                     (:psi.agent-session/git-branch
-                      ((requiring-resolve 'psi.agent-session.core/query-in)
-                       ctx session-id [:psi.agent-session/git-branch]))
-                     (catch Exception _
-                       nil))]
+                        (:psi.agent-session/git-branch
+                         ((requiring-resolve 'psi.agent-session.core/query-in)
+                          ctx session-id [:psi.agent-session/git-branch]))
+                        (catch Exception _
+                          nil))]
     {:source       :remember
      :sessionId    session-id
+     :cwd          worktree-path
      :worktreePath worktree-path
      :gitBranch    git-branch}))
 

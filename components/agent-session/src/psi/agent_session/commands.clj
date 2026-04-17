@@ -212,12 +212,12 @@
         count*    (or (:git.worktree/count d) (count worktrees))]
     (if-not inside?
       (str "── Git worktrees ─────────────────────\n"
-           "  worktree : " worktree-path "\n"
+           "  cwd      : " worktree-path "\n"
            "  inside   : false\n"
            "  worktrees: 0\n"
            "───────────────────────────────────────")
       (str "── Git worktrees ─────────────────────\n"
-           "  worktree : " worktree-path "\n"
+           "  cwd      : " worktree-path "\n"
            "  branch   : " (or branch "(none)") "\n"
            "  current  : " (or (:git.worktree/path current) "(unknown)") "\n"
            "  worktrees: " count* "\n"
