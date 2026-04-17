@@ -636,7 +636,6 @@
             (psi-emacs--handle-rpc-event
              `((:event . "ui/frontend-action-requested")
                (:data . ((:request-id . "req-1")
-                         (:action-name . "select-resume-session")
                          (:prompt . "Select a session to resume")
                          (:ui/action . ,ui-action))))))
           (setq rpc-calls (nreverse rpc-calls))
@@ -675,7 +674,6 @@
             (psi-emacs--handle-rpc-event
              `((:event . "ui/frontend-action-requested")
                (:data . ((:request-id . "req-2")
-                         (:action-name . "select-resume-session")
                          (:prompt . "Select a session to resume")
                          (:ui/action . ,ui-action))))))
           (setq rpc-calls (nreverse rpc-calls))
@@ -730,7 +728,6 @@
                                                               (:action/entry-id . "e1"))))])))
                (frame `((:event . "ui/frontend-action-requested")
                         (:data . ((:request-id . "req-3")
-                                  (:action-name . "select-session")
                                   (:prompt . "Select a live session")
                                   (:ui/action . ,ui-action))))))
           (cl-letf (((symbol-function 'completing-read)
@@ -771,7 +768,6 @@ synchronously from the RPC event callback can make Emacs appear to do nothing."
            (handled nil)
            (frame '((:event . "ui/frontend-action-requested")
                     (:data . ((:request-id . "req-tree")
-                              (:action-name . "select-session")
                               (:ui/action . ((:ui/action-name . :select-session)
                                              (:ui/prompt . "Select a live session")
                                              (:ui/items . []))))))))

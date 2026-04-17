@@ -109,6 +109,5 @@
   [emit! request-id action]
   (emit! "ui/frontend-action-requested"
          {:request-id request-id
-          :action-name (some-> (:ui/action-name action) name)
           :prompt (:ui/prompt action)
           :ui/action action}))

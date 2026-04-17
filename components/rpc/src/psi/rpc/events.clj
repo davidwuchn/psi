@@ -63,7 +63,7 @@
    "tool/update" #{:tool-id :tool-name :content :result-text :is-error}
    "tool/result" #{:tool-id :tool-name :content :result-text :is-error}
    "ui/dialog-requested" #{:dialog-id :kind :title}
-   "ui/frontend-action-requested" #{:request-id :action-name}
+   "ui/frontend-action-requested" #{:request-id :ui/action}
    "ui/widgets-updated" #{:widgets}
    "ui/widget-specs-updated" #{}
    "ui/status-updated" #{:statuses}
