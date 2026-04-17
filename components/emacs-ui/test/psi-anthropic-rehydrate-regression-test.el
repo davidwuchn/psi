@@ -27,7 +27,8 @@ shape with role/text display rows."
                  (:message-count . 2)))))
     (psi-emacs--handle-rpc-event
      '((:event . "session/rehydrated")
-       (:data . ((:messages . [((:role . "assistant")
+       (:data . ((:session-id . "s-new")
+                 (:messages . [((:role . "assistant")
                                 (:content . [((:type . "text") (:text . "[New session started]"))]))
                                ((:role . "user")
                                 (:content . [((:type . "text") (:text . "who are you?"))]))])

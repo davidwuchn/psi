@@ -42,15 +42,14 @@ DATA is expected to be an alist map."
 (defun psi-emacs--event-session-matches-current-p (data)
   "Return non-nil when event DATA targets the current frontend session.
 
-If DATA has no session id, return non-nil for backward compatibility.
-If frontend state has no known session id yet, also allow the event."
+If frontend state has no known session id yet, allow the event so bootstrap
+payloads can seed state before the first canonical session-targeted update."
   (let ((event-session-id (psi-emacs--session-normalize-text
                            (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
         (current-session-id (and psi-emacs--state
                                  (psi-emacs--session-normalize-text
                                   (psi-emacs-state-session-id psi-emacs--state)))))
-    (or (null event-session-id)
-        (null current-session-id)
+    (or (null current-session-id)
         (equal event-session-id current-session-id))))
 
 (defun psi-emacs--handle-session-updated-event (data)

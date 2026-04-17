@@ -49,7 +49,8 @@ frontend-derived state or confuse the user-facing transcript."
                  (:message-count . 1)))))
     (psi-emacs--handle-rpc-event
      '((:event . "session/rehydrated")
-       (:data . ((:messages . [((:role . "assistant")
+       (:data . ((:session-id . "s-new")
+                 (:messages . [((:role . "assistant")
                                 (:content . [((:type . "text") (:text . "[New session started]"))]))])
                  (:tool-calls . ())
                  (:tool-order . ())))))
