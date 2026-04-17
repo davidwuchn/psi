@@ -12,14 +12,16 @@
 
 (def ^:private default-turn-interval 2)
 (def ^:private default-delay-ms 250)
+(def ^:private max-title-chars 60)
 (def ^:private checkpoint-event "auto_session_name/rename_checkpoint")
 
 (defonce ^:private state
-  (atom {:turn-counts   {}
-         :turn-interval default-turn-interval
-         :delay-ms      default-delay-ms
-         :log-fn        nil
-         :ui            nil}))
+  (atom {:turn-counts        {}
+         :helper-session-ids #{}
+         :turn-interval      default-turn-interval
+         :delay-ms           default-delay-ms
+         :log-fn             nil
+         :ui                 nil}))
 
 (defn- normalize-session-id [payload]
   (some-> (:session-id payload) str not-empty))
@@ -39,6 +41,64 @@
 
 (defn- squish [s]
   (some-> s str (str/replace #"\s+" " ") str/trim not-empty))
+
+(defn- slash-command-text?
+  [text]
+  (let [trimmed (some-> text str/trim)]
+    (and (seq trimmed)
+         (str/starts-with? trimmed "/"))))
+
+(defn- message-text-fragments
+  [msg]
+  (->> (:content msg)
+       (keep (fn [part]
+               (when (= :text (:type part))
+                 (squish (:text part)))))))
+
+(defn- visible-message-line
+  [msg]
+  (when-not (:custom-type msg)
+    (case (:role msg)
+      "user"
+      (let [text (some->> (message-text-fragments msg)
+                          (str/join " ")
+                          squish)]
+        (when (and text (not (slash-command-text? text)))
+          (str "User: " text)))
+
+      "assistant"
+      (let [text (some->> (message-text-fragments msg)
+                          (str/join " ")
+                          squish)]
+        (when text
+          (str "Assistant: " text)))
+
+      nil)))
+
+(defn- sanitize-message-history
+  [messages]
+  (->> (or messages [])
+       (keep visible-message-line)
+       vec))
+
+(defn- build-rename-prompt
+  [lines]
+  (when (seq lines)
+    (str "Based on this conversation, what is the current purpose of the session?\n"
+         "Reply with only a terse phrase of 2–8 words.\n"
+         "No quotes. No explanation.\n\n"
+         (str/join "\n" lines))))
+
+(defn- normalize-title
+  [text]
+  (some-> text squish (str/replace #"^[\"'`]+|[\"'`]+$" "") squish))
+
+(defn- valid-title?
+  [title]
+  (boolean
+   (and (seq title)
+        (<= (count title) max-title-chars)
+        (not (re-find #"\n" title)))))
 
 (defn- checkpoint-text [{:keys [session-id turn-count]}]
   (str "auto-session-name: rename checkpoint for session " session-id
