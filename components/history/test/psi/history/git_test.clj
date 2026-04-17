@@ -752,10 +752,14 @@
   ;; Tests default-branch terminal fallback when no higher-priority source resolves.
   (testing "default-branch"
     (testing "falls back to main when no symbolic ref or config is available"
-      (let [ctx    @shared-ro-ctx
-            result (git/default-branch ctx)]
-        (is (= "main" (:branch result)))
-        (is (= :fallback (:source result)))))))
+      (let [ctx @shared-ro-ctx]
+        (with-redefs [psi.history.git/run-git* (fn [_ args]
+                                                 (case args
+                                                   ["symbolic-ref" "--short" "refs/remotes/origin/HEAD"] {:out "" :err "missing" :exit 1}
+                                                   ["config" "--get" "init.defaultBranch"] {:out "" :err "missing" :exit 1}))]
+          (let [result (git/default-branch ctx)]
+            (is (= "main" (:branch result)))
+            (is (= :fallback (:source result)))))))))
 
 ;;; context isolation
 

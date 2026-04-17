@@ -568,7 +568,11 @@
                                                                    :psi.service/command
                                                                    :psi.service/cwd
                                                                    :psi.service/transport
-                                                                   :psi.service/ext-path]}]
+                                                                   :psi.service/ext-path
+                                                                   :psi.service/notification-count
+                                                                   {:psi.service/published-diagnostics
+                                                                    [:psi.service.diagnostic/uri
+                                                                     :psi.service.diagnostic/diagnostics]}]}]
                                           q))
                                    {:psi.service/services services})}
           api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
@@ -655,7 +659,7 @@
                     :query [:psi.agent-session/message-history]}}
              ((:query-session api) "s2" [:psi.agent-session/message-history])))
       (is (= {:op 'psi.extension/set-session-name
-              :params {:session-id "s2" :name "New name" :ext-path "/ext/test"}}
+              :params {:session-id "s2" :name "New name"}}
              ((:mutate-session api) "s2" 'psi.extension/set-session-name {:name "New name"})))))
 
   (testing "API prompt contribution helpers delegate to runtime"
