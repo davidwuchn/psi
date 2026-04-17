@@ -89,7 +89,7 @@ Suggested execution order:
     - first migrated callers are `psi.ai.providers.openai.content` and `psi.ai.providers.anthropic`
     - follow-on question remains whether any overlap with higher-level display text helpers should be converged later without inverting component dependencies
 
-- [~] investigate background-job family seams
+- [x] investigate background-job family seams
   - priority: high
   - why now: repeated background-job concepts span runtime state, resolver/telemetry reads, shared projections, and UI rendering
   - scope:
@@ -120,10 +120,23 @@ Suggested execution order:
     - updated telemetry resolvers and command-layer runtime conversion to use the shared projection helpers
   - next minimal slice:
     - continue consolidating repeated public-shape conversion at the RPC boundary if it still duplicates summary/public field selection after the EQL projection centralization
-  - remaining acceptance criteria:
-    - explicit ownership map for runtime state, public summary/projection, and adapter rendering concerns
-    - decide whether RPC transport shaping should also be centralized or remain local transport formatting
-    - identify any remaining duplicated concepts/fields after the current projection centralization
+  - ownership map:
+    - runtime state owner: `psi.agent-session.background-jobs`
+      - owns canonical job state, status semantics, terminal/non-terminal classification, retention, and canonical public/EQL projection helpers
+    - runtime orchestration owner: `psi.agent-session.background-job-runtime`
+      - owns workflow-backed reconciliation, terminal-message emission, cancellation orchestration, and runtime-triggered UI refresh hooks
+    - public summary/projection owner: `psi.app-runtime.background-job-view`
+      - owns adapter-neutral rendered summaries (`job-summary`, `jobs-summary`, `job-detail`, `cancel-job-summary`) over runtime job maps
+    - adapter widget/status projection owner: `psi.app-runtime.background-job-widgets`
+      - owns widget/status payload projection from background-job view summaries
+    - runtime UI installer owner: `psi.app-runtime.background-job-ui`
+      - owns writing projected background-job widget/status data into shared extension UI state
+    - transport formatting owner: `psi.rpc.session`
+      - owns RPC response envelope shaping for list/inspect/cancel ops
+  - final verdict:
+    - keep RPC transport shaping local; it is transport-envelope work rather than a missing domain/public-model namespace
+    - after projection centralization, the remaining duplication is acceptable layering rather than a new extraction target
+    - no further namespace extraction is warranted for background jobs right now
 
 - [ ] investigate `psi.agent-session` family internal structure
   - priority: medium/high
