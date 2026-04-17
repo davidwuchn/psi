@@ -122,11 +122,20 @@
           (psi-emacs--set-run-state psi-emacs--state 'error))))
     (message "psi rpc error [%s]: %s" code message-text)))
 
-(defun psi-emacs--defer-rpc-event (buffer frame)
+(defun psi-emacs--rpc-client-active-for-buffer-p (client)
+  "Return non-nil when CLIENT is the current active rpc client for this buffer."
+  (let ((active-client (and psi-emacs--state
+                            (psi-emacs-state-rpc-client psi-emacs--state))))
+    (or (null client)
+        (null active-client)
+        (eq active-client client))))
+
+(defun psi-emacs--defer-rpc-event (buffer frame &optional client)
   "Handle prompt-opening rpc FRAME on the next idle turn for BUFFER.
 
-This keeps minibuffer/UI prompting out of the process filter path and anchors
-prompting to the psi window/frame when one is visible." 
+CLIENT, when non-nil, must still be the active rpc client for BUFFER when the
+idle callback runs. This keeps minibuffer/UI prompting out of the process
+filter path and anchors prompting to the psi window/frame when one is visible."
   (let ((state psi-emacs--state))
     (run-with-idle-timer
      0 nil
@@ -135,7 +144,8 @@ prompting to the psi window/frame when one is visible."
          (let* ((window (get-buffer-window buffer t))
                 (frame* (and (window-live-p window) (window-frame window))))
            (with-current-buffer buffer
-             (when (eq state psi-emacs--state)
+             (when (and (eq state psi-emacs--state)
+                        (psi-emacs--rpc-client-active-for-buffer-p client))
                (condition-case err
                    (cond
                     ((and (frame-live-p frame*) (window-live-p window))
@@ -153,27 +163,30 @@ prompting to the psi window/frame when one is visible."
                            (alist-get :event frame nil nil #'equal)
                            (error-message-string err))))))))))))
 
-(defun psi-emacs--on-rpc-event (buffer frame)
-  "Handle rpc event FRAME for BUFFER, keeping errors out of transcript."
+(defun psi-emacs--on-rpc-event (buffer frame &optional client)
+  "Handle rpc event FRAME for BUFFER, keeping errors out of transcript.
+
+CLIENT, when non-nil, must still be the active rpc client for BUFFER."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let ((event (alist-get :event frame nil nil #'equal))
-            (data (alist-get :data frame nil nil #'equal)))
-        (cond
-         ((equal event "error")
-          (psi-emacs--on-rpc-error
-           buffer
-           (or (alist-get :code data nil nil #'equal)
-               (alist-get :error-code data nil nil #'equal)
-               "rpc/error")
-           (or (alist-get :message data nil nil #'equal)
-               (alist-get :error-message data nil nil #'equal)
-               "rpc error")
-           frame))
-         ((member event '("ui/dialog-requested" "ui/frontend-action-requested"))
-          (psi-emacs--defer-rpc-event buffer frame))
-         (t
-          (psi-emacs--handle-rpc-event frame)))))))
+      (when (psi-emacs--rpc-client-active-for-buffer-p client)
+        (let ((event (alist-get :event frame nil nil #'equal))
+              (data (alist-get :data frame nil nil #'equal)))
+          (cond
+           ((equal event "error")
+            (psi-emacs--on-rpc-error
+             buffer
+             (or (alist-get :code data nil nil #'equal)
+                 (alist-get :error-code data nil nil #'equal)
+                 "rpc/error")
+             (or (alist-get :message data nil nil #'equal)
+                 (alist-get :error-message data nil nil #'equal)
+                 "rpc error")
+             frame))
+           ((member event '("ui/dialog-requested" "ui/frontend-action-requested"))
+            (psi-emacs--defer-rpc-event buffer frame client))
+           (t
+            (psi-emacs--handle-rpc-event frame))))))))
 
 (defun psi-emacs--start-rpc-client (buffer)
   "Start rpc-edn client for BUFFER and wire callbacks."
@@ -183,7 +196,7 @@ prompting to the psi window/frame when one is visible."
                      :on-state-change (lambda (rpc-client)
                                         (psi-emacs--on-rpc-state-change buffer rpc-client))
                      :on-event (lambda (frame)
-                                 (psi-emacs--on-rpc-event buffer frame))
+                                 (psi-emacs--on-rpc-event buffer frame client))
                      :on-rpc-error (lambda (code message-text frame)
                                      (psi-emacs--on-rpc-error buffer code message-text frame)))))
         (setf (psi-emacs-state-rpc-client psi-emacs--state) client)

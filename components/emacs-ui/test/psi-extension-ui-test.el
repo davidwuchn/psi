@@ -633,6 +633,23 @@ command rehydration."
       (apply scheduled-callback scheduled-args)
       (should-not (string-match-p "\\[ext-t\\] Temp" (buffer-string))))))
 
+(ert-deftest psi-extension-ui-ignores-stale-client-notification-events ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((active-client (psi-rpc-make-client))
+          (stale-client (psi-rpc-make-client)))
+      (setf (psi-emacs-state-rpc-client psi-emacs--state) active-client)
+      (cl-letf (((symbol-function 'run-at-time)
+                 (lambda (&rest _args) nil)))
+        (psi-emacs--on-rpc-event
+         (current-buffer)
+         '((:event . "ui/notification")
+           (:data . ((:extension-id . "ext-stale") (:text . "Ignore me"))))
+         stale-client))
+      (should-not (string-match-p "ext-stale" (buffer-string)))
+      (should-not (psi-emacs-state-projection-notifications psi-emacs--state)))))
+
 
 (provide 'psi-extension-ui-test)
 
