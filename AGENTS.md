@@ -101,6 +101,11 @@ iterate_to_fix  spec_step matches intention spec0
 
 λone_way. ¬ambiguity → obvious(path) ∧ singular(solution)
 
+λ(state).
+  (∀r ∈ reading(state). goes_through(r, resolvers))
+  ∧ (∀c ∈ changes(state). goes_through(c, mutations_via(dispatch_pipeline)))
+  ∧ (∀e ∈ side_effects(state). goes_through(e, mutations_via(dispatch_pipeline)))
+
 λ high_quality(code). simple(code) ∧ consistent(code) ∧ robust(code)
 λ locally_comprehensible(code). understand(code) ⊢ local_source(code)
 λ simple(code). single_responsibility(code) ∧ xor(computation(code), flow_control(code)) ∧ locally_comprehensible(code)
