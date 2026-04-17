@@ -956,9 +956,9 @@ Failure path appends deterministic assistant-visible feedback, sets
     (cond
      ((and canonical-action (listp canonical-action)) canonical-action)
      ((equal item-kind "fork-point")
-      `((:type . "fork-point")
-        (:entry-id . ,entry-id)
-        (:session-id . ,id)))
+      `((:action/kind . :fork-session)
+        (:action/entry-id . ,entry-id)
+        (:action/session-id . ,id)))
      (t id))))
 
 (defun psi-emacs--tree-session-candidates (slots active-id)
@@ -967,8 +967,8 @@ Failure path appends deterministic assistant-visible feedback, sets
 The backend owns `/tree` hierarchy and item ordering. This frontend function
 only renders labels and preserves incoming order exactly.
 
-Returns an alist of (label . value), where value is either a session-id string,
-a canonical action map, or an alist payload for backward compatibility."
+Returns an alist of (label . value), where value is either a session-id string
+or a canonical action map."
   (mapcar
    (lambda (slot)
      (let* ((item-kind (psi-emacs--tree-slot-item-kind slot))
@@ -1028,19 +1028,13 @@ a canonical action map, or an alist payload for backward compatibility."
           (psi-emacs--append-assistant-message
            (format "Already on session: %s" selected-label)))
          ((and (listp selected-value)
-               (or (equal (alist-get :type selected-value nil nil #'equal) "fork-point")
-                   (equal (alist-get :action/kind selected-value nil nil #'equal) :fork-session)
-                   (equal (alist-get 'action/kind selected-value nil nil #'equal) :fork-session)))
-          (let ((entry-id (or (alist-get :action/entry-id selected-value nil nil #'equal)
-                              (alist-get 'action/entry-id selected-value nil nil #'equal)
-                              (alist-get :entry-id selected-value nil nil #'equal))))
+               (equal (alist-get :action/kind selected-value nil nil #'equal) :fork-session))
+          (let ((entry-id (alist-get :action/entry-id selected-value nil nil #'equal)))
             (when (and (stringp entry-id) (not (string-empty-p entry-id)))
               (psi-emacs--dispatch-request "fork" `((:entry-id . ,entry-id))))))
          ((and (listp selected-value)
-               (or (equal (alist-get :action/kind selected-value nil nil #'equal) :switch-session)
-                   (equal (alist-get 'action/kind selected-value nil nil #'equal) :switch-session)))
-          (let ((sid (or (alist-get :action/session-id selected-value nil nil #'equal)
-                         (alist-get 'action/session-id selected-value nil nil #'equal))))
+               (equal (alist-get :action/kind selected-value nil nil #'equal) :switch-session))
+          (let ((sid (alist-get :action/session-id selected-value nil nil #'equal)))
             (when (and (stringp sid) (not (string-empty-p sid)))
               (psi-emacs--request-switch-session-by-id state sid))))
          (t

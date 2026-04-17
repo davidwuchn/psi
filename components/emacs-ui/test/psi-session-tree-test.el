@@ -123,7 +123,7 @@
       (should (equal "s2" (alist-get :session-id (cadar calls) nil nil #'equal))))))
 
 (ert-deftest psi-tree-session-candidates-support-fork-points ()
-  "Fork-point slots produce candidate payloads with entry-id instead of a plain session-id."
+  "Fork-point slots produce canonical fork action payloads."
   (let* ((slots '(((:id . "s1")
                    (:item-kind . "session")
                    (:name . "main")
@@ -137,8 +137,8 @@
          (candidates (psi-emacs--tree-session-candidates slots "s1"))
          (fork-value (cdr (cadr candidates))))
     (should (stringp (cdar candidates)))
-    (should (equal "fork-point" (alist-get :type fork-value nil nil #'equal)))
-    (should (equal "e1" (alist-get :entry-id fork-value nil nil #'equal)))))
+    (should (equal :fork-session (alist-get :action/kind fork-value nil nil #'equal)))
+    (should (equal "e1" (alist-get :action/entry-id fork-value nil nil #'equal)))))
 
 (ert-deftest psi-tree-session-candidates-preserve-backend-order ()
   "Fork-point candidates preserve backend order instead of re-sorting locally."
