@@ -270,18 +270,8 @@ path-line, stats-line, status-line (blank lines omitted)."
                                        'face 'psi-emacs-projection-footer-status-face
                                        'font-lock-face 'psi-emacs-projection-footer-status-face)))
          (canonical-lines (delq nil (list path-line stats-line status-line))))
-    (if canonical-lines
-        (string-join canonical-lines "\n")
-      (let ((value (psi-emacs--event-data-get data
-                                              '(:text text :message message :footer footer :content content))))
-        (cond
-         ((stringp value) (propertize value
-                                      'face 'psi-emacs-projection-footer-face
-                                      'font-lock-face 'psi-emacs-projection-footer-face))
-         ((null value) nil)
-         (t (propertize (format "%s" value)
-                        'face 'psi-emacs-projection-footer-face
-                        'font-lock-face 'psi-emacs-projection-footer-face)))))))
+    (when canonical-lines
+      (string-join canonical-lines "\n"))))
 
 (defun psi-emacs--cancel-notification-timer (state notification-id)
   "Cancel notification timer for NOTIFICATION-ID in STATE, if present."

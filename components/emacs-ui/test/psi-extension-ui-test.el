@@ -253,9 +253,11 @@ command rehydration."
     (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
     (let ((before-anchor (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (psi-emacs--handle-rpc-event
-       '((:event . "footer/updated") (:data . ((:text . "mode: parity")))))
+       '((:event . "footer/updated")
+         (:data . ((:path-line . "~/psi-main")
+                   (:status-line . "mode: parity")))))
       (should (string-match-p "ψ: hello" (buffer-string)))
-      (should (string-match-p "mode: parity" (buffer-string)))
+      (should (string-match-p "~/psi-main\nmode: parity" (buffer-string)))
       (should (= (psi-emacs--draft-end-position)
                  (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (should (>= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
