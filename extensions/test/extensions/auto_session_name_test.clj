@@ -7,6 +7,8 @@
 (defn- reset-state! []
   (reset! @#'sut/state
           {:turn-counts {}
+           :helper-session-ids #{}
+           :last-auto-name-by-session {}
            :turn-interval 2
            :delay-ms 250
            :log-fn nil
@@ -43,16 +45,17 @@
 (deftest checkpoint-handler-renames-session-on-valid-helper-result-test
   (testing "checkpoint handler queries source session, runs helper child session, and renames original session"
     (reset-state!)
-    (let [calls          (atom [])
+    (let [calls (atom [])
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/auto_session_name.clj"
                                 :query-fn (fn [req]
                                             (swap! calls conj [:query req])
-                                            (if (= {:session-id "s1"
-                                                    :query [{:psi.agent-session/session-entries
-                                                             [:psi.session-entry/kind
-                                                              :psi.session-entry/data]}]}
-                                                   req)
+                                            (cond
+                                              (= {:session-id "s1"
+                                                  :query [{:psi.agent-session/session-entries
+                                                           [:psi.session-entry/kind
+                                                            :psi.session-entry/data]}]}
+                                                 req)
                                               {:psi.agent-session/session-entries
                                                [{:psi.session-entry/kind :message
                                                  :psi.session-entry/data {:message {:role "user"
@@ -60,7 +63,13 @@
                                                 {:psi.session-entry/kind :message
                                                  :psi.session-entry/data {:message {:role "assistant"
                                                                                     :content [{:type :text :text "I will inspect the selector path."}]}}}]}
-                                              {}))
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/session-name]}
+                                                 req)
+                                              {:psi.agent-session/session-name "initial"}
+
+                                              :else {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [:mutate op params])
                                              (case op
@@ -85,20 +94,27 @@
 (deftest checkpoint-handler-invalid-helper-result-does-not-rename-test
   (testing "invalid helper result does not rename and falls back to notification"
     (reset-state!)
-    (let [calls          (atom [])
+    (let [calls (atom [])
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/auto_session_name.clj"
                                 :query-fn (fn [req]
-                                            (if (= {:session-id "s1"
-                                                    :query [{:psi.agent-session/session-entries
-                                                             [:psi.session-entry/kind
-                                                              :psi.session-entry/data]}]}
-                                                   req)
+                                            (cond
+                                              (= {:session-id "s1"
+                                                  :query [{:psi.agent-session/session-entries
+                                                           [:psi.session-entry/kind
+                                                            :psi.session-entry/data]}]}
+                                                 req)
                                               {:psi.agent-session/session-entries
                                                [{:psi.session-entry/kind :message
                                                  :psi.session-entry/data {:message {:role "user"
                                                                                     :content [{:type :text :text "Fix footer rendering"}]}}}]}
-                                              {}))
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/session-name]}
+                                                 req)
+                                              {:psi.agent-session/session-name "initial"}
+
+                                              :else {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [op params])
                                              (case op
@@ -114,6 +130,137 @@
         (is (= {:text "auto-session-name: rename checkpoint for session s1 at turn 2"
                 :level :info}
                (last (:notifications @state))))))))
+
+(deftest stale-checkpoint-does-not-start-helper-test
+  (testing "stale checkpoint does not create helper child session"
+    (reset-state!)
+    (swap! @#'sut/state assoc :turn-counts {"s1" 4})
+    (let [calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/auto_session_name.clj"
+                                :query-fn (fn [_] {})
+                                :mutate-fn (fn [op params]
+                                             (swap! calls conj [op params])
+                                             {})})]
+      (sut/init api)
+      (let [handler (first (get-in @state [:handlers "auto_session_name/rename_checkpoint"]))]
+        (is (nil? (handler {:session-id "s1" :turn-count 2})))
+        (is (not-any? #(= 'psi.extension/create-child-session (first %)) @calls))))))
+
+(deftest session-advanced-during-helper-run-does-not-rename-test
+  (testing "checkpoint dropped as stale after helper run when session advanced"
+    (reset-state!)
+    (swap! @#'sut/state assoc :turn-counts {"s1" 2})
+    (let [calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/auto_session_name.clj"
+                                :query-fn (fn [req]
+                                            (cond
+                                              (= {:session-id "s1"
+                                                  :query [{:psi.agent-session/session-entries
+                                                           [:psi.session-entry/kind
+                                                            :psi.session-entry/data]}]}
+                                                 req)
+                                              {:psi.agent-session/session-entries
+                                               [{:psi.session-entry/kind :message
+                                                 :psi.session-entry/data {:message {:role "user"
+                                                                                    :content [{:type :text :text "Fix footer rendering"}]}}}]}
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/session-name]}
+                                                 req)
+                                              {:psi.agent-session/session-name "initial"}
+
+                                              :else {}))
+                                :mutate-fn (fn [op params]
+                                             (swap! calls conj [op params])
+                                             (case op
+                                               psi.extension/create-child-session {:psi.agent-session/session-id "child-1"}
+                                               psi.extension/run-agent-loop-in-session (do (swap! @#'sut/state assoc :turn-counts {"s1" 3})
+                                                                                           {:psi.agent-session/agent-run-ok? true
+                                                                                            :psi.agent-session/agent-run-text "Fix footer rendering"})
+                                               {}))})]
+      (sut/init api)
+      (let [handler (first (get-in @state [:handlers "auto_session_name/rename_checkpoint"]))]
+        (is (nil? (handler {:session-id "s1" :turn-count 2})))
+        (is (not-any? #(= 'psi.extension/set-session-name (first %)) @calls))))))
+
+(deftest manual-rename-blocks-auto-overwrite-test
+  (testing "manual rename blocks auto overwrite when current name differs from last auto name"
+    (reset-state!)
+    (swap! @#'sut/state assoc :last-auto-name-by-session {"s1" "Old auto name"})
+    (let [calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/auto_session_name.clj"
+                                :query-fn (fn [req]
+                                            (cond
+                                              (= {:session-id "s1"
+                                                  :query [{:psi.agent-session/session-entries
+                                                           [:psi.session-entry/kind
+                                                            :psi.session-entry/data]}]}
+                                                 req)
+                                              {:psi.agent-session/session-entries
+                                               [{:psi.session-entry/kind :message
+                                                 :psi.session-entry/data {:message {:role "user"
+                                                                                    :content [{:type :text :text "Fix footer rendering"}]}}}]}
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/session-name]}
+                                                 req)
+                                              {:psi.agent-session/session-name "Manual name"}
+
+                                              :else {}))
+                                :mutate-fn (fn [op params]
+                                             (swap! calls conj [op params])
+                                             (case op
+                                               psi.extension/create-child-session {:psi.agent-session/session-id "child-1"}
+                                               psi.extension/run-agent-loop-in-session {:psi.agent-session/agent-run-ok? true
+                                                                                        :psi.agent-session/agent-run-text "Fix footer rendering"}
+                                               {}))})]
+      (sut/init api)
+      (let [handler (first (get-in @state [:handlers "auto_session_name/rename_checkpoint"]))]
+        (is (nil? (handler {:session-id "s1" :turn-count 2})))
+        (is (not-any? #(= 'psi.extension/set-session-name (first %)) @calls))))))
+
+(deftest unchanged-auto-owned-name-allows-update-test
+  (testing "matching current auto-owned name still allows update and refreshes remembered auto name"
+    (reset-state!)
+    (swap! @#'sut/state assoc :last-auto-name-by-session {"s1" "Old auto name"})
+    (let [calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/auto_session_name.clj"
+                                :query-fn (fn [req]
+                                            (cond
+                                              (= {:session-id "s1"
+                                                  :query [{:psi.agent-session/session-entries
+                                                           [:psi.session-entry/kind
+                                                            :psi.session-entry/data]}]}
+                                                 req)
+                                              {:psi.agent-session/session-entries
+                                               [{:psi.session-entry/kind :message
+                                                 :psi.session-entry/data {:message {:role "user"
+                                                                                    :content [{:type :text :text "Fix footer rendering"}]}}}]}
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/session-name]}
+                                                 req)
+                                              {:psi.agent-session/session-name "Old auto name"}
+
+                                              :else {}))
+                                :mutate-fn (fn [op params]
+                                             (swap! calls conj [op params])
+                                             (case op
+                                               psi.extension/create-child-session {:psi.agent-session/session-id "child-1"}
+                                               psi.extension/run-agent-loop-in-session {:psi.agent-session/agent-run-ok? true
+                                                                                        :psi.agent-session/agent-run-text "New inferred name"}
+                                               psi.extension/set-session-name {:psi.agent-session/session-name (:name params)}
+                                               {}))})]
+      (sut/init api)
+      (let [handler (first (get-in @state [:handlers "auto_session_name/rename_checkpoint"]))]
+        (is (nil? (handler {:session-id "s1" :turn-count 2})))
+        (is (some #(= 'psi.extension/set-session-name (first %)) @calls))
+        (is (= "New inferred name"
+               (get-in @@#'sut/state [:last-auto-name-by-session "s1"])))))))
 
 (deftest helper-session-turn-finished-is-ignored-test
   (testing "turn-finished events for helper child sessions do not schedule nested checkpoints"

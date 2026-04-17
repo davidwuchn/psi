@@ -159,26 +159,35 @@
                                       [:psi.session-entry/kind
                                        :psi.session-entry/data]}])))
 
-(defn- infer-session-title [api source-session-id]
-  (let [lines  (sanitize-session-entries (query-session-entries api source-session-id))
-        prompt (build-rename-prompt lines)]
-    (when (seq prompt)
-      (let [child ((:mutate-session api) source-session-id 'psi.extension/create-child-session
-                   {:session-name   "auto-session-name"
-                    :tool-defs      []
-                    :thinking-level :off})
-            child-session-id (:psi.agent-session/session-id child)]
-        (when child-session-id
-          (remember-helper-session! child-session-id)
-          (let [run-result ((:mutate-session api) child-session-id 'psi.extension/run-agent-loop-in-session
-                            {:prompt prompt})
-                title      (some-> (:psi.agent-session/agent-run-text run-result)
-                                   normalize-title)]
-            (when (and (true? (:psi.agent-session/agent-run-ok? run-result))
-                       (valid-title? title))
-              ((:mutate-session api) source-session-id 'psi.extension/set-session-name
-               {:name title})
-              title)))))))
+(defn- query-session-name [api session-id]
+  (:psi.agent-session/session-name
+   ((:query-session api) session-id [:psi.agent-session/session-name])))
+
+(defn- infer-session-title [api source-session-id checkpoint-turn-count]
+  (when-not (stale-checkpoint? source-session-id checkpoint-turn-count)
+    (let [lines  (sanitize-session-entries (query-session-entries api source-session-id))
+          prompt (build-rename-prompt lines)]
+      (when (seq prompt)
+        (let [child ((:mutate-session api) source-session-id 'psi.extension/create-child-session
+                     {:session-name   "auto-session-name"
+                      :tool-defs      []
+                      :thinking-level :off})
+              child-session-id (:psi.agent-session/session-id child)]
+          (when child-session-id
+            (remember-helper-session! child-session-id)
+            (let [run-result ((:mutate-session api) child-session-id 'psi.extension/run-agent-loop-in-session
+                              {:prompt prompt})
+                  title      (some-> (:psi.agent-session/agent-run-text run-result)
+                                     normalize-title)
+                  current-name (query-session-name api source-session-id)]
+              (when (and (true? (:psi.agent-session/agent-run-ok? run-result))
+                         (valid-title? title)
+                         (not (stale-checkpoint? source-session-id checkpoint-turn-count))
+                         (not (manual-override? source-session-id current-name)))
+                ((:mutate-session api) source-session-id 'psi.extension/set-session-name
+                 {:name title})
+                (remember-auto-name! source-session-id title)
+                title))))))))
 
 (defn- on-turn-finished [api payload]
   (when-let [session-id (normalize-session-id payload)]
@@ -191,7 +200,7 @@
 (defn- on-checkpoint [api payload]
   (when-let [session-id (normalize-session-id payload)]
     (when-not (helper-session? session-id)
-      (or (infer-session-title api session-id)
+      (or (infer-session-title api session-id (:turn-count payload))
           (when-let [count* (:turn-count payload)]
             (notify! (checkpoint-text {:session-id session-id
                                        :turn-count count*})))))))
