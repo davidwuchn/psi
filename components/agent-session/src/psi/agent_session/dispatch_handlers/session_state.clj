@@ -192,7 +192,7 @@
                             :session-id session-id
                             :session-file session-path
                             :session-name session-name
-                            :worktree-path (or (:worktree-path header) (:cwd header))
+                            :worktree-path (:worktree-path header)
                             :parent-session-id (:parent-session-id header)
                             :parent-session-path (:parent-session header)
                             :interrupt-pending false

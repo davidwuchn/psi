@@ -175,7 +175,7 @@
   (register-core-handler!
    :session/reload-models
    (fn [ctx {:keys [session-id]}]
-     (let [cwd (session/effective-cwd-in ctx session-id)]
+     (let [cwd (session/session-worktree-path-in ctx session-id)]
        {:effects [{:effect/type :model-registry/reload
                    :cwd cwd}]
         :return-effect-result? true})))
