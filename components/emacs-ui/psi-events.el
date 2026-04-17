@@ -45,7 +45,7 @@ DATA is expected to be an alist map."
 If frontend state has no known session id yet, allow the event so bootstrap
 payloads can seed state before the first canonical session-targeted update."
   (let ((event-session-id (psi-emacs--session-normalize-text
-                           (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+                           (psi-emacs--event-data-get data '(:session-id session-id))))
         (current-session-id (and psi-emacs--state
                                  (psi-emacs--session-normalize-text
                                   (psi-emacs-state-session-id psi-emacs--state)))))
@@ -57,38 +57,38 @@ payloads can seed state before the first canonical session-targeted update."
   (when (and psi-emacs--state
              (psi-emacs--event-session-matches-current-p data))
     (let* ((session-id (psi-emacs--session-normalize-text
-                        (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+                        (psi-emacs--event-data-get data '(:session-id session-id))))
            (phase (psi-emacs--session-normalize-text
                    (psi-emacs--event-data-get data '(:phase phase))))
            (is-streaming (not (null (psi-emacs--event-data-get data
-                                                                '(:is-streaming is-streaming :isStreaming isStreaming)))))
+                                                                '(:is-streaming is-streaming)))))
            (is-compacting (not (null (psi-emacs--event-data-get data
-                                                                 '(:is-compacting is-compacting :isCompacting isCompacting)))))
+                                                                 '(:is-compacting is-compacting)))))
            (pending (or (psi-emacs--event-data-get data
-                                                   '(:pending-message-count pending-message-count :pendingMessageCount pendingMessageCount))
+                                                   '(:pending-message-count pending-message-count))
                         0))
            (retry (or (psi-emacs--event-data-get data
-                                                 '(:retry-attempt retry-attempt :retryAttempt retryAttempt))
+                                                 '(:retry-attempt retry-attempt))
                       0))
            (interrupt-pending (not (null (psi-emacs--event-data-get data
-                                                                     '(:interrupt-pending interrupt-pending :interruptPending interruptPending)))))
+                                                                     '(:interrupt-pending interrupt-pending)))))
            (model-provider (psi-emacs--session-normalize-text
                             (psi-emacs--event-data-get data
-                                                       '(:model-provider model-provider :modelProvider modelProvider))))
+                                                       '(:model-provider model-provider))))
            (model-id (psi-emacs--session-normalize-text
                       (psi-emacs--event-data-get data
-                                                 '(:model-id model-id :modelId modelId))))
+                                                 '(:model-id model-id))))
            (model-reasoning (not (null (psi-emacs--event-data-get data
-                                                                   '(:model-reasoning model-reasoning :modelReasoning modelReasoning)))))
+                                                                   '(:model-reasoning model-reasoning)))))
            (thinking-level (psi-emacs--session-normalize-text
                             (psi-emacs--event-data-get data
-                                                       '(:thinking-level thinking-level :thinkingLevel thinkingLevel))))
+                                                       '(:thinking-level thinking-level))))
            (effective-reasoning-effort (psi-emacs--session-normalize-text
                                         (psi-emacs--event-data-get data
-                                                                   '(:effective-reasoning-effort effective-reasoning-effort :effectiveReasoningEffort effectiveReasoningEffort))))
+                                                                   '(:effective-reasoning-effort effective-reasoning-effort))))
            (header-model-label (psi-emacs--session-normalize-text
                                 (psi-emacs--event-data-get data
-                                                           '(:header-model-label header-model-label :headerModelLabel headerModelLabel)))))
+                                                           '(:header-model-label header-model-label)))))
       (setf (psi-emacs-state-session-id psi-emacs--state) session-id)
       (setf (psi-emacs-state-session-phase psi-emacs--state) phase)
       (setf (psi-emacs-state-session-is-streaming psi-emacs--state) is-streaming)
@@ -106,7 +106,7 @@ payloads can seed state before the first canonical session-targeted update."
       (setf (psi-emacs-state-status-session-line psi-emacs--state)
             (psi-emacs--session-normalize-text
              (psi-emacs--event-data-get data
-                                        '(:status-session-line status-session-line :statusSessionLine statusSessionLine))))
+                                        '(:status-session-line status-session-line))))
       (unless (memq (psi-emacs-state-run-state psi-emacs--state) '(error reconnecting))
         (psi-emacs--set-run-state
          psi-emacs--state
@@ -119,8 +119,7 @@ payloads can seed state before the first canonical session-targeted update."
 (defun psi-emacs--session-short-id (slot)
   "Return compact 8-char session id prefix for SLOT, or empty string."
   (let ((id (or (psi-emacs--event-data-get slot '(:id id
-                                                  :session-id session-id
-                                                  :sessionId sessionId))
+                                                  :session-id session-id))
                 "")))
     (substring id 0 (min 8 (length id)))))
 
@@ -128,10 +127,8 @@ payloads can seed state before the first canonical session-targeted update."
   "Return explicit display/name for SLOT, or nil when absent."
   (let ((name (psi-emacs--event-data-get slot '(:display-name display-name
                                                 :session-display-name session-display-name
-                                                :sessionDisplayName sessionDisplayName
                                                 :name name
-                                                :session-name session-name
-                                                :sessionName sessionName))))
+                                                :session-name session-name))))
     (when (and (stringp name) (not (string-empty-p (string-trim name))))
       (string-trim name))))
 
@@ -151,21 +148,21 @@ falls back to `(session <8-char id prefix>)`."
 (defun psi-emacs--handle-context-updated-event (data)
   "Handle `context/updated` DATA: store snapshot and refresh session tree widget."
   (when psi-emacs--state
-    (let* ((active-id (psi-emacs--event-data-get data '(:active-session-id active-session-id :activeSessionId activeSessionId)))
+    (let* ((active-id (psi-emacs--event-data-get data '(:active-session-id active-session-id)))
            (slots     (append (psi-emacs--event-data-get data '(:sessions sessions)) nil))
            (snapshot  `((:active-session-id . ,active-id) (:sessions . ,slots)))
-           (widget    (psi-emacs--event-data-get data '(:session-tree-widget session-tree-widget :sessionTreeWidget sessionTreeWidget)))
+           (widget    (psi-emacs--event-data-get data '(:session-tree-widget session-tree-widget)))
            (existing  (psi-emacs-state-projection-widgets psi-emacs--state))
            (others    (seq-remove
                        (lambda (w)
-                         (and (equal (psi-emacs--event-data-get w '(:extension-id extension-id :extensionId extensionId))
+                         (and (equal (psi-emacs--event-data-get w '(:extension-id extension-id))
                                      "psi-session")
-                              (equal (psi-emacs--event-data-get w '(:widget-id widget-id :widgetId widgetId))
+                              (equal (psi-emacs--event-data-get w '(:widget-id widget-id))
                                      "session-tree")))
                        (or existing [])))
            (content-lines (psi-emacs--projection-seq
                            (and (listp widget)
-                                (psi-emacs--event-data-get widget '(:content-lines content-lines :contentLines contentLines)))))
+                                (psi-emacs--event-data-get widget '(:content-lines content-lines)))))
            (updated   (if (and (listp widget)
                                (> (length slots) 1)
                                content-lines)
@@ -182,7 +179,7 @@ falls back to `(session <8-char id prefix>)`."
       ("quit"
        (psi-emacs--request-frontend-exit))
       ("session_switch"
-       (let ((sid (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+       (let ((sid (psi-emacs--event-data-get data '(:session-id session-id))))
          (when (and (stringp sid) (not (string-empty-p sid)))
            (psi-emacs--request-switch-session-by-id psi-emacs--state sid))))
       (_
@@ -292,7 +289,6 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
                 (error-text    (psi-emacs--non-blank-text
                                 (psi-emacs--event-data-get data
                                                            '(:error-message error-message
-                                                             :errorMessage errorMessage
                                                              :error_message error_message))))
                 (final-text    (or explicit-text
                                    content-text
@@ -321,7 +317,7 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
        (when psi-emacs--state
          (let* ((resumed-session-id
                  (psi-emacs--session-normalize-text
-                  (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+                  (psi-emacs--event-data-get data '(:session-id session-id))))
                 (saved-footer (psi-emacs-state-projection-footer psi-emacs--state))
                 (preserve-tool-view (not (eq (psi-emacs-state-tool-output-view-mode psi-emacs--state)
                                              'collapsed)))
@@ -357,12 +353,12 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
        (when (psi-emacs--event-session-matches-current-p data)
          (psi-emacs--assistant-before-tool-event)
          (let* ((tool-id (psi-emacs--event-data-get data
-                                                    '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
+                                                    '(:tool-id tool-id :tool-call-id tool-call-id :id id)))
                 (tool-name (psi-emacs--event-data-get data
-                                                      '(:tool-name tool-name :toolName toolName :name name)))
+                                                      '(:tool-name tool-name :name name)))
                 (arguments (psi-emacs--event-data-get data '(:arguments arguments)))
-                (parsed-args (psi-emacs--event-data-get data '(:parsed-args parsed-args :parsedArgs parsedArgs)))
-                (is-error (psi-emacs--event-data-get data '(:is-error is-error :isError isError)))
+                (parsed-args (psi-emacs--event-data-get data '(:parsed-args parsed-args)))
+                (is-error (psi-emacs--event-data-get data '(:is-error is-error)))
                 (details (psi-emacs--event-data-get data '(:details details)))
                 (stage (replace-regexp-in-string "^tool/" "" event))
                 (raw-text (or (psi-emacs--event-data-get data

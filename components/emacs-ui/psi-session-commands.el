@@ -734,9 +734,7 @@ since the backend serialises role as the string \"user\" which
          (content (or (alist-get :content message nil nil #'equal)
                       (alist-get 'content message nil nil #'equal)))
          (error-message (or (alist-get :error-message message nil nil #'equal)
-                            (alist-get 'error-message message nil nil #'equal)
-                            (alist-get :errorMessage message nil nil #'equal)
-                            (alist-get 'errorMessage message nil nil #'equal)))
+                            (alist-get 'error-message message nil nil #'equal)))
          (content-text (psi-emacs--message-text-from-content content))
          (text (or (alist-get :text message nil nil #'equal)
                    (alist-get 'text message nil nil #'equal)
@@ -923,7 +921,7 @@ Failure path appends deterministic assistant-visible feedback, sets
 (defun psi-emacs--tree-slot-session-id (slot)
   "Return session id for tree SLOT, or empty string."
   (or (psi-emacs--event-data-get slot '(:item/session-id item/session-id))
-      (psi-emacs--event-data-get slot '(:id id :session-id session-id :sessionId sessionId))
+      (psi-emacs--event-data-get slot '(:id id :session-id session-id))
       ""))
 
 (defun psi-emacs--tree-slot-entry-id (slot)
@@ -936,10 +934,8 @@ Failure path appends deterministic assistant-visible feedback, sets
   (or (psi-emacs--event-data-get slot '(:item/display-name item/display-name))
       (psi-emacs--event-data-get slot '(:display-name display-name
                                         :session-display-name session-display-name
-                                        :sessionDisplayName sessionDisplayName
                                         :name name
-                                        :session-name session-name
-                                        :sessionName sessionName))))
+                                        :session-name session-name))))
 
 (defun psi-emacs--tree-slot-label (slot item-kind id entry-id)
   "Return label base for tree SLOT."
@@ -976,12 +972,12 @@ or a canonical action map."
             (entry-id (psi-emacs--tree-slot-entry-id slot))
             (parent-id (psi-emacs--tree-slot-parent-session-id slot))
             (is-active-raw (or (psi-emacs--event-data-get slot '(:item/is-active item/is-active))
-                               (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive))))
+                               (psi-emacs--event-data-get slot '(:is-active is-active))))
             (is-active (and (equal item-kind "session")
                             (or is-active-raw
                                 (and id active-id (equal id active-id)))))
             (is-streaming (or (psi-emacs--event-data-get slot '(:item/is-streaming item/is-streaming))
-                              (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming))))
+                              (psi-emacs--event-data-get slot '(:is-streaming is-streaming))))
             (name (or (psi-emacs--event-data-get slot '(:label label))
                       (psi-emacs--tree-slot-label slot item-kind id entry-id)))
             (indent (if (or parent-id (equal item-kind "fork-point")) "  " ""))

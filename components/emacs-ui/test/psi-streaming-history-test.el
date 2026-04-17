@@ -38,9 +38,9 @@
         (psi-emacs--handle-rpc-event
          '((:event . "assistant/delta") (:data . ((:text . "Hi")))))
         (psi-emacs--handle-rpc-event
-         '((:event . "tool/start") (:data . ((:toolCallId . "t-smoke") (:text . "start")))))
+         '((:event . "tool/start") (:data . ((:tool-id . "t-smoke") (:text . "start")))))
         (psi-emacs--handle-rpc-event
-         '((:event . "tool/result") (:data . ((:toolCallId . "t-smoke") (:text . "done")))))
+         '((:event . "tool/result") (:data . ((:tool-id . "t-smoke") (:text . "done")))))
         (should (string-match-p "ψ: Hi" (buffer-string)))
         (should (string-match-p "t-smoke success" (buffer-string)))
         (psi-emacs-abort)

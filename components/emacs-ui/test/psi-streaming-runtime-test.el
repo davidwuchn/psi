@@ -49,7 +49,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
         (progn
           (psi-emacs--handle-rpc-event
            '((:event . "tool/result")
-             (:data . ((:toolCallId . "t-ansi") (:text . "\u001b[31mERR\u001b[0m")))))
+             (:data . ((:tool-id . "t-ansi") (:text . "\u001b[31mERR\u001b[0m")))))
           (let ((text (buffer-substring-no-properties (point-min) (point-max))))
             (should (equal "t-ansi success\nERR\n" text)))
           (goto-char (point-min))

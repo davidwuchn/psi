@@ -129,7 +129,7 @@
 (defun psi-emacs--projection-widget-content-lines (widget)
   "Return display content lines for projected WIDGET."
   (let* ((content-lines (and (listp widget)
-                             (psi-emacs--event-data-get widget '(:content-lines content-lines :contentLines contentLines))))
+                             (psi-emacs--event-data-get widget '(:content-lines content-lines))))
          (content (and (listp widget)
                        (psi-emacs--event-data-get widget '(:content content))))
          (content-seq (psi-emacs--projection-seq (or content-lines content)))
@@ -157,7 +157,7 @@
 Widget metadata (placement/extension-id/widget-id) is intentionally omitted
 from transcript projection rendering."
   (let* ((content-lines (and (listp widget)
-                             (psi-emacs--event-data-get widget '(:content-lines content-lines :contentLines contentLines))))
+                             (psi-emacs--event-data-get widget '(:content-lines content-lines))))
          (line-seq (psi-emacs--projection-seq content-lines))
          (rendered (and line-seq
                         (delq nil
@@ -213,9 +213,9 @@ Returns 80 for non-visible buffers (e.g. tests/background)."
 
 Consumes structured footer fields directly so Emacs does not need to re-parse
 backend semantic text."
-  (let* ((usage-parts* (psi-emacs--event-data-get data '(:usage-parts usage-parts :usageParts usageParts)))
+  (let* ((usage-parts* (psi-emacs--event-data-get data '(:usage-parts usage-parts)))
          (usage-parts (psi-emacs--projection-seq usage-parts*))
-         (model-text (psi-emacs--event-data-get data '(:model-text model-text :modelText modelText)))
+         (model-text (psi-emacs--event-data-get data '(:model-text model-text)))
          (structured-left (and usage-parts
                                (string-join
                                 (delq nil
@@ -251,9 +251,9 @@ backend semantic text."
 
 Canonical payload lines are rendered as multi-line text in this order:
 path-line, stats-line, status-line (blank lines omitted)."
-  (let* ((path-line* (psi-emacs--event-data-get data '(:path-line path-line :pathLine pathLine)))
+  (let* ((path-line* (psi-emacs--event-data-get data '(:path-line path-line)))
          (stats-line* (psi-emacs--projection-footer-stats-line data))
-         (status-line* (psi-emacs--event-data-get data '(:status-line status-line :statusLine statusLine)))
+         (status-line* (psi-emacs--event-data-get data '(:status-line status-line)))
          (path-line (and (stringp path-line*)
                          (not (string-empty-p path-line*))
                          (propertize path-line*
@@ -344,7 +344,7 @@ path-line, stats-line, status-line (blank lines omitted)."
   "Apply `ui/notification` DATA to local projection lifecycle state."
   (when psi-emacs--state
     (let* ((seq (1+ (or (psi-emacs-state-projection-notification-seq psi-emacs--state) 0)))
-           (extension-id (psi-emacs--projection-item-key data '(:extension-id extension-id :extensionId extensionId)))
+           (extension-id (psi-emacs--projection-item-key data '(:extension-id extension-id)))
            (text (psi-emacs--projection-item-text data))
            (notification-id (format "n-%s" seq))
            (entry (list :id notification-id :seq seq :extension-id extension-id :text text))
@@ -393,7 +393,7 @@ path-line, stats-line, status-line (blank lines omitted)."
                         'font-lock-face 'psi-emacs-projection-heading-face)
             lines)
       (dolist (status statuses)
-        (let ((extension-id (psi-emacs--projection-item-key status '(:extension-id extension-id :extensionId extensionId)))
+        (let ((extension-id (psi-emacs--projection-item-key status '(:extension-id extension-id)))
               (text (psi-emacs--projection-item-text status)))
           (push (concat "- ["
                         (propertize extension-id
