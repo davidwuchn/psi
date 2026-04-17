@@ -23,6 +23,25 @@
         (psi-emacs--start-rpc-client (current-buffer)))
       (should (equal psi-rpc-default-topics captured-topics)))))
 
+(ert-deftest psi-start-rpc-client-event-callback-captures-created-client ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((captured-client nil))
+      (cl-letf (((symbol-function 'psi-rpc-start!)
+                 (lambda (client _spawn-fn _command &optional _topics)
+                   (setq captured-client client)
+                   client))
+                ((symbol-function 'psi-emacs--upsert-projection-block) #'ignore))
+        (psi-emacs--start-rpc-client (current-buffer))
+        (funcall (psi-rpc-client-on-event captured-client)
+                 '((:event . "footer/updated")
+                   (:data . ((:path-line . "/tmp/project")
+                             (:status-line . "ready"))))))
+      (should (equal "/tmp/project\nready"
+                     (substring-no-properties
+                      (psi-emacs-state-projection-footer psi-emacs--state)))))))
+
 (ert-deftest psi-extension-ui-widgets-updated-replaces-and-preserves-projection-order ()
   (with-temp-buffer
     (psi-emacs-mode)

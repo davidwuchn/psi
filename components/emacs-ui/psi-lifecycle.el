@@ -192,13 +192,15 @@ CLIENT, when non-nil, must still be the active rpc client for BUFFER."
   "Start rpc-edn client for BUFFER and wire callbacks."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let ((client (psi-rpc-make-client
-                     :on-state-change (lambda (rpc-client)
-                                        (psi-emacs--on-rpc-state-change buffer rpc-client))
-                     :on-event (lambda (frame)
-                                 (psi-emacs--on-rpc-event buffer frame client))
-                     :on-rpc-error (lambda (code message-text frame)
-                                     (psi-emacs--on-rpc-error buffer code message-text frame)))))
+      (let (client)
+        (setq client
+              (psi-rpc-make-client
+               :on-state-change (lambda (rpc-client)
+                                  (psi-emacs--on-rpc-state-change buffer rpc-client))
+               :on-event (lambda (frame)
+                           (psi-emacs--on-rpc-event buffer frame client))
+               :on-rpc-error (lambda (code message-text frame)
+                               (psi-emacs--on-rpc-error buffer code message-text frame))))
         (setf (psi-emacs-state-rpc-client psi-emacs--state) client)
         (psi-rpc-start! client
                         psi-emacs--spawn-process-function
