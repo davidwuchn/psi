@@ -158,7 +158,7 @@ Available: " (str/join ", " (map name (keys all))))
   "Submit prompt text through the shared prompt lifecycle used by app-runtime
    callers.
 
-   Request preparation owns skill/template expansion and memory recovery.
+   Request preparation owns prompt expansion and memory recovery.
 
    Returns:
    {:assistant-message message?

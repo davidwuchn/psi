@@ -55,7 +55,9 @@ Checklist:
     - developer layer assembly now happens in request preparation instead of bootstrap fallback composition
     - agent profiles now flow through child-session `:developer-prompt` / `:developer-prompt-source` instead of being merged into base system prompts
     - fallback developer-prompt mirroring of base system prompt has been removed
-    - next follow-on is to converge `/skill:` expansion / skill-prelude composition into request preparation
+    - `/skill:` and template invocation now expand canonically during request preparation
+    - memory recovery for submitted prompt text now runs from the prepared-request path instead of caller-local preview hooks
+    - next follow-on is to converge skill-prelude composition into request preparation
 - adapter/UI fallback payload compatibility
   - [x] remove Emacs "no session id means accept event" compatibility from `psi-events.el`
   - [x] decide and enforce canonical per-event session targeting expectations
@@ -102,7 +104,7 @@ Still-active goals:
   - prompt layer assembly
   - cache breakpoint projection
   - provider request shaping
-  - skill / profile prelude injection
+  - skill prelude / profile injection
 - reduce any remaining prompt semantics still split across:
   - `system_prompt.clj`
   - `conversation.clj`
@@ -127,7 +129,7 @@ Current status:
 - bootstrap no longer creates a fallback developer layer mirroring the base system prompt.
 
 Next active slices:
-1. converge `/skill:` expansion / skill-prelude injection into request preparation for shared-session prompt paths
+1. converge skill-prelude injection into request preparation for shared-session prompt paths
 2. simplify or remove remaining prompt-path seams, comments, and test hooks once they are no longer needed
 
 ## LSP integration on top of managed services + post-tool processing

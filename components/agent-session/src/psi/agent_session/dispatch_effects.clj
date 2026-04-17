@@ -12,7 +12,6 @@
    [psi.ai.model-registry :as model-registry]
    [psi.memory.core :as memory]
    [psi.memory.runtime :as memory-runtime]
-   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.session :as session-data]

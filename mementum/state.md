@@ -25,6 +25,9 @@ Bootstrapped on 2026-04-02.
   - removed prompt-runtime timeout/abort sentinel compatibility handling; canonical internal sentinels only
   - removed prompt request runtime-model fallback scan of built-in `ai-models/all-models`; shared-session resolution now uses `model-registry` only
   - removed a few leftover prompt seam/test-hook comments and the `wait-fn` seam from prompt runtime waiting
+  - moved `/skill:` and template invocation expansion canonically into request preparation
+  - removed the remaining caller-local preview expansion path from app-runtime, RPC, and extension run-fn submission paths
+  - prompt text memory recovery now runs from dispatch-owned prepared-request effects instead of caller-local pre-submit hooks
 - Follow-on test cleanup landed so the full unit suite is green again (`1112 tests, 6425 assertions, 0 failures`):
   - extension API tests now match the richer list-services query shape and current explicit-session mutate behavior
   - git default-branch fallback test now stubs symbolic-ref + config lookup explicitly so `:fallback` is deterministic
@@ -161,6 +164,8 @@ Bootstrapped on 2026-04-02.
 - `prompt-finish` drives terminal statechart completion: dispatches `:on-agent-done`, sends `:session/reset` to statechart, reconciles background jobs. Session returns to `:idle` with `is-streaming false`.
 - Tests prove: submit → prepare → execute → record → finish → idle, including tool-use continuation paths.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
+- Request preparation now owns canonical prompt expansion metadata (`:prepared-request/input-expansion`) and dispatch-visible prompt memory recovery.
+- Follow-on cleanup also updated local docs/comments so the old preview-expansion ownership story is no longer described as current behavior.
 
 ## Custom providers — complete (`46bc655..a946fe8`)
 
