@@ -237,17 +237,6 @@
         (is (str/includes? prompt "Current working directory: /tmp/worktree-demo"))
         (is (str/includes? prompt "Current worktree directory: /tmp/worktree-demo"))))
 
-    (testing "includes prompt contributions"
-      (let [prompt (sys-prompt/build-system-prompt
-                    {:prompt-contributions [{:id "x"
-                                             :ext-path "/ext/a"
-                                             :section "Hints"
-                                             :content "Use stable IDs"
-                                             :priority 100
-                                             :enabled true}]})]
-        (is (str/includes? prompt "# Extension Prompt Contributions"))
-        (is (str/includes? prompt "Use stable IDs"))))
-
     (testing "runtime metadata follows context files"
       (let [prompt (sys-prompt/build-system-prompt
                     {:cwd "/tmp/demo"
@@ -257,24 +246,18 @@
         (is (pos? ctx-idx))
         (is (> time-idx ctx-idx))))
 
-    (testing "skills and contributions appear before context files"
+    (testing "skills appear before context files"
       (let [prompt (sys-prompt/build-system-prompt
                     {:prompt-mode :prose
                      :context-files [{:path "/A.md" :content "Ctx"}]
                      :skills [{:name "s" :description "S"
                                :file-path "/s/SKILL.md" :base-dir "/s"
-                               :source :user :disable-model-invocation false}]
-                     :prompt-contributions [{:id "c" :ext-path "/e"
-                                             :content "C" :priority 1
-                                             :enabled true}]})
+                               :source :user :disable-model-invocation false}]})
             skills-idx  (.indexOf prompt "<available_skills>")
-            contrib-idx (.indexOf prompt "Extension Prompt Contributions")
             ctx-idx     (.indexOf prompt "# Project Context")]
         (is (pos? skills-idx))
-        (is (pos? contrib-idx))
         (is (pos? ctx-idx))
-        (is (< skills-idx ctx-idx) "skills before context")
-        (is (< contrib-idx ctx-idx) "contributions before context")))
+        (is (< skills-idx ctx-idx) "skills before context")))
 
     (testing "external content is identical between modes"
       (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
@@ -282,16 +265,13 @@
                      :context-files [{:path "/A.md" :content "Ctx"}]
                      :skills [{:name "s" :description "S"
                                :file-path "/s/SKILL.md" :base-dir "/s"
-                               :source :user :disable-model-invocation false}]
-                     :prompt-contributions [{:id "c" :ext-path "/e"
-                                             :content "C" :priority 1
-                                             :enabled true}]}
+                               :source :user :disable-model-invocation false}]}
             lambda-p (sys-prompt/build-system-prompt (assoc shared :prompt-mode :lambda))
             prose-p  (sys-prompt/build-system-prompt (assoc shared :prompt-mode :prose))
             extract  (fn [p marker]
                        (let [idx (.indexOf p marker)]
                          (when (pos? idx) (subs p idx))))]
-        ;; Context, skills, contributions, and metadata tail should match
+        ;; Context, skills, and metadata tail should match
         (is (= (extract lambda-p "# Project Context")
                (extract prose-p "# Project Context")))))))
 

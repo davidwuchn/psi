@@ -302,13 +302,12 @@
      :context-files               — [{:path :content}] pre-loaded context files
      :skills                      — [Skill] pre-loaded skills
      :graph-capabilities          — [{:domain :operation-count ...}]
-     :prompt-contributions        — [{:id :ext-path :section :content ...}]
 
    Returns the assembled prompt as a string."
   ([] (build-system-prompt {}))
   ([{:keys [cwd session-instant prompt-mode nucleus-prelude-override
             custom-prompt append-prompt selected-tools extension-tool-descriptions
-            context-files skills graph-capabilities prompt-contributions]}]
+            context-files skills graph-capabilities]}]
    (let [resolved-cwd     (or cwd (System/getProperty "user.dir"))
          resolved-instant (or session-instant (java.time.Instant/now))
          mode           (or prompt-mode :lambda)
@@ -318,7 +317,6 @@
          loaded-skills   (or skills [])
          loaded-ctx      (or context-files [])
          loaded-caps     (or graph-capabilities [])
-         loaded-contribs (or prompt-contributions [])
 
          ;; Append section
          append-section (when append-prompt (str "\n\n" append-prompt))
@@ -340,10 +338,6 @@
              (skills/format-skills-for-prompt-lambda loaded-skills)
              (skills/format-skills-for-prompt loaded-skills)))
 
-         ;; Extension prompt contributions
-         contributions-section
-         (format-prompt-contributions-for-prompt loaded-contribs)
-
          ;; Main prompt — mode-branched preamble
          base-prompt
          (if custom-prompt
@@ -354,12 +348,12 @@
              (build-prose-preamble tool-names has-app-query? loaded-caps
                                    extension-tool-descriptions)))]
 
-     ;; Skills and contributions come before context files (AGENTS.md)
-     ;; so that psi-authored content groups together and project
-     ;; context appears last before the runtime metadata tail.
+     ;; Skills come before context files (AGENTS.md) so that psi-authored
+     ;; content groups together and project context appears last before the
+     ;; runtime metadata tail. Extension contributions are now appended by the
+     ;; prompt handler/request-preparation path, not by base prompt assembly.
      (str base-prompt
           (or append-section "")
           (or skills-section "")
-          (or contributions-section "")
           (or context-section "")
           (runtime-metadata-tail resolved-cwd resolved-instant)))))
