@@ -49,11 +49,17 @@
                                 :query-fn (fn [req]
                                             (swap! calls conj [:query req])
                                             (if (= {:session-id "s1"
-                                                    :query [:psi.agent-session/message-history]}
+                                                    :query [{:psi.agent-session/session-entries
+                                                             [:psi.session-entry/kind
+                                                              :psi.session-entry/data]}]}
                                                    req)
-                                              {:psi.agent-session/message-history
-                                               [{:role "user" :content [{:type :text :text "Fix footer rendering"}]}
-                                                {:role "assistant" :content [{:type :text :text "I will inspect the selector path."}]}]}
+                                              {:psi.agent-session/session-entries
+                                               [{:psi.session-entry/kind :message
+                                                 :psi.session-entry/data {:message {:role "user"
+                                                                                    :content [{:type :text :text "Fix footer rendering"}]}}}
+                                                {:psi.session-entry/kind :message
+                                                 :psi.session-entry/data {:message {:role "assistant"
+                                                                                    :content [{:type :text :text "I will inspect the selector path."}]}}}]}
                                               {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [:mutate op params])
@@ -84,10 +90,14 @@
                                {:path "/test/auto_session_name.clj"
                                 :query-fn (fn [req]
                                             (if (= {:session-id "s1"
-                                                    :query [:psi.agent-session/message-history]}
+                                                    :query [{:psi.agent-session/session-entries
+                                                             [:psi.session-entry/kind
+                                                              :psi.session-entry/data]}]}
                                                    req)
-                                              {:psi.agent-session/message-history
-                                               [{:role "user" :content [{:type :text :text "Fix footer rendering"}]}]}
+                                              {:psi.agent-session/session-entries
+                                               [{:psi.session-entry/kind :message
+                                                 :psi.session-entry/data {:message {:role "user"
+                                                                                    :content [{:type :text :text "Fix footer rendering"}]}}}]}
                                               {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [op params])

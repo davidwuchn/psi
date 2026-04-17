@@ -21,6 +21,20 @@
             [{:role "user" :content [{:type :text :text "/status"}]}
              {:role "assistant" :custom-type "x" :content [{:type :text :text "hidden"}]}])))))
 
+(deftest sanitize-session-entries-test
+  (testing "extracts visible lines from journal-style session entries"
+    (is (= ["User: Fix footer"
+            "Assistant: Inspecting selector path"]
+           (#'sut/sanitize-session-entries
+            [{:psi.session-entry/kind :message
+              :psi.session-entry/data {:message {:role "user"
+                                                 :content [{:type :text :text "Fix footer"}]}}}
+             {:psi.session-entry/kind :message
+              :psi.session-entry/data {:message {:role "assistant"
+                                                 :content [{:type :text :text "Inspecting selector path"}]}}}
+             {:psi.session-entry/kind :other
+              :psi.session-entry/data {:ignored true}}])))))
+
 (deftest build-rename-prompt-test
   (testing "embeds sanitized conversation lines in terse-purpose prompt"
     (let [prompt (#'sut/build-rename-prompt ["User: Fix footer"

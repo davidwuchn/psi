@@ -55,6 +55,11 @@
                (when (= :text (:type part))
                  (squish (:text part)))))))
 
+(defn- session-entry->message
+  [entry]
+  (when (= :message (:psi.session-entry/kind entry))
+    (get-in entry [:psi.session-entry/data :message])))
+
 (defn- visible-message-line
   [msg]
   (when-not (:custom-type msg)
@@ -80,6 +85,12 @@
   (->> (or messages [])
        (keep visible-message-line)
        vec))
+
+(defn- sanitize-session-entries
+  [entries]
+  (->> (or entries [])
+       (keep session-entry->message)
+       sanitize-message-history))
 
 (defn- build-rename-prompt
   [lines]
@@ -124,12 +135,14 @@
   (swap! state update :helper-session-ids (fnil conj #{}) session-id)
   session-id)
 
-(defn- query-message-history [api session-id]
-  (:psi.agent-session/message-history
-   ((:query-session api) session-id [:psi.agent-session/message-history])))
+(defn- query-session-entries [api session-id]
+  (:psi.agent-session/session-entries
+   ((:query-session api) session-id [{:psi.agent-session/session-entries
+                                      [:psi.session-entry/kind
+                                       :psi.session-entry/data]}])))
 
 (defn- infer-session-title [api source-session-id]
-  (let [lines  (sanitize-message-history (query-message-history api source-session-id))
+  (let [lines  (sanitize-session-entries (query-session-entries api source-session-id))
         prompt (build-rename-prompt lines)]
     (when (seq prompt)
       (let [child ((:mutate-session api) source-session-id 'psi.extension/create-child-session
