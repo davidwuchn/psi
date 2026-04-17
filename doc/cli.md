@@ -94,6 +94,9 @@ clojure -M:psi --nrepl 7888
 # TUI + nREPL
 clojure -M:psi --tui --nrepl
 
+# Runtime nREPL with dev + test classpath available
+clojure -M:run:dev:run-test --nrepl
+
 # Pick model key
 clojure -M:psi --model sonnet-4.6
 
