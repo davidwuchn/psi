@@ -7,6 +7,7 @@
    [clojure.string :as str]
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extensions :as ext]
    [psi.agent-session.session-state :as session]))
 
 (defn- now-inst []
@@ -71,7 +72,8 @@
      (let [prepared-request   ((:build-prepared-request-fn ctx)
                                ctx session-id {:turn-id turn-id
                                                :user-message user-msg
-                                               :runtime-opts runtime-opts})
+                                               :runtime-opts runtime-opts
+                                               :commands (ext/command-names-in (:extension-registry ctx))})
            api-key            (get-in prepared-request [:prepared-request/ai-options :api-key])
            steering-consumed? (seq (:prepared-request/queued-steering-messages prepared-request))]
        {:root-state-update

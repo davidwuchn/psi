@@ -1,5 +1,6 @@
 (ns psi.agent-session.prompt-lifecycle-test
   (:require
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
@@ -9,6 +10,7 @@
    [psi.agent-session.prompt-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
+   [clojure.java.io :as io]
    [psi.ai.providers.anthropic]
    [psi.ai.providers.openai]))
 
@@ -25,6 +27,19 @@
     (->> journal
          (filter #(= :message (:kind %)))
          (mapv #(get-in % [:data :message])))))
+
+(defn- delete-tree! [path]
+  (when path
+    (doseq [f (reverse (file-seq (io/file path)))]
+      (.delete ^java.io.File f))))
+
+(defmacro with-temp-dir
+  [[sym prefix] & body]
+  `(let [~sym (str (java.nio.file.Files/createTempDirectory ~prefix (make-array java.nio.file.attribute.FileAttribute 0)))]
+     (try
+       ~@body
+       (finally
+         (delete-tree! ~sym)))))
 
 (deftest prompt-record-response-appends-assistant-once-test
   (let [[ctx session-id] (create-session-context {:persist? false})
@@ -236,6 +251,48 @@
                                                          :content [{:type :text :text "hello"}]}
                                           :runtime-model runtime-model})]
     (is (= runtime-model (:prepared-request/model prepared)))))
+
+(deftest build-prepared-request-expands-skill-invocation-into-user-message-test
+  (with-temp-dir [dir "psi-skill-expand"]
+    (let [skill-file (str dir "/demo/SKILL.md")
+          _          (.mkdirs (java.io.File. (str dir "/demo")))
+          _          (spit skill-file "---\nname: demo\ndescription: Demo skill\n---\n# Skill Body\nUse this skill carefully.")
+          skill      {:name "demo"
+                      :description "Demo skill"
+                      :file-path skill-file
+                      :base-dir (str dir "/demo")
+                      :source :path
+                      :disable-model-invocation false}
+          [ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:skills [skill]}})
+          prepared   (psi.agent-session.prompt-request/build-prepared-request
+                      ctx session-id {:turn-id "t-skill"
+                                      :commands []
+                                      :user-message {:role "user"
+                                                     :content [{:type :text :text "/skill:demo apply this"}]}})]
+      (is (= :skill (get-in prepared [:prepared-request/input-expansion :kind])))
+      (is (= "demo" (get-in prepared [:prepared-request/input-expansion :name])))
+      (is (str/includes? (get-in prepared [:prepared-request/user-message :content 0 :text]) "<skill name=\"demo\""))
+      (is (str/includes? (get-in prepared [:prepared-request/user-message :content 0 :text]) "# Skill Body"))
+      (is (str/includes? (get-in prepared [:prepared-request/user-message :content 0 :text]) "apply this")))))
+
+(deftest build-prepared-request-expands-template-invocation-into-user-message-test
+  (let [[ctx session-id] (create-session-context
+                          {:persist? false
+                           :session-defaults {:prompt-templates [{:name "summarize"
+                                                                  :description "Summarize text"
+                                                                  :content "Summarize: $@"
+                                                                  :source :path
+                                                                  :file-path "/tmp/summarize.md"}]}})
+        prepared (psi.agent-session.prompt-request/build-prepared-request
+                  ctx session-id {:turn-id "t-template"
+                                  :commands []
+                                  :user-message {:role "user"
+                                                 :content [{:type :text :text "/summarize hello world"}]}})]
+    (is (= :template (get-in prepared [:prepared-request/input-expansion :kind])))
+    (is (= "summarize" (get-in prepared [:prepared-request/input-expansion :name])))
+    (is (= "Summarize: hello world"
+           (get-in prepared [:prepared-request/user-message :content 0 :text])))))
 
 (deftest queued-steering-is-injected-into-continuation-prepared-request-test
   (let [[ctx session-id] (create-session-context {:persist? false})

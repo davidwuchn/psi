@@ -8,7 +8,9 @@
    [psi.ai.model-registry :as model-registry]
    [psi.agent-session.conversation :as conv]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.prompt-templates :as prompt-templates]
    [psi.agent-session.session-state :as ss]
+   [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as system-prompt]))
 
 (defn journal->provider-messages
@@ -170,6 +172,35 @@
              :stable? true
              :content contrib}))))
 
+(defn- input-expansion
+  [session-data text commands]
+  (let [loaded-skills (:skills session-data)
+        templates     (:prompt-templates session-data)]
+    (if-let [skill-result (skills/invoke-skill loaded-skills text)]
+      {:text      (:content skill-result)
+       :expansion {:kind :skill :name (:skill-name skill-result)}}
+      (if-let [tpl-result (prompt-templates/invoke-template templates commands text)]
+        {:text      (:content tpl-result)
+         :expansion {:kind :template :name (:source-template tpl-result)}}
+        {:text      text
+         :expansion nil}))))
+
+(defn expand-user-message
+  "Expand canonical user-message text through request-preparation-owned skill
+   and template expansion.
+
+   Returns {:user-message message :expansion expansion?} or nil when the input
+   message is nil or has no text block to expand."
+  [session-data user-message commands]
+  (when-let [text (some->> (:content user-message)
+                           (keep (fn [block]
+                                   (when (= :text (:type block))
+                                     (:text block))))
+                           first)]
+    (let [{:keys [text expansion]} (input-expansion session-data text commands)]
+      {:user-message (assoc user-message :content [{:type :text :text text}])
+       :expansion expansion})))
+
 (defn- queued-steering-messages
   [session-data user-message]
   (when (nil? user-message)
@@ -190,8 +221,11 @@
    - :user-message
    - :runtime-opts
    - :runtime-model"
-  [ctx session-id {:keys [turn-id user-message runtime-opts runtime-model] :as opts}]
+  [ctx session-id {:keys [turn-id user-message runtime-opts runtime-model commands] :as opts}]
   (let [session-data       (ss/get-session-data-in ctx session-id)
+        {:keys [user-message expansion]} (or (expand-user-message session-data user-message commands)
+                                            {:user-message user-message
+                                             :expansion nil})
         base-messages      (session->provider-messages ctx session-id)
         steering-messages  (queued-steering-messages session-data user-message)
         messages           (cond-> base-messages
@@ -205,6 +239,7 @@
     {:prepared-request/id                       turn-id
      :prepared-request/session-id               session-id
      :prepared-request/user-message             user-message
+     :prepared-request/input-expansion          expansion
      :prepared-request/queued-steering-messages steering-messages
      :prepared-request/session-snapshot         {:model                   (:model session-data)
                                                  :thinking-level          (:thinking-level session-data)

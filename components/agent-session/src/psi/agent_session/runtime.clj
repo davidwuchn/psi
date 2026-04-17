@@ -10,12 +10,11 @@
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
-   [psi.agent-session.prompt-templates :as pt]
-   [psi.agent-session.skills :as skills]
    [psi.memory.runtime :as memory-runtime]
    [psi.recursion.core :as recursion]
    [taoensso.timbre :as timbre]))
@@ -48,24 +47,22 @@
     user-msg))
 
 (defn expand-input-in
-  "Expand user input through skills (/skill:name) or prompt templates (/name).
+  "Expand user input through request-preparation-owned skill/template logic.
 
    Returns:
    {:text <expanded-text>
     :expansion {:kind :skill|:template :name string} | nil}"
   [ctx session-id text]
-  (let [sd            (ss/get-session-data-in ctx session-id)
-        loaded-skills (:skills sd)
-        templates     (:prompt-templates sd)
-        commands      (ext/command-names-in (:extension-registry ctx))]
-    (if-let [skill-result (skills/invoke-skill loaded-skills text)]
-      {:text      (:content skill-result)
-       :expansion {:kind :skill :name (:skill-name skill-result)}}
-      (if-let [tpl-result (pt/invoke-template templates commands text)]
-        {:text      (:content tpl-result)
-         :expansion {:kind :template :name (:source-template tpl-result)}}
-        {:text      text
-         :expansion nil}))))
+  (let [session-data (ss/get-session-data-in ctx session-id)
+        commands     (ext/command-names-in (:extension-registry ctx))
+        user-message (make-user-message text)]
+    (if-let [{expanded :user-message
+              expansion :expansion}
+             (prompt-request/expand-user-message session-data user-message commands)]
+      {:text      (get-in expanded [:content 0 :text])
+       :expansion expansion}
+      {:text      text
+       :expansion nil})))
 
 (defn safe-recover-memory!
   "Trigger memory recovery for the given query text. No-op on failure."
