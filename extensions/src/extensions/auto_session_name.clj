@@ -16,12 +16,13 @@
 (def ^:private checkpoint-event "auto_session_name/rename_checkpoint")
 
 (defonce ^:private state
-  (atom {:turn-counts        {}
-         :helper-session-ids #{}
-         :turn-interval      default-turn-interval
-         :delay-ms           default-delay-ms
-         :log-fn             nil
-         :ui                 nil}))
+  (atom {:turn-counts            {}
+         :helper-session-ids     #{}
+         :last-auto-name-by-session {}
+         :turn-interval          default-turn-interval
+         :delay-ms               default-delay-ms
+         :log-fn                 nil
+         :ui                     nil}))
 
 (defn- normalize-session-id [payload]
   (some-> (:session-id payload) str not-empty))
@@ -134,6 +135,23 @@
 (defn- remember-helper-session! [session-id]
   (swap! state update :helper-session-ids (fnil conj #{}) session-id)
   session-id)
+
+(defn- stale-checkpoint?
+  [session-id checkpoint-turn-count]
+  (> (turn-count session-id) (or checkpoint-turn-count 0)))
+
+(defn- last-auto-name [session-id]
+  (get-in @state [:last-auto-name-by-session session-id]))
+
+(defn- manual-override?
+  [session-id current-name]
+  (let [last-auto (last-auto-name session-id)]
+    (boolean (and (seq last-auto)
+                  (not= (squish current-name) (squish last-auto))))))
+
+(defn- remember-auto-name! [session-id title]
+  (swap! state assoc-in [:last-auto-name-by-session session-id] title)
+  title)
 
 (defn- query-session-entries [api session-id]
   (:psi.agent-session/session-entries
