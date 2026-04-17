@@ -21,7 +21,9 @@
    [com.fulcrologic.statecharts.chart :as chart]
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.skills :as skills]
    [psi.agent-session.tools :as tools]
    [psi.ai.models :as models]
    [psi.ui.widget-spec :as widget-spec]))
@@ -265,6 +267,19 @@
     (str "# Agent Profile: " (:name agent-def) "\n\n"
          (:system-prompt agent-def))))
 
+(defn- skill-prelude-messages
+  [skill-name skills prompt]
+  (when-let [skill (some->> skill-name str/trim not-empty (skills/find-skill skills))]
+    (when-let [raw (try (slurp (:file-path skill)) (catch Exception _ nil))]
+      [{:role "user"
+        :content [{:type :text :text (str "Use the skill '" (:name skill) "'.")}]}
+       {:role "assistant"
+        :content [{:type :text :text raw}]}
+       {:role "user"
+        :content [{:type :text :text (or prompt "")}]}
+       {:role "assistant"
+        :content [{:type :text :text "Understood. I will use that skill for the next request."}]}])))
+
 (defn resolve-agent-config
   "Resolve agent configuration from name, agents directories, and base prompt.
   `agents-dirs` may be a single directory string or a seq of directories.
@@ -304,7 +319,13 @@
                                        (assoc :developer-prompt (:developer-prompt config))
 
                                        (some? (:developer-prompt-source config))
-                                       (assoc :developer-prompt-source (:developer-prompt-source config)))))))]
+                                       (assoc :developer-prompt-source (:developer-prompt-source config))
+
+                                       (some? (:preloaded-messages config))
+                                       (assoc :preloaded-messages (:preloaded-messages config))
+
+                                       (some? (:cache-breakpoints config))
+                                       (assoc :cache-breakpoints (:cache-breakpoints config)))))))]
     (if-not session-id
       {:ok?           false
        :text          "Error: could not create child session"
@@ -854,18 +875,28 @@
   (let [agent-name    (normalize-agent-name (get input :agent))
         fork-session? (true? (get input :fork-session))
         include?      (true? (get input :include-result-in-context))
-        config        (resolve-agent-config
-                       agent-name
-                       (concat (global-agents-dirs)
-                               [(project-agents-dir qf)])
-                       (current-system-prompt qf))
+        config        (or (:config-override input)
+                          (resolve-agent-config
+                           agent-name
+                           (concat (global-agents-dirs)
+                                   [(project-agents-dir qf)])
+                           (current-system-prompt qf)))
         session-id    (when-let [mf (some-> @state :api :mutate)]
                         (:psi.agent-session/session-id
                          (mf 'psi.extension/create-child-session
-                             {:session-name   agent-name
-                              :system-prompt  (:system-prompt config)
-                              :tool-defs      (:tools config)
-                              :thinking-level (:thinking-level config)})))]
+                             (cond-> {:session-name   agent-name
+                                      :system-prompt  (:system-prompt config)
+                                      :tool-defs      (:tools config)
+                                      :thinking-level (:thinking-level config)}
+                               (some? (:developer-prompt config))
+                               (assoc :developer-prompt (:developer-prompt config)
+                                      :developer-prompt-source (:developer-prompt-source config))
+
+                               (some? (:preloaded-messages config))
+                               (assoc :preloaded-messages (:preloaded-messages config))
+
+                               (some? (:cache-breakpoints config))
+                               (assoc :cache-breakpoints (:cache-breakpoints config))))))]
     {:agent/agent-name                 agent-name
      :agent/fork-session?              fork-session?
      :agent/include-result-in-context? include?
@@ -933,12 +964,13 @@
             (recur)))))))
 
 (defn- create-agent-workflow-input
-  [task tool-call-id include-result-in-context? agent-name fork-session?]
+  [task tool-call-id include-result-in-context? agent-name fork-session? config-override]
   (cond-> {:task task
            :tool-call-id tool-call-id
            :include-result-in-context include-result-in-context?}
     agent-name (assoc :agent agent-name)
-    fork-session? (assoc :fork-session true)))
+    fork-session? (assoc :fork-session true)
+    config-override (assoc :config-override config-override)))
 
 (defn- sync-spawn-result [id timeout-ms]
   (let [{:keys [timeout workflow error]} (await-terminal-workflow id timeout-ms)
@@ -968,7 +1000,7 @@
    :job-id (:psi.extension.background-job/id r)})
 
 (defn- spawn-agent!
-  [task agent-name {:keys [mode tool-call-id timeout-ms fork-session? include-result-in-context?]
+  [task agent-name {:keys [mode tool-call-id timeout-ms fork-session? include-result-in-context? config-override]
                     :or   {timeout-ms 300000}}]
   (let [task                       (str/trim (or task ""))
         agent-name                 (normalize-agent-name agent-name)
@@ -992,7 +1024,7 @@
                                    {:type                  agent-type
                                     :id                    (str id)
                                     :track-background-job? (not= :sync mode*)
-                                    :input                 (create-agent-workflow-input task tool-call-id* include-result-in-context? agent-name fork-session?)})]
+                                    :input                 (create-agent-workflow-input task tool-call-id* include-result-in-context? agent-name fork-session? config-override)})]
         (if-not (:psi.extension.workflow/created? r)
           {:error (or (:psi.extension.workflow/error r)
                       "Failed to create workflow")}
@@ -1152,7 +1184,7 @@
   (tool-error (str "Error: " field " must be true or false.")))
 
 (defn- execute-create-agent-tool [args opts parsed]
-  (let [{:keys [mode timeout-ms fork-session include-result-in-context]} parsed
+  (let [{:keys [mode timeout-ms fork-session include-result-in-context skill]} parsed
         task         (str/trim (or (get args "task") ""))
         agent-name   (normalize-agent-name (get args "agent"))
         tool-call-id (tool-call-id-from-opts opts)]
@@ -1170,13 +1202,28 @@
       (tool-error "Error: task is required.")
 
       :else
-      (let [fork?    (true? fork-session)
-            include? (true? include-result-in-context)
-            result   (spawn-agent! task agent-name {:mode mode
-                                                    :tool-call-id tool-call-id
-                                                    :timeout-ms timeout-ms
-                                                    :fork-session? fork?
-                                                    :include-result-in-context? include?})]
+      (let [fork?      (true? fork-session)
+            include?   (true? include-result-in-context)
+            query-fn   (:query-fn @state)
+            config0    (resolve-agent-config agent-name
+                                             (concat (global-agents-dirs)
+                                                     [(project-agents-dir query-fn)])
+                                             (current-system-prompt query-fn))
+            skill-msgs (when-not fork?
+                         (skill-prelude-messages skill
+                                                 (or (:psi.agent-session/skills (query! [:psi.agent-session/skills]))
+                                                     [])
+                                                 task))
+            config     (cond-> config0
+                         (seq skill-msgs)
+                         (assoc :preloaded-messages skill-msgs
+                                :cache-breakpoints #{:system :tools}))
+            result     (spawn-agent! task agent-name {:mode mode
+                                                      :tool-call-id tool-call-id
+                                                      :timeout-ms timeout-ms
+                                                      :fork-session? fork?
+                                                      :include-result-in-context? include?
+                                                      :config-override config})]
         (create-agent-tool-result agent-name fork? result)))))
 
 (defn- execute-continue-agent-tool [args opts parsed]
@@ -1216,6 +1263,7 @@
    :mode                      (parse-create-mode (get args "mode"))
    :timeout-ms                (parse-timeout-ms (get args "timeout_ms"))
    :fork-session              (parse-bool (get args "fork_session"))
+   :skill                     (some-> (get args "skill") str str/trim not-empty)
    :include-result-in-context (parse-optional-bool (get args "include_result_in_context"))})
 
 (defn- execute-agent-tool

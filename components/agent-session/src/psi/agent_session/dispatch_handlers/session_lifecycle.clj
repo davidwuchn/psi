@@ -60,7 +60,7 @@
 
   (dispatch/register-handler!
    :session/create-child
-   (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source]}]
+   (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints]}]
      (let [parent-sd (session/get-session-data-in ctx session-id)]
        {:root-state-update #(ss/initialize-child-session-state % parent-sd
                                                                {:child-session-id       child-session-id
@@ -69,7 +69,9 @@
                                                                 :tool-defs              tool-defs
                                                                 :thinking-level         thinking-level
                                                                 :developer-prompt       developer-prompt
-                                                                :developer-prompt-source developer-prompt-source})
+                                                                :developer-prompt-source developer-prompt-source
+                                                                :preloaded-messages     preloaded-messages
+                                                                :cache-breakpoints      cache-breakpoints})
         :return child-session-id})))
 
   (dispatch/register-handler!

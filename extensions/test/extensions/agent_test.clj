@@ -408,7 +408,7 @@
                   :developer-prompt-source :explicit
                   :tool-defs []
                   :thinking-level :off}
-                 (second (first @mutations))))
+                 (select-keys (second (first @mutations)) [:session-name :system-prompt :developer-prompt :developer-prompt-source :tool-defs :thinking-level])))
           (is (= 'psi.extension/run-agent-loop-in-session (first (second @mutations)))))))
 
     (testing "reuses existing session-id when provided"
@@ -428,6 +428,50 @@
           ;; Only run-agent-loop mutation, no create-child
           (is (= 1 (count @mutations)))
           (is (= 'psi.extension/run-agent-loop-in-session (ffirst @mutations))))))))
+
+(deftest agent-tool-create-skill-prelude-config-test
+  (testing "agent create without fork injects skill prelude into child session config"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/agent.clj"
+                                :query-fn (fn [q]
+                                            (cond
+                                              (= q [:psi.agent-session/system-prompt])
+                                              {:psi.agent-session/system-prompt "base"}
+
+                                              (= q [:psi.agent-session/cwd])
+                                              {:psi.agent-session/cwd (System/getProperty "user.dir")}
+
+                                              (= q [:psi.agent-session/skills])
+                                              {:psi.agent-session/skills [{:name "coding"
+                                                                          :description "Coding skill"
+                                                                          :file-path "/tmp/coding/SKILL.md"
+                                                                          :base-dir "/tmp/coding"
+                                                                          :source :path
+                                                                          :disable-model-invocation false}]}
+
+                                              :else {}))})
+          execute (do (sut/init api) (get-in @state [:tools "agent" :execute]))
+          calls   (atom [])]
+      (with-redefs [slurp (fn [path]
+                            (if (= "/tmp/coding/SKILL.md" path)
+                              "# Skill Body\nApply rigorously."
+                              (throw (ex-info "unexpected path" {:path path}))))
+                    sut/spawn-agent! (fn [_task _agent opts]
+                                       (swap! calls conj opts)
+                                       {:ok 1 :mode :async :job-id "job-1"})]
+        (let [result (execute {"action" "create"
+                               "task" "build feature"
+                               "skill" "coding"})
+              config (:config-override (first @calls))]
+          (is (false? (:is-error result)))
+          (is (= #{:system :tools} (:cache-breakpoints config)))
+          (is (= 4 (count (:preloaded-messages config))))
+          (is (= "Use the skill 'coding'."
+                 (get-in config [:preloaded-messages 0 :content 0 :text])))
+          (is (= "# Skill Body\nApply rigorously."
+                 (get-in config [:preloaded-messages 1 :content 0 :text])))
+          (is (= "build feature"
+                 (get-in config [:preloaded-messages 2 :content 0 :text]))))))))
 
 (deftest slash-agent-args-fork-flag-test
   (testing "parse-agent-args supports --fork and -f before optional agent"

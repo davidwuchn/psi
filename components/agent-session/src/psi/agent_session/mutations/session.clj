@@ -4,6 +4,7 @@
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.ai.models :as models]
    [psi.ai.model-registry :as model-registry]
+   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as core]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
@@ -61,7 +62,7 @@
   "Create a child session for agent execution without switching active session.
   Returns the child session-id. The child shares the parent's context but has
   its own journal, telemetry, and session data."
-  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source]}]
+  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints]}]
   {::pco/op-name 'psi.extension/create-child-session
    ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/session-id]}
@@ -74,23 +75,31 @@
                                  :system-prompt    system-prompt
                                  :tool-defs        tool-defs
                                  :thinking-level   thinking-level}
+                           (some? preloaded-messages)
+                           (assoc :preloaded-messages preloaded-messages)
+
+                           (some? cache-breakpoints)
+                           (assoc :cache-breakpoints cache-breakpoints)
                           (some? developer-prompt)
                           (assoc :developer-prompt developer-prompt)
 
                           (some? developer-prompt-source)
                           (assoc :developer-prompt-source developer-prompt-source))
                         {:origin :mutations})
-    (let [sd    (ss/get-session-data-in agent-session-ctx child-sid)
-          fresh (runtime/create-runtime!
-                 agent-session-ctx child-sid
-                 {:session-data  sd
-                  :messages      []
-                  :agent-initial (:agent-initial agent-session-ctx)})]
+    (let [sd       (ss/get-session-data-in agent-session-ctx child-sid)
+          messages (vec (or preloaded-messages []))
+          fresh    (runtime/create-runtime!
+                    agent-session-ctx child-sid
+                    {:session-data  sd
+                     :messages      messages
+                     :agent-initial (:agent-initial agent-session-ctx)})]
       (swap! (:state* agent-session-ctx)
              (fn [state]
                (-> state
                    (assoc-in [:agent-session :sessions child-sid :agent-ctx] (:agent-ctx fresh))
-                   (assoc-in [:agent-session :sessions child-sid :sc-session-id] (:sc-session-id fresh))))))
+                   (assoc-in [:agent-session :sessions child-sid :sc-session-id] (:sc-session-id fresh)))))
+      (when (seq messages)
+        (agent/replace-messages-in! (:agent-ctx fresh) messages)))
     {:psi.agent-session/session-id child-sid}))
 
 (pco/defmutation run-agent-loop-in-session

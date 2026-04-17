@@ -1,6 +1,7 @@
 (ns psi.agent-session.child-session-mutation-test
   (:require
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-core.core]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.mutations :as mutations]
@@ -49,6 +50,33 @@
         (is (= :explicit (:developer-prompt-source child-sd)))
         (is (= "# Agent Profile: helper\n\nKeep it brief." (:developer-prompt child-sd)))
         (is (= :agent (:spawn-mode child-sd)))))))
+
+(deftest create-child-session-preserves-preloaded-messages-and-cache-breakpoints-test
+  (testing "create-child-session can seed child runtime conversation and cache policy"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx mutations/all-mutations true)
+
+      (let [messages [{:role "user" :content [{:type :text :text "use the skill"}]}
+                      {:role "assistant" :content [{:type :text :text "# Skill Body"}]}]
+            result   (mutate 'psi.extension/create-child-session
+                             {:session-name "child"
+                              :tool-defs []
+                              :cache-breakpoints #{:system :tools}
+                              :preloaded-messages messages})
+            child-id (:psi.agent-session/session-id result)
+            child-sd (ss/get-session-data-in ctx child-id)
+            agent-msgs (:messages (psi.agent-core.core/get-data-in (ss/agent-ctx-in ctx child-id)))]
+        (is (= #{:system :tools} (:cache-breakpoints child-sd)))
+        (is (= messages agent-msgs))))))
 
 (deftest run-agent-loop-in-session-targets-child-session-test
   (testing "run-agent-loop-in-session executes against child session while parent is streaming"

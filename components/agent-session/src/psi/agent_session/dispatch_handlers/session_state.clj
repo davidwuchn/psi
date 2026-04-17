@@ -3,6 +3,7 @@
    and all initialize-* / update-* functions used by handlers."
   (:require
    [clojure.java.io :as io]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session-data-ns]))
 
 ;;; Paths
@@ -137,7 +138,7 @@
 (defn initialize-child-session-state
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
-  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source]}]
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints]}]
   (let [tool-defs (or tool-defs (:tool-defs parent-sd))
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
@@ -151,12 +152,13 @@
                          :developer-prompt-source (or developer-prompt-source (:developer-prompt-source parent-sd))
                          :thinking-level          (or thinking-level :off)
                          :tool-defs               tool-defs
+                         :cache-breakpoints       (or cache-breakpoints (:cache-breakpoints parent-sd))
                          :model                   (:model parent-sd)
                          :created-at              (java.time.Instant/now)})]
     (-> state
         (assoc-in (session-data-path child-session-id) child-sd)
         (assoc-in [:agent-session :sessions child-session-id :persistence]
-                  {:journal     []
+                  {:journal     (vec (map persist/message-entry (or preloaded-messages [])))
                    :flush-state {:flushed? false :session-file nil}})
         (initialize-session-slots child-session-id []))))
 
