@@ -171,6 +171,7 @@ Bootstrapped on 2026-04-02.
   - non-fork agent runs can seed child sessions with synthetic preloaded messages before execution
   - child-session creation now accepts preloaded messages + cache-breakpoint overrides
   - current prelude shape is synthetic user → assistant(skill body) → user(task) → assistant(ack)
+  - child runtime initialization now preserves those preloaded messages in both runtime message state and the child journal seed
 
 ## Custom providers — complete (`46bc655..a946fe8`)
 
@@ -215,7 +216,7 @@ Usage:
 
 ## Suggested next step
 - Next active threads are now:
-  1. **Prompt lifecycle**: converge agent profile / skill injection into request preparation
+  1. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
   2. **Auto session name**: add helper model selection using the new model-selection-hierarchy thread
   3. **Model selection hierarchy**: task-class helper/background model resolution
   4. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat

@@ -121,16 +121,19 @@ Current status:
 - lifecycle execution now supports RPC/TUI streaming, extension-initiated prompts, startup prompts, and tool-use continuations.
 - continuation turns preserve effective API key availability via prepared-request fallback.
 - context usage is updated from prompt execution results on the lifecycle path.
+- request preparation now owns canonical prompt expansion metadata (`:prepared-request/input-expansion`) and dispatch-visible prompt memory recovery.
 - effective system prompt assembly in request preparation now composes:
   - base system prompt
   - optional developer layer
   - prompt contributions
 - agent profile prompts now flow as explicit developer layers rather than being merged into base system prompts.
 - bootstrap no longer creates a fallback developer layer mirroring the base system prompt.
+- non-fork `agent` tool runs can now seed child sessions with a synthetic skill prelude before execution starts.
 
 Next active slices:
-1. converge skill-prelude injection into request preparation for shared-session prompt paths
+1. refine cache-breakpoint shaping for agent skill-prelude flows so reusable prelude content is separated from the variable tail with the intended 2-breakpoint shape
 2. simplify or remove remaining prompt-path seams, comments, and test hooks once they are no longer needed
+3. consider whether agent skill-prelude/source metadata should be exposed through session introspection for debugging
 
 ## LSP integration on top of managed services + post-tool processing
 
@@ -272,6 +275,7 @@ Remaining follow-on:
 - make the cache-breakpoint split more explicit so the reusable skill prelude is separated from the variable tail of the conversation with the intended 2-breakpoint shape
 - decide whether the assistant acknowledgement should become a more structured/canonical skill-prelude marker rather than plain text
 - consider exposing prelude seeding / source metadata through session introspection if needed for debugging
+- if the current synthetic prelude shape remains, document it as the canonical child-session seeding contract for agent tool runs
 
 ## Auto session name extension
 
