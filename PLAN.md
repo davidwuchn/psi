@@ -41,9 +41,41 @@ Goal:
 - remove remaining internal backward-compatibility scaffolding now that canonical runtime shapes are established
 - prioritize internal migration bridges before persisted-data or external-provider compatibility
 
-Active slices:
-1. remove remaining shared-session prompt-path seams
-2. remove adapter/UI fallback payload compatibility once canonical payloads are proven everywhere
+Checklist:
+- shared-session prompt-path seams
+  - [x] remove prompt-runtime targeted-test compatibility sentinels from `prompt_runtime.clj`
+  - [ ] update focused prompt tests to use only canonical prompt-stream timeout/aborted sentinels
+  - [x] remove built-in `ai-models/all-models` fallback scan from `prompt_request.clj/resolve-runtime-model`
+  - [x] make `model-registry` the only shared-session model resolution path
+  - [x] remove remaining prompt-path migration hooks/comments in `prompt_request.clj`, `prompt_runtime.clj`, `prompt_turn.clj`, `system_prompt.clj`, and `conversation.clj`
+  - [x] verify request preparation is the explicit home for prompt layer assembly, cache breakpoint projection, and provider request shaping
+  - [ ] remove any remaining shared-session prompt semantics still split across `system_prompt.clj`, `conversation.clj`, or extension-local string composition
+- adapter/UI fallback payload compatibility
+  - [x] remove Emacs "no session id means accept event" compatibility from `psi-events.el`
+  - [x] decide and enforce canonical per-event session targeting expectations
+  - [x] remove non-canonical event key-shape support where RPC already proves canonical payloads
+  - [x] remove frontend session-tree label reconstruction fallback; require backend `:label`
+  - [x] remove backward-compatible `/tree` action payload alist handling; standardize on canonical action payloads
+  - [x] remove legacy footer `:stats-line` fallback; require structured `:usage-parts` + `:model-text`
+  - [x] remove any now-dead Emacs compatibility helpers once backend-owned projections are fully authoritative
+- proof and cleanup
+  - [ ] strengthen RPC tests for canonical-only payload shapes on `session/updated`, `context/updated`, `footer/updated`, `ui/frontend-action-requested`, and `/tree`
+  - [x] strengthen Emacs tests so compat branches can be deleted confidently
+  - [x] remove tests that exist only to preserve legacy internal payload shapes
+  - [ ] run `bb clojure:test`
+  - [x] run `bb emacs:check`
+  - [ ] run `bb lint`
+  - [ ] run `bb fmt:check`
+  - [x] update `mementum/state.md` when slices land
+
+Suggested order:
+1. remove footer fallback
+2. remove tree label fallback
+3. remove tree action payload fallback
+4. remove session-id + key-shape cleanup branches
+5. remove prompt sentinel compatibility
+6. remove runtime model fallback bridge
+7. do final prompt seam sweep and delete dead compatibility helpers
 
 ## Prompt lifecycle architectural convergence
 

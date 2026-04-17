@@ -14,6 +14,20 @@ Bootstrapped on 2026-04-02.
 - `AGENTS.md` — bootstrap/system instructions
 
 ## Current work state
+- Compatibility scaffold removal has advanced materially.
+- Adapter/UI compatibility cleanup now landed in Emacs:
+  - removed footer `:stats-line` fallback parsing; footer now relies on canonical structured `:usage-parts` + `:model-text`
+  - removed frontend session-tree label reconstruction; backend `:label` is now authoritative
+  - removed `/tree` action payload compatibility forms; canonical action payloads are now used
+  - removed targeted-event "missing session-id is ok" compatibility; session-targeted events now require canonical `:session-id` once session identity is known
+  - removed remaining RPC payload camelCase/alternate key-shape fallbacks across Emacs event/projection/session-command handling
+- Prompt-path compatibility cleanup now landed:
+  - removed prompt-runtime timeout/abort sentinel compatibility handling; canonical internal sentinels only
+  - removed prompt request runtime-model fallback scan of built-in `ai-models/all-models`; shared-session resolution now uses `model-registry` only
+  - removed a few leftover prompt seam/test-hook comments and the `wait-fn` seam from prompt runtime waiting
+- Follow-on test cleanup landed so the full unit suite is green again (`1112 tests, 6425 assertions, 0 failures`):
+  - extension API tests now match the richer list-services query shape and current explicit-session mutate behavior
+  - git default-branch fallback test now stubs symbolic-ref + config lookup explicitly so `:fallback` is deterministic
 - The adapter-convergence cleanup thread has now landed the remaining targeted ownership shifts for shared interactive semantics.
 - New follow-on fix landed in Emacs tool rows: expanded tool output now renders on lines below the tool summary/status header instead of inline; tool body text now gets an explicit de-emphasized baseline face (`psi-emacs-tool-output-face`) so summary/status faces do not bleed into output; and a `ψ:` prefix overlay boundary bug was fixed so tool rows inserted at assistant/tool boundaries no longer inherit the assistant prefix face. Toggle rerenders still preserve adjacent row boundaries so rows no longer disappear.
 - Tool schema convergence follow-on is now landed:
