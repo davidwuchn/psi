@@ -138,7 +138,7 @@ Suggested execution order:
     - after projection centralization, the remaining duplication is acceptable layering rather than a new extraction target
     - no further namespace extraction is warranted for background jobs right now
 
-- [ ] investigate `psi.agent-session` family internal structure
+- [x] investigate `psi.agent-session` family internal structure
   - priority: medium/high
   - why now: this is the codebase's dominant family and the likeliest place for gradual mesh growth
   - question: do prompt, extensions, mutations, resolvers, runtime, and session slices still form crisp strata, or is the family flattening into one broad mesh?
@@ -147,11 +147,66 @@ Suggested execution order:
     - `bb gordian explain psi.agent-session.core`
     - `bb gordian explain psi.agent-session.context`
     - `bb gordian explain psi.agent-session.resolvers`
-  - acceptance criteria:
-    - explicit family map naming the intended strata inside `psi.agent-session`
-    - identify any namespaces that look overloaded, misplaced, or façade-like
-    - identify one highest-leverage thinning/splitting candidate, if any
-    - confirm whether current dependency direction still matches the intended architecture
+  - current findings:
+    - Gordian subgraph output is noisy but points consistently at `psi.agent-session.context` as the widest aggregation point and at `core`, `commands`, `bootstrap`, and `mutations*` as high-reach peripheral hubs
+    - `psi.agent-session.core` behaves like a façade/peripheral API surface over narrower slices (`context`, `prompt-control`, `session-lifecycle`, `session-settings`, `compaction-runtime`, `introspection`)
+    - `psi.agent-session.context` is the dominant composition root; it owns resolver/mutation registration and context assembly, and is appropriately unstable/high-Ce for that role
+    - `psi.agent-session.resolvers` is a shared integration surface bundling discovery/extensions/services/session/telemetry plus cross-component registrations; it looks like an intentional aggregate, but one that should stay narrow and registration-focused
+    - many Gordian "remove dependency" suggestions inside the family appear to be false positives caused by coordination namespaces whose edges are justified by architectural role rather than by shared vocabulary
+  - family map:
+    - façade/API surface:
+      - `psi.agent-session.core`
+      - `psi.agent-session.commands`
+      - `psi.agent-session.bootstrap`
+    - composition roots / assembly:
+      - `psi.agent-session.context`
+      - `psi.agent-session.resolvers`
+      - `psi.agent-session.mutations`
+    - canonical state + persistence foundation:
+      - `psi.agent-session.session-state`
+      - `psi.agent-session.persistence`
+      - `psi.agent-session.session`
+      - `psi.agent-session.state-accessors`
+      - `psi.agent-session.statechart`
+      - `psi.agent-session.turn-statechart`
+    - dispatch coordination:
+      - `psi.agent-session.dispatch`
+      - `psi.agent-session.dispatch-effects`
+      - `psi.agent-session.dispatch-handlers*`
+      - `psi.agent-session.dispatch-schema`
+    - prompt/tool execution:
+      - `psi.agent-session.prompt-*`
+      - `psi.agent-session.tool-*`
+      - `psi.agent-session.conversation`
+      - `psi.agent-session.system-prompt`
+      - `psi.agent-session.message-text`
+    - extension/service/workflow integration:
+      - `psi.agent-session.extensions*`
+      - `psi.agent-session.extension-runtime`
+      - `psi.agent-session.services*`
+      - `psi.agent-session.service-protocol*`
+      - `psi.agent-session.workflows`
+      - `psi.agent-session.background-job*`
+    - lifecycle/settings/introspection:
+      - `psi.agent-session.session-lifecycle`
+      - `psi.agent-session.session-settings`
+      - `psi.agent-session.introspection`
+      - `psi.agent-session.compaction-runtime`
+  - verdict on dependency direction:
+    - current dependency direction still broadly matches the intended architecture: façades and assembly layers depend inward on state/dispatch/foundation layers, and adapters/app-runtime sit outside the family
+    - `context` is intentionally a composition root rather than a reusable low-level abstraction; its high instability is expected
+    - `core` is intentionally a façade rather than a pure foundation namespace; its high reach is expected but should remain thin
+  - overloaded / façade-like namespaces:
+    - intentionally façade-like: `psi.agent-session.core`
+    - intentionally assembly-heavy: `psi.agent-session.context`
+    - watchlist for gradual mesh growth: `psi.agent-session.resolvers`, `psi.agent-session.commands`, `psi.agent-session.mutations`
+  - highest-leverage thinning candidate:
+    - `psi.agent-session.commands`
+    - reason: it is a high-reach peripheral hub mixing multiple command families; further extraction by command family would likely reduce surface area without disturbing core state/dispatch architecture
+  - final verdict:
+    - no urgent structural breakage inside `psi.agent-session`
+    - the family still forms intelligible strata
+    - the best next structural improvement, if chosen, is thinning peripheral hub namespaces rather than reorganizing the foundation
 
 - [ ] investigate adapter-edge family coherence across `psi.rpc`, `psi.app-runtime`, and `psi.tui`
   - priority: medium
