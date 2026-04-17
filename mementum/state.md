@@ -166,6 +166,11 @@ Bootstrapped on 2026-04-02.
 - All planned dispatch handlers and runtime effects exist: `prompt-submit`, `prompt-prepare-request`, `prompt-record-response`, `prompt-continue`, `prompt-finish`.
 - Request preparation now owns canonical prompt expansion metadata (`:prepared-request/input-expansion`) and dispatch-visible prompt memory recovery.
 - Follow-on cleanup also updated local docs/comments so the old preview-expansion ownership story is no longer described as current behavior.
+- Agent tool skill-prelude follow-on has now started landing:
+  - `agent` tool accepts `:skill`
+  - non-fork agent runs can seed child sessions with synthetic preloaded messages before execution
+  - child-session creation now accepts preloaded messages + cache-breakpoint overrides
+  - current prelude shape is synthetic user → assistant(skill body) → user(task) → assistant(ack)
 
 ## Custom providers — complete (`46bc655..a946fe8`)
 

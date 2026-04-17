@@ -258,15 +258,20 @@ Acceptance criteria:
 
 ## Agent tool skill prelude follow-on
 
-- Add a `:skill` argument to the `agent` tool.
-- When used without fork, the specified skill should be read and injected as a synthetic sequence in the spawned session context:
+Completed so far:
+- added a `:skill` argument to the `agent` tool
+- when used without fork, the named skill now seeds the spawned child session with a synthetic prelude sequence:
   - a synthetic "use the skill" user message
-  - the skill content
-  - the effective prompt
-  - the corresponding assistant reply
-- Insert a cache breakpoint so the reusable skill prelude is separated from the variable tail of the conversation.
-- Goal: reduce end-of-conversation breakpoints from 3 to 2 for this flow.
-- Expected benefit: better caching for repeated prompts that reuse the same skill.
+  - an assistant message containing the raw skill content
+  - a synthetic user message containing the task prompt
+  - a synthetic assistant acknowledgement
+- child-session creation now accepts preloaded messages and explicit cache-breakpoint overrides so the prelude can be seeded before execution starts
+- the agent extension now sets `#{:system :tools}` cache breakpoints for this prelude-seeded flow
+
+Remaining follow-on:
+- make the cache-breakpoint split more explicit so the reusable skill prelude is separated from the variable tail of the conversation with the intended 2-breakpoint shape
+- decide whether the assistant acknowledgement should become a more structured/canonical skill-prelude marker rather than plain text
+- consider exposing prelude seeding / source metadata through session introspection if needed for debugging
 
 ## Auto session name extension
 
