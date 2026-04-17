@@ -48,9 +48,8 @@
      :psi.startup/mutations              — mutation symbols used"
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
-   [psi.agent-session.session-state :as ss]
    [psi.engine.core :as engine]
-   [psi.introspection.graph :as graph]
+   [psi.graph.analysis :as graph]
    [psi.query.core :as query]
    [psi.query.registry :as registry]))
 

@@ -1,9 +1,9 @@
 (ns psi.introspection.graph-test
   (:require
    [clojure.test :refer [deftest testing is]]
-   [psi.introspection.core :as introspection]
-   [psi.introspection.graph :as graph]
    [psi.engine.core :as engine]
+   [psi.graph.analysis :as graph]
+   [psi.introspection.core :as introspection]
    [psi.agent-session.core :as agent-session]
    [psi.query.registry :as registry]))
 

@@ -5,8 +5,8 @@
    streaming messages) with psi.memory.core lifecycle functions."
   (:require
    [clojure.string :as str]
+   [psi.graph.analysis :as graph]
    [psi.history.git :as git]
-   [psi.introspection.graph :as graph]
    [psi.memory.core :as memory]
    [psi.memory.store :as store]
    [psi.query.core :as query]
