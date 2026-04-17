@@ -362,4 +362,9 @@
              {:doc
               "Report public fns used only by tests and fns that could be private",
               :requires ([hugoduncan.bb-task-lib.ref-report :as ref-report]),
-              :task (ref-report/run)}} :paths [".bbum/lib"]}
+              :task (ref-report/run)} 
+             gordian 
+             {:doc
+              "Analyze codebase architecture with gordian; all args passed through (run with --help for full usage)",
+              :requires ([hugoduncan.bb-task-lib.gordian :as gordian]),
+              :task (gordian/run)}} :paths [".bbum/lib"]}
