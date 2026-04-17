@@ -147,6 +147,7 @@
                                                      (when (= (:id entry) (:item/entry-id item)) i))
                                                    items))]
       (is (some? action-evt))
+      (is (nil? (get-in action-evt [:data :action-name])))
       (is (= :select-session (:ui/action-name selector)))
       (is (vector? items))
       (is (some? fork-slot))

@@ -224,12 +224,14 @@
           context-evt      (some #(when (= "context/updated" (:event %)) %) frames)
           session-slot     (some #(when (= session-id (:id %)) %) (get-in context-evt [:data :sessions]))]
       (is (some? context-evt) "context/updated must be emitted on subscribe")
-      (is (contains? (:data context-evt) :active-session-id))
+      (is (= #{:active-session-id :sessions :session-tree-widget}
+             (set (keys (:data context-evt)))))
       (is (vector? (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :display-name) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions])))
+      (is (every? #(= #{:id :item-kind :name :display-name :worktree-path :is-streaming :is-active :parent-session-id :created-at :updated-at}
+                      (set (keys %)))
+                  (get-in context-evt [:data :sessions])))
+      (is (= #{:extension-id :widget-id :placement :content-lines}
+             (set (keys (get-in context-evt [:data :session-tree-widget])))))
       (is (= "psi-session" (get-in context-evt [:data :session-tree-widget :extension-id])))
       (is (= "session-tree" (get-in context-evt [:data :session-tree-widget :widget-id])))
       (is (vector? (get-in context-evt [:data :session-tree-widget :content-lines])))
