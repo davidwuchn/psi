@@ -60,7 +60,6 @@
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
-   [psi.agent-session.prompt-request :as prompt-request]
    [psi.app-runtime.background-job-ui :as background-job-ui]
    [psi.app-runtime.nrepl-runtime :as app-nrepl]
    [psi.app-runtime.output :as output]
