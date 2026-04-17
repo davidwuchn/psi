@@ -208,7 +208,7 @@ Suggested execution order:
     - the family still forms intelligible strata
     - the best next structural improvement, if chosen, is thinning peripheral hub namespaces rather than reorganizing the foundation
 
-- [ ] investigate adapter-edge family coherence across `psi.rpc`, `psi.app-runtime`, and `psi.tui`
+- [x] investigate adapter-edge family coherence across `psi.rpc`, `psi.app-runtime`, and `psi.tui`
   - priority: medium
   - why now: recent convergence work moved ownership into app-runtime; this check verifies the adapters remain thin
   - question: do backend-owned projections and edge rendering responsibilities remain thin, or are selector/tree/session-summary concepts drifting into parallel abstractions across adapter families?
@@ -218,11 +218,31 @@ Suggested execution order:
     - `bb gordian subgraph psi.tui`
     - `bb gordian explain-pair psi.app-runtime.selectors psi.tui.session-selector`
     - `bb gordian explain-pair psi.app-runtime.context-summary psi.rpc.session.command-tree`
-  - acceptance criteria:
-    - explicit responsibility map for `rpc` transport/emission, `app-runtime` shared projection semantics, and `tui` rendering
-    - identify any duplicated selector/tree/session-summary concepts that should be unified or renamed
-    - decision on whether current adapter-edge layering is stable enough to leave alone
-    - identify at least one minimal next slice, if any
+  - current findings:
+    - `psi.rpc` remains a high-reach peripheral family, but the strongest cross-family signal is inside RPC itself: `psi.rpc.session.commands` ↔ `psi.rpc.session.frontend-actions` shows hidden coupling in 2 lenses and is the best local extraction candidate
+    - `psi.app-runtime` remains the semantic projection owner; Gordian still sees conceptual overlap with TUI selector/tree/widget rendering, but the overlap appears to be expected shared vocabulary rather than duplicated ownership
+    - `psi.tui` is cleanly outbound-only with no incoming project edges; it behaves like a leaf rendering adapter family
+    - `psi.app-runtime.selectors` ↔ `psi.tui.session-selector` and `psi.app-runtime.context-summary` ↔ `psi.rpc.session.command-tree` are conceptually close, but neither pair currently indicates change coupling or a missing new shared namespace
+  - responsibility map:
+    - `psi.rpc`
+      - owns transport, request routing, RPC response envelopes, and session-scoped command handling
+      - should stay adapter/transport-facing rather than becoming the owner of shared semantic projection models
+    - `psi.app-runtime`
+      - owns canonical shared projection semantics for context snapshots, tree/session summaries, selectors, extension UI snapshots, background-job widgets, and transcript reconstruction
+      - is the correct home for adapter-neutral UI/data projections reused across frontends
+    - `psi.tui`
+      - owns rendering, local interaction mechanics, terminal protocol details, and adapter-local state transitions
+      - should consume app-runtime/shared projections rather than reconstructing backend semantics
+  - duplicated concept read:
+    - selector/tree/session-summary concepts still appear in all three families, but most of the duplication is naming/vocabulary rather than duplicated ownership
+    - the one strongest local duplication signal is within RPC command handling, especially `psi.rpc.session.commands` and `psi.rpc.session.frontend-actions`
+    - no evidence currently justifies extracting a new cross-family selector/tree namespace beyond the existing `psi.app-runtime` projection layer
+  - final verdict:
+    - current adapter-edge layering is stable enough to leave alone
+    - `app-runtime` remains the right semantic center, `rpc` the right transport edge, and `tui` the right render edge
+    - the best next slice, if chosen, is to thin the RPC edge internally rather than restructure the cross-family layering
+  - minimal next slice:
+    - investigate and possibly extract the shared action/result handling seam between `psi.rpc.session.commands` and `psi.rpc.session.frontend-actions`
 
 - [ ] investigate graph/introspection ownership
   - priority: medium/low
