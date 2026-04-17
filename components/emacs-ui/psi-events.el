@@ -145,57 +145,9 @@ falls back to `(session <8-char id prefix>)`."
   (or (psi-emacs--session-explicit-display-name slot)
       (format "(session %s)" (psi-emacs--session-short-id slot))))
 
-(defun psi-emacs--session-clock-label (timestamp)
-  "Return compact local HH:MM label for TIMESTAMP, or nil when unavailable."
-  (when timestamp
-    (let ((time (cond
-                 ((stringp timestamp)
-                  (ignore-errors (date-to-time timestamp)))
-                 ((consp timestamp)
-                  timestamp)
-                 (t nil))))
-      (when time
-        (format-time-string "%H:%M" time)))))
-
-(defun psi-emacs--session-time-range-label (created-at updated-at)
-  "Return compact `HH:MM / HH:MM` label from CREATED-AT and UPDATED-AT."
-  (let ((start (psi-emacs--session-clock-label created-at))
-        (changed (psi-emacs--session-clock-label updated-at)))
-    (cond
-     ((and start changed) (format "%s / %s" start changed))
-     (start start)
-     (changed changed)
-     (t nil))))
-
 (defun psi-emacs--session-tree-line-label (slot)
-  "Return the rendered base label for a session tree SLOT.
-
-Prefers backend-provided `:label` text when present. Falls back to the legacy
-frontend formatter for compatibility in local tests and non-canonical payloads."
-  (or (psi-emacs--event-data-get slot '(:label label))
-      (let* ((item-kind  (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
-                             "session"))
-             (base-name  (psi-emacs--session-display-name slot))
-             (short-id   (and (equal item-kind "session")
-                              (psi-emacs--session-short-id slot)))
-             (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
-             (updated-at (psi-emacs--event-data-get slot '(:updated-at updated-at :updatedAt updatedAt)))
-             (time-range (and (equal item-kind "session")
-                              (psi-emacs--session-time-range-label created-at updated-at)))
-             (worktree   (and (equal item-kind "session")
-                              (string-trim
-                               (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
-                                                                     :worktreePath worktreePath
-                                                                     :cwd cwd))
-                                   "")))))
-        (concat (if (equal item-kind "fork-point") "⎇ " "")
-                base-name
-                (when (and (stringp short-id) (not (string-empty-p short-id)))
-                  (format " [%s]" short-id))
-                (when time-range
-                  (format " — %s" time-range))
-                (when (and (stringp worktree) (not (string-empty-p worktree)))
-                  (format " — %s" worktree))))))
+  "Return the backend-provided canonical label for a session tree SLOT."
+  (psi-emacs--event-data-get slot '(:label label)))
 
 (defun psi-emacs--handle-context-updated-event (data)
   "Handle `context/updated` DATA: store snapshot and refresh session tree widget."

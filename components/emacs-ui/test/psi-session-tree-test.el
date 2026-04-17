@@ -398,31 +398,6 @@ summaries and made toggling body visibility ineffective after returning."
                     (:display-name . "Tree label")
                     (:name . nil))))))
 
-(ert-deftest psi-session-clock-label-renders-hour-minute-shape ()
-  "session clock labels render HH:MM shape when timestamp is available."
-  (let ((label (psi-emacs--session-clock-label "2026-03-16T09:12:00Z")))
-    (should (stringp label))
-    (should (string-match-p "^[0-9][0-9]:[0-9][0-9]$" label))))
-
-(ert-deftest psi-session-time-range-label-renders-compact-start-and-change-times ()
-  "session time range labels render compact start and change times."
-  (let ((label (psi-emacs--session-time-range-label
-                "2026-03-16T09:12:00Z"
-                "2026-03-16T10:47:00Z")))
-    (should (stringp label))
-    (should (string-match-p "^[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]$" label))))
-
-(ert-deftest psi-tree-session-line-label-includes-id-times-and-worktree ()
-  "tree line labels include short id, compact times, and worktree path."
-  (let ((label (psi-emacs--session-tree-line-label
-                '((:id . "abc123456789")
-                  (:name . "Alpha")
-                  (:worktree-path . "/repo/alpha")
-                  (:created-at . "2026-03-16T09:12:00Z")
-                  (:updated-at . "2026-03-16T10:47:00Z")))))
-    (should (string-prefix-p "Alpha [abc12345] — " label))
-    (should (string-suffix-p " — /repo/alpha" label))
-    (should (string-match-p "[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]" label))))
 
 (ert-deftest psi-tree-session-candidates-include-id-and-support-command-keys ()
   "tree candidates expose backend labels and support command payload keys."
