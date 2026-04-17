@@ -201,6 +201,32 @@
       (when-let [f (get-in state [:workers :ui-watch-loop])]
         (future-cancel f)))))
 
+(deftest rpc-subscribe-ui-topics-emits-initial-notification-snapshot-test
+  (testing "subscribe ui/notification emits current visible notifications immediately"
+    (let [[ctx _] (support/create-session-context)
+          _       (dispatch/dispatch! ctx :session/ui-notify
+                                      {:extension-id "ext.demo"
+                                       :message "hello notification"
+                                       :level :info}
+                                      {:origin :test})
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{}}})
+          handler (support/make-handler ctx state)
+          {:keys [out-lines state]}
+          (support/run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                                 "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/notification\"]}}\n")
+                            handler
+                            state
+                            100)
+          frames            (support/parse-frames out-lines)
+          notification-evt  (some #(when (= "ui/notification" (:event %)) %) frames)]
+      (is (some? notification-evt))
+      (is (= "ext.demo" (get-in notification-evt [:data :extension-id])))
+      (is (= "hello notification" (get-in notification-evt [:data :message])))
+      (is (= "info" (get-in notification-evt [:data :level])))
+      (when-let [f (get-in state [:workers :ui-watch-loop])]
+        (future-cancel f)))))
+
 (deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
   (testing "after subscribe, ui widget updates stream without a prompt request"
     (let [[ctx _]     (support/create-session-context)
