@@ -262,6 +262,71 @@
                       {:job-id job-id :thread-id thread-id})))
     job))
 
+(def eql-attrs
+  [:psi.background-job/id
+   :psi.background-job/thread-id
+   :psi.background-job/tool-call-id
+   :psi.background-job/tool-name
+   :psi.background-job/job-kind
+   :psi.background-job/workflow-ext-path
+   :psi.background-job/workflow-id
+   :psi.background-job/job-seq
+   :psi.background-job/started-at
+   :psi.background-job/completed-at
+   :psi.background-job/completed-seq
+   :psi.background-job/status
+   :psi.background-job/terminal-payload
+   :psi.background-job/terminal-payload-file
+   :psi.background-job/cancel-requested-at
+   :psi.background-job/terminal-message-emitted
+   :psi.background-job/terminal-message-emitted-at
+   :psi.background-job/is-terminal
+   :psi.background-job/is-non-terminal])
+
+(defn job->eql
+  "Project a runtime background job map onto the canonical EQL/public attr shape."
+  [job]
+  {:psi.background-job/id                          (:job-id job)
+   :psi.background-job/thread-id                   (:thread-id job)
+   :psi.background-job/tool-call-id                (:tool-call-id job)
+   :psi.background-job/tool-name                   (:tool-name job)
+   :psi.background-job/job-kind                    (:job-kind job)
+   :psi.background-job/workflow-ext-path           (:workflow-ext-path job)
+   :psi.background-job/workflow-id                 (:workflow-id job)
+   :psi.background-job/job-seq                     (:job-seq job)
+   :psi.background-job/started-at                  (:started-at job)
+   :psi.background-job/completed-at                (:completed-at job)
+   :psi.background-job/completed-seq               (:completed-seq job)
+   :psi.background-job/status                      (:status job)
+   :psi.background-job/terminal-payload            (:terminal-payload job)
+   :psi.background-job/terminal-payload-file       (:terminal-payload-file job)
+   :psi.background-job/cancel-requested-at         (:cancel-requested-at job)
+   :psi.background-job/terminal-message-emitted    (boolean (:terminal-message-emitted job))
+   :psi.background-job/terminal-message-emitted-at (:terminal-message-emitted-at job)
+   :psi.background-job/is-terminal                 (terminal-status? (:status job))
+   :psi.background-job/is-non-terminal             (non-terminal-status? (:status job))})
+
+(defn eql->job
+  "Project a canonical EQL/public background job map back onto the runtime job shape."
+  [job]
+  {:job-id                      (:psi.background-job/id job)
+   :thread-id                   (:psi.background-job/thread-id job)
+   :tool-call-id                (:psi.background-job/tool-call-id job)
+   :tool-name                   (:psi.background-job/tool-name job)
+   :job-kind                    (:psi.background-job/job-kind job)
+   :workflow-ext-path           (:psi.background-job/workflow-ext-path job)
+   :workflow-id                 (:psi.background-job/workflow-id job)
+   :job-seq                     (:psi.background-job/job-seq job)
+   :started-at                  (:psi.background-job/started-at job)
+   :completed-at                (:psi.background-job/completed-at job)
+   :completed-seq               (:psi.background-job/completed-seq job)
+   :status                      (:psi.background-job/status job)
+   :terminal-payload            (:psi.background-job/terminal-payload job)
+   :terminal-payload-file       (:psi.background-job/terminal-payload-file job)
+   :cancel-requested-at         (:psi.background-job/cancel-requested-at job)
+   :terminal-message-emitted    (:psi.background-job/terminal-message-emitted job)
+   :terminal-message-emitted-at (:psi.background-job/terminal-message-emitted-at job)})
+
 (defn pending-terminal-jobs-in
   "Return terminal jobs for thread-id that have not yet emitted synthetic messages,
    ordered by completion time with deterministic tie-breakers."

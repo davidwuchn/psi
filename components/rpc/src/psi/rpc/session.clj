@@ -4,6 +4,7 @@
    [clojure.edn :as edn]
    [clojure.string :as str]
    [psi.agent-session.background-job-runtime :as bg-rt]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
@@ -181,7 +182,7 @@
                       (bg-rt/list-background-jobs-in! ctx thread-id statuses*)
                       (bg-rt/list-background-jobs-in! ctx thread-id))]
       (response-frame (:id request) "list_background_jobs" true
-                      {:jobs (mapv background-job->rpc-view jobs)}))))
+                      {:jobs (mapv (comp background-job->rpc-view bg-jobs/eql->job bg-jobs/job->eql) jobs)}))))
 
 (defn- handle-inspect-background-job!
   [ctx request params session-id]
@@ -189,7 +190,7 @@
         thread-id (request-thread-id ctx session-id params)
         job       (bg-rt/inspect-background-job-in! ctx thread-id job-id)]
     (response-frame (:id request) "inspect_background_job" true
-                    {:job (background-job->rpc-view job)})))
+                    {:job (background-job->rpc-view (bg-jobs/eql->job (bg-jobs/job->eql job)))})))
 
 (defn- handle-cancel-background-job!
   [ctx request params session-id]
@@ -198,7 +199,7 @@
         job       (bg-rt/cancel-background-job-in! ctx thread-id job-id :user)]
     (response-frame (:id request) "cancel_background_job" true
                     {:accepted true
-                     :job (background-job->rpc-view job)})))
+                     :job (background-job->rpc-view (bg-jobs/eql->job (bg-jobs/job->eql job)))})))
 
 (defn- normalize-provider [provider]
   (cond

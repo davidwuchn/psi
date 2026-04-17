@@ -24,6 +24,7 @@
      nil            — not a command (pass through to agent)"
   (:require
    [clojure.string :as str]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
    [psi.app-runtime.background-job-view :as app-bg-view]
    [psi.agent-session.extensions :as ext]
@@ -429,23 +430,7 @@
 
 (defn- eql-job->runtime-job
   [job]
-  {:job-id                    (:psi.background-job/id job)
-   :thread-id                 (:psi.background-job/thread-id job)
-   :tool-call-id              (:psi.background-job/tool-call-id job)
-   :tool-name                 (:psi.background-job/tool-name job)
-   :job-kind                  (:psi.background-job/job-kind job)
-   :workflow-ext-path         (:psi.background-job/workflow-ext-path job)
-   :workflow-id               (:psi.background-job/workflow-id job)
-   :job-seq                   (:psi.background-job/job-seq job)
-   :started-at                (:psi.background-job/started-at job)
-   :completed-at              (:psi.background-job/completed-at job)
-   :completed-seq             (:psi.background-job/completed-seq job)
-   :status                    (:psi.background-job/status job)
-   :terminal-payload          (:psi.background-job/terminal-payload job)
-   :terminal-payload-file     (:psi.background-job/terminal-payload-file job)
-   :cancel-requested-at       (:psi.background-job/cancel-requested-at job)
-   :terminal-message-emitted  (:psi.background-job/terminal-message-emitted job)
-   :terminal-message-emitted-at (:psi.background-job/terminal-message-emitted-at job)})
+  (bg-jobs/eql->job job))
 
 (defn- dispatch-jobs-command
   [ctx session-id trimmed]

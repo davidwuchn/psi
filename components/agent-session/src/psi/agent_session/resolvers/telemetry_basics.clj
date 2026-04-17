@@ -13,47 +13,7 @@
   [:running :pending-cancel :completed :failed :cancelled :timed-out])
 
 (def ^:private background-job-output
-  [:psi.background-job/id
-   :psi.background-job/thread-id
-   :psi.background-job/tool-call-id
-   :psi.background-job/tool-name
-   :psi.background-job/job-kind
-   :psi.background-job/workflow-ext-path
-   :psi.background-job/workflow-id
-   :psi.background-job/job-seq
-   :psi.background-job/started-at
-   :psi.background-job/completed-at
-   :psi.background-job/completed-seq
-   :psi.background-job/status
-   :psi.background-job/terminal-payload
-   :psi.background-job/terminal-payload-file
-   :psi.background-job/cancel-requested-at
-   :psi.background-job/terminal-message-emitted
-   :psi.background-job/terminal-message-emitted-at
-   :psi.background-job/is-terminal
-   :psi.background-job/is-non-terminal])
-
-(defn- background-job->eql
-  [job]
-  {:psi.background-job/id                          (:job-id job)
-   :psi.background-job/thread-id                   (:thread-id job)
-   :psi.background-job/tool-call-id                (:tool-call-id job)
-   :psi.background-job/tool-name                   (:tool-name job)
-   :psi.background-job/job-kind                    (:job-kind job)
-   :psi.background-job/workflow-ext-path           (:workflow-ext-path job)
-   :psi.background-job/workflow-id                 (:workflow-id job)
-   :psi.background-job/job-seq                     (:job-seq job)
-   :psi.background-job/started-at                  (:started-at job)
-   :psi.background-job/completed-at                (:completed-at job)
-   :psi.background-job/completed-seq               (:completed-seq job)
-   :psi.background-job/status                      (:status job)
-   :psi.background-job/terminal-payload            (:terminal-payload job)
-   :psi.background-job/terminal-payload-file       (:terminal-payload-file job)
-   :psi.background-job/cancel-requested-at         (:cancel-requested-at job)
-   :psi.background-job/terminal-message-emitted    (boolean (:terminal-message-emitted job))
-   :psi.background-job/terminal-message-emitted-at (:terminal-message-emitted-at job)
-   :psi.background-job/is-terminal                 (bg-jobs/terminal-status? (:status job))
-   :psi.background-job/is-non-terminal             (bg-jobs/non-terminal-status? (:status job))})
+  bg-jobs/eql-attrs)
 
 (defn- session-thread-id
   [_agent-session-ctx session-id]
@@ -78,7 +38,7 @@
                     [])]
     {:psi.agent-session/background-job-count    (count jobs)
      :psi.agent-session/background-job-statuses background-job-status-order
-     :psi.agent-session/background-jobs         (mapv background-job->eql jobs)}))
+     :psi.agent-session/background-jobs         (mapv bg-jobs/job->eql jobs)}))
 
 (pco/defresolver agent-session-dispatch-registry
   [{:keys [psi/agent-session-ctx]}]

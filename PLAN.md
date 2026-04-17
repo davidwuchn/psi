@@ -89,7 +89,7 @@ Suggested execution order:
     - first migrated callers are `psi.ai.providers.openai.content` and `psi.ai.providers.anthropic`
     - follow-on question remains whether any overlap with higher-level display text helpers should be converged later without inverting component dependencies
 
-- [ ] investigate background-job family seams
+- [~] investigate background-job family seams
   - priority: high
   - why now: repeated background-job concepts span runtime state, resolver/telemetry reads, shared projections, and UI rendering
   - scope:
@@ -105,11 +105,25 @@ Suggested execution order:
     - `bb gordian explain-pair psi.agent-session.resolvers.telemetry-basics psi.app-runtime.background-job-ui`
     - `bb gordian explain psi.agent-session.background-jobs`
     - `bb gordian explain psi.app-runtime.background-job-ui`
-  - acceptance criteria:
+  - current findings:
+    - Gordian shows hidden conceptual coupling between runtime/resolver and app-runtime background-job slices, but no change coupling and no direct structural breakage
+    - `psi.agent-session.background-jobs` is the stable canonical runtime state owner with no project dependencies and multiple dependents
+    - `psi.app-runtime.background-job-view` / `background-job-widgets` are already the canonical projection/render-summary layer for adapter-facing UI state
+    - `psi.app-runtime.background-job-ui` is an orchestration/projection installer that currently depends directly on runtime job maps and projection helpers
+    - duplication still exists in the public background-job shape: EQL attr projection lives in `psi.agent-session.resolvers.telemetry-basics`, while commands/RPC re-shape the same job maps again for view and transport needs
+  - provisional verdict:
+    - this mostly looks like the expected runtime → projection → rendering split, not a missing brand-new domain namespace
+    - the highest-leverage consolidation is to centralize the canonical public/EQL background-job projection in `psi.agent-session.background-jobs`
+    - no rename or new cross-layer namespace appears necessary yet
+  - completed slice:
+    - moved canonical background-job EQL attr list and runtime↔EQL projection helpers into `psi.agent-session.background-jobs`
+    - updated telemetry resolvers and command-layer runtime conversion to use the shared projection helpers
+  - next minimal slice:
+    - continue consolidating repeated public-shape conversion at the RPC boundary if it still duplicates summary/public field selection after the EQL projection centralization
+  - remaining acceptance criteria:
     - explicit ownership map for runtime state, public summary/projection, and adapter rendering concerns
-    - decision on whether to extract or rename a canonical shared background-job model namespace
-    - identify any duplicated concepts/fields that should be consolidated
-    - identify at least one minimal next slice, if any
+    - decide whether RPC transport shaping should also be centralized or remain local transport formatting
+    - identify any remaining duplicated concepts/fields after the current projection centralization
 
 - [ ] investigate `psi.agent-session` family internal structure
   - priority: medium/high
