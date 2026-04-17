@@ -357,7 +357,12 @@
          get-key*    (or get-api-key-fn (fn [_provider] nil))
          api         {:path path*
                       :query query*
+                      :query-session (fn [session-id eql-query]
+                                       (query* {:session-id session-id
+                                                :query eql-query}))
                       :mutate mutate*
+                      :mutate-session (fn [session-id op params]
+                                        (mutate* op (assoc (or params {}) :session-id session-id)))
                       :create-session (fn [{:keys [session-name worktree-path system-prompt thinking-level] :as opts}]
                                         (mutate* 'psi.extension/create-session
                                                  (cond-> {:session-name session-name

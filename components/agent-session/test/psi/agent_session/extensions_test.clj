@@ -645,6 +645,19 @@
                :event-name "rename-checkpoint"
                :payload {:session-id "s1"}})))))
 
+  (testing "API query-session and mutate-session target explicit sessions"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:query-fn  (fn [req] {:req req})
+                       :mutate-fn (fn [op params] {:op op :params params})}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= {:req {:session-id "s2"
+                    :query [:psi.agent-session/message-history]}}
+             ((:query-session api) "s2" [:psi.agent-session/message-history])))
+      (is (= {:op 'psi.extension/set-session-name
+              :params {:session-id "s2" :name "New name" :ext-path "/ext/test"}}
+             ((:mutate-session api) "s2" 'psi.extension/set-session-name {:name "New name"})))))
+
   (testing "API prompt contribution helpers delegate to runtime"
     (let [reg   (ext/create-registry)
           _     (ext/register-extension-in! reg "/ext/test")

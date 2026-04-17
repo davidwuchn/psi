@@ -241,6 +241,17 @@
         query
         (fn [eql-query]
           (runtime-query :query eql-query))
+        query-session
+        (fn [session-id eql-query]
+          (if query-fn
+            (query-fn {:session-id session-id
+                       :query eql-query})
+            (runtime-not-initialized :query-session)))
+        mutate-session
+        (fn [session-id op-sym params]
+          (if mutate-fn
+            (mutate-fn op-sym (assoc (or params {}) :session-id session-id))
+            (runtime-not-initialized :mutate-session)))
         create-session!
         (fn [opts]
           (mutate-required :create-session
@@ -285,7 +296,9 @@
      :unregister-prompt-contribution unregister-prompt-contribution!
      :list-prompt-contributions      list-prompt-contributions
      :query                          query
+     :query-session                  query-session
      :mutate                         runtime-mutate
+     :mutate-session                 mutate-session
      :create-session                 create-session!
      :switch-session                 switch-session!
      :get-api-key                    get-api-key

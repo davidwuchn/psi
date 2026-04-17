@@ -16,12 +16,14 @@
         current-session-data (fn []
                                (ss/get-session-data-in ctx session-id))]
     {:query-fn
-     (fn [eql-query]
-       (runtime-eql/query-extension-state register-resolvers! register-mutations! ctx session-id eql-query))
+     (fn [req]
+       (if (and (map? req) (contains? req :query))
+         (runtime-eql/query-extension-state register-resolvers! register-mutations! ctx (or (:session-id req) session-id) (:query req))
+         (runtime-eql/query-extension-state register-resolvers! register-mutations! ctx session-id req)))
 
      :mutate-fn
      (fn [op-sym params]
-       (runtime-eql/run-extension-mutation-in! ctx session-id op-sym params))
+       (runtime-eql/run-extension-mutation-in! ctx (or (:session-id params) session-id) op-sym params))
 
      :get-api-key-fn
      (fn [provider]
