@@ -173,9 +173,7 @@
          not-empty)))
 
 (defn build-prepared-request
-  "Build a minimal prepared-request artifact from canonical session state.
-   This first-pass scaffold intentionally consumes the already-composed
-   effective system prompt from session data.
+  "Build a prepared-request artifact from canonical session state.
 
    Input opts:
    - :turn-id

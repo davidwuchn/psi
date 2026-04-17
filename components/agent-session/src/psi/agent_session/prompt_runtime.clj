@@ -134,12 +134,11 @@
 
 (defn await-assistant-message!
   "Wait for a live turn to finish and return the final assistant message."
-  [turn-ctx done-p last-progress-ms timed-out? {:keys [idle-timeout-ms wait-poll-ms abort-pred wait-fn]}]
-  (let [wait!    (or wait-fn wait-for-turn-result)
-        result   (wait! done-p last-progress-ms
-                        (cond-> {:idle-timeout-ms idle-timeout-ms
-                                 :wait-poll-ms    wait-poll-ms}
-                          abort-pred (assoc :abort-pred abort-pred)))]
+  [turn-ctx done-p last-progress-ms timed-out? {:keys [idle-timeout-ms wait-poll-ms abort-pred]}]
+  (let [result (wait-for-turn-result done-p last-progress-ms
+                                     (cond-> {:idle-timeout-ms idle-timeout-ms
+                                              :wait-poll-ms    wait-poll-ms}
+                                       abort-pred (assoc :abort-pred abort-pred)))]
     (cond
       (= ::timeout result)
       (do (reset! timed-out? true)

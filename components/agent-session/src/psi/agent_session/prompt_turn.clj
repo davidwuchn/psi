@@ -1,9 +1,9 @@
 (ns psi.agent-session.prompt-turn
-  "Direct-path prompt turn orchestration.
+  "Prompt turn orchestration.
 
    Owns recursive tool-use progression while delegating canonical request
    preparation, live turn execution, and assistant-message journaling to the
-   shared prompt runtime path."
+   prompt runtime path."
   (:require
    [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-request :as prompt-request]
