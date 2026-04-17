@@ -95,6 +95,20 @@
               :prompt-contributions []}
              (:psi.agent-session/prompt-layers result)))))
 
+  (testing "query-in omits fallback developer prompt when none is configured"
+    (let [[ctx session-id] (create-session-context)
+          result (session/query-in ctx session-id [:psi.agent-session/developer-prompt
+                                                   :psi.agent-session/developer-prompt-source
+                                                   :psi.agent-session/prompt-layers])]
+      (is (nil? (:psi.agent-session/developer-prompt result)))
+      (is (nil? (:psi.agent-session/developer-prompt-source result)))
+      (is (= {:base-system-prompt ""
+              :system-prompt ""
+              :developer-prompt nil
+              :developer-prompt-source nil
+              :prompt-contributions []}
+             (:psi.agent-session/prompt-layers result)))))
+
   (testing "query-in resolves prompt lifecycle summaries"
     (let [[ctx session-id] (create-session-context)
           prepared-at (java.time.Instant/now)

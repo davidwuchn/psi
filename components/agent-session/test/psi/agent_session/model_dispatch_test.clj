@@ -351,7 +351,18 @@
         (is (= {:system-prompt "sys"
                 :developer-prompt "dev"
                 :developer-prompt-source :explicit}
-               (dissoc (:event-data entry) :session-id)))))))
+               (dissoc (:event-data entry) :session-id))))))
+
+  (testing "bootstrap-in! leaves developer layer unset when none is provided"
+    (let [[ctx session-id] (create-session-context)]
+      (bootstrap/bootstrap-in!
+       ctx session-id
+       {:register-global-query? false
+        :system-prompt          "sys"})
+      (let [sd (ss/get-session-data-in ctx session-id)]
+        (is (= "sys" (:base-system-prompt sd)))
+        (is (nil? (:developer-prompt sd)))
+        (is (nil? (:developer-prompt-source sd)))))))
 
 (deftest thinking-level-test
   (testing "set-thinking-level-in! updates level"

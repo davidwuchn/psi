@@ -16,9 +16,9 @@
      :interrupt-pending     — true when interrupt is scheduled for current turn boundary
      :interrupt-requested-at — timestamp when deferred interrupt was requested
      :base-system-prompt    — assembled base system prompt string (without extension contributions)
-     :system-prompt         — assembled runtime system prompt string (base + extension contributions)
+     :system-prompt         — assembled runtime system prompt string (base + developer + extension contributions)
      :developer-prompt      — optional developer instruction layer string
-     :developer-prompt-source — :fallback | :env | :explicit
+     :developer-prompt-source — nil | :env | :explicit
      :steering-messages     — queued steer texts (injected mid-run)
      :follow-up-messages    — queued follow-up texts (delivered after run)
      :retry-attempt         — current retry counter (0 = not retrying)
@@ -135,7 +135,7 @@
    [:cache-breakpoints {:optional true} [:set cache-breakpoint-schema]]
    [:system-prompt-build-opts {:optional true} [:maybe :map]]
    [:developer-prompt {:optional true} [:maybe :string]]
-   [:developer-prompt-source {:optional true} [:enum :fallback :env :explicit]]
+   [:developer-prompt-source {:optional true} [:maybe [:enum :env :explicit]]]
    [:steering-messages [:vector :string]]
    [:follow-up-messages [:vector :string]]
    [:retry-attempt :int]
@@ -220,7 +220,7 @@
      :prompt-mode              :lambda
      :cache-breakpoints       #{:system}
      :developer-prompt        nil
-     :developer-prompt-source :fallback
+     :developer-prompt-source nil
      :steering-messages       []
      :follow-up-messages      []
      :retry-attempt           0

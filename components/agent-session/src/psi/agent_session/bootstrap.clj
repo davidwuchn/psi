@@ -101,10 +101,9 @@
     (session/register-resolvers!)
     (session/register-mutations! mutations/all-mutations))
   (let [resolved-developer-prompt (if (= developer-prompt ::unset)
-                                    system-prompt
+                                    nil
                                     developer-prompt)
-        resolved-source (if (= developer-prompt ::unset)
-                          :fallback
+        resolved-source (when-not (= developer-prompt ::unset)
                           developer-prompt-source)]
     (dispatch/dispatch! ctx
                         :session/bootstrap-prompt-state
