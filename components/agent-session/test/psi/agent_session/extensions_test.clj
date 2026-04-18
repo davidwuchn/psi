@@ -617,7 +617,19 @@
       (is (= {:op 'psi.extension/set-worktree-path
               :params {:session-id "s1"
                        :worktree-path "/repo/feature"}}
-             ((:set-worktree-path api) "s1" "/repo/feature")))))
+             ((:set-worktree-path api) "s1" "/repo/feature")))
+      (is (= {:op 'psi.extension/notify
+              :params {:content "done"}}
+             ((:notify api) "done")))
+      (is (= {:op 'psi.extension/notify
+              :params {:content "done"
+                       :role "assistant"
+                       :custom-type "workflow-status"}}
+             ((:notify api) "done" {:role "assistant" :custom-type "workflow-status"})))
+      (is (= {:op 'psi.extension/append-message
+              :params {:role "user"
+                       :content "Please continue"}}
+             ((:append-message api) "user" "Please continue")))))
 
   (testing "extension UI dispatch includes ext-id so extension-origin events are authorized"
     (let [[ctx session-id] (test-support/make-session-ctx {})

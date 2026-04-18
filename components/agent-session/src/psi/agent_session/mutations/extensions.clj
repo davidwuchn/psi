@@ -90,8 +90,54 @@
      :psi.extension/path    path
      :psi.extension/error   error}))
 
+(defn- reconcile-background-jobs!
+  [agent-session-ctx session-id]
+  (when agent-session-ctx
+    (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx session-id)
+    (future
+      (dotimes [_ 12]
+        (Thread/sleep 100)
+        (try
+          (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx session-id)
+          (catch Exception _ nil))))))
+
+(pco/defmutation notify
+  "Emit an extension-authored UI-visible notification that is excluded from future LLM-visible conversation assembly."
+  [_ {:keys [psi/agent-session-ctx session-id role content custom-type]}]
+  {::pco/op-name 'psi.extension/notify
+   ::pco/params  [:psi/agent-session-ctx :session-id :content]
+   ::pco/output  [:psi.extension/message]}
+  (let [msg (ext-rt/notify-extension-in! agent-session-ctx
+                                         session-id
+                                         (or role "assistant")
+                                         (or content "")
+                                         custom-type)]
+    (reconcile-background-jobs! agent-session-ctx session-id)
+    {:psi.extension/message msg}))
+
+(pco/defmutation append-message
+  "Append an extension-authored synthetic message that becomes part of future LLM-visible conversation assembly."
+  [_ {:keys [psi/agent-session-ctx session-id role content]}]
+  {::pco/op-name 'psi.extension/append-message
+   ::pco/params  [:psi/agent-session-ctx :session-id :role :content]
+   ::pco/output  [:psi.extension/message]}
+  (let [role* (or role "assistant")]
+    (when-not (#{{"assistant" "user"} "assistant" "user"} role*)
+      (throw (ex-info "append-message requires role \"assistant\" or \"user\""
+                      {:role role*})))
+    (let [msg (ext-rt/append-extension-message-in! agent-session-ctx
+                                                   session-id
+                                                   role*
+                                                   (or content ""))]
+      (reconcile-background-jobs! agent-session-ctx session-id)
+      {:psi.extension/message msg})))
+
 (pco/defmutation send-message
-  "Inject an extension message into the session journal."
+  "Compatibility wrapper for the older ambiguous extension message API.
+
+   Migration semantics:
+   - custom-type present    => UI-visible, non-conversation notification
+   - no custom-type present => conversation-visible synthetic message"
   [_ {:keys [psi/agent-session-ctx session-id role content custom-type]}]
   {::pco/op-name 'psi.extension/send-message
    ::pco/params  [:psi/agent-session-ctx :session-id :role :content]
@@ -101,14 +147,7 @@
                                                (or role "assistant")
                                                (or content "")
                                                custom-type)]
-    (when agent-session-ctx
-      (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx session-id)
-      (future
-        (dotimes [_ 12]
-          (Thread/sleep 100)
-          (try
-            (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx session-id)
-            (catch Exception _ nil)))))
+    (reconcile-background-jobs! agent-session-ctx session-id)
     {:psi.extension/message msg}))
 
 (pco/defmutation schedule-event
@@ -138,5 +177,7 @@
    set-allowed-events
    register-shortcut
    add-extension
+   notify
+   append-message
    send-message
    schedule-event])

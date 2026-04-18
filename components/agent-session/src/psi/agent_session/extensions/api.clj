@@ -268,6 +268,20 @@
                            'psi.extension/set-worktree-path
                            {:session-id session-id
                             :worktree-path worktree-path}))
+        notify!
+        (fn [content & [{:keys [role custom-type] :as opts}]]
+          (let [params (cond-> {:content content}
+                         (contains? opts :role) (assoc :role role)
+                         (contains? opts :custom-type) (assoc :custom-type custom-type))]
+            (mutate-required :notify
+                             'psi.extension/notify
+                             params)))
+        append-message!
+        (fn [role content]
+          (mutate-required :append-message
+                           'psi.extension/append-message
+                           {:role role
+                            :content content}))
         get-api-key
         (fn [provider]
           (if get-api-key-fn
@@ -307,7 +321,9 @@
      :mutate-session                 mutate-session
      :create-session                 create-session!
      :switch-session                 switch-session!
-     :set-worktree-path             set-worktree-path!
+     :set-worktree-path              set-worktree-path!
+     :notify                         notify!
+     :append-message                 append-message!
      :get-api-key                    get-api-key
      :events                         events
      :ui-type                        ui-type

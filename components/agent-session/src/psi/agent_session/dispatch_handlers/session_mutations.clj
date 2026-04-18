@@ -431,7 +431,7 @@
         :effects [{:effect/type :runtime/agent-clear-steering-queue}]})))
 
   (register-core-handler!
-   :session/send-extension-message
+   :session/notify-extension
    (fn [_ctx {:keys [message]}]
      {:effects [{:effect/type :runtime/agent-append-message
                  :message message}
@@ -442,6 +442,29 @@
                 {:effect/type :runtime/event-queue-offer
                  :event {:type :external-message
                          :message message}}]}))
+
+  (register-core-handler!
+   :session/append-extension-message
+   (fn [_ctx {:keys [message]}]
+     {:effects [{:effect/type :runtime/agent-append-message
+                 :message message}
+                {:effect/type :runtime/agent-emit
+                 :event {:type :message-start :message message}}
+                {:effect/type :runtime/agent-emit
+                 :event {:type :message-end :message message}}
+                {:effect/type :runtime/event-queue-offer
+                 :event {:type :external-message
+                         :message message}}]}))
+
+  (register-core-handler!
+   :session/send-extension-message
+   (fn [ctx {:keys [message]}]
+     (dispatch/dispatch! ctx
+                         (if (:custom-type message)
+                           :session/notify-extension
+                           :session/append-extension-message)
+                         {:message message}
+                         {:origin :core})))
 
   (register-core-handler!
    :session/schedule-extension-event

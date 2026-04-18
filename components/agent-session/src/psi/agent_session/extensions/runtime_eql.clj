@@ -25,6 +25,8 @@
     'psi.extension.tool/update
     'psi.extension/run-tool-plan
     'psi.extension.tool/chain
+    'psi.extension/notify
+    'psi.extension/append-message
     'psi.extension/send-message
     'psi.extension/send-prompt
     'psi.extension/schedule-event})

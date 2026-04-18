@@ -68,25 +68,49 @@
 (def extension-ui-context
   runtime-ui/extension-ui-context)
 
-(defn send-extension-message-in!
-  "Append an extension-injected message to agent history and emit message events.
-   Agent-core mutations and event-queue notification are dispatch-owned effects.
+(defn notify-extension-in!
+  "Emit an extension-authored UI-visible notification that must not become part
+   of future LLM-visible conversation assembly.
 
-   During bootstrap (before startup prompts complete) the message is NOT
-   appended to LLM history — it is only forwarded to the event queue so the
-   UI can display it as a transient notification without corrupting the
-   conversation context."
+   Internal representation may use :custom-type to preserve the current
+   conversation exclusion invariant, but callers should rely on the explicit
+   notify semantic rather than that representation detail."
   [ctx session-id role content custom-type]
   (let [msg {:role      role
              :content   [{:type :text :text (str content)}]
              :timestamp (java.time.Instant/now)}
         msg (cond-> msg
-              custom-type (assoc :custom-type custom-type))]
+              custom-type (assoc :custom-type custom-type)
+              (not custom-type) (assoc :custom-type "extension-notification"))]
     (dispatch/dispatch! ctx
-                        :session/send-extension-message
+                        :session/notify-extension
                         {:session-id session-id :message msg}
                         {:origin :core})
     msg))
+
+(defn append-extension-message-in!
+  "Append an extension-authored synthetic conversation message that is both
+   transcript-visible and future LLM-visible."
+  [ctx session-id role content]
+  (let [msg {:role      role
+             :content   [{:type :text :text (str content)}]
+             :timestamp (java.time.Instant/now)}]
+    (dispatch/dispatch! ctx
+                        :session/append-extension-message
+                        {:session-id session-id :message msg}
+                        {:origin :core})
+    msg))
+
+(defn send-extension-message-in!
+  "Compatibility wrapper for the older ambiguous extension message API.
+
+   Preserved migration semantics:
+   - custom-type present    => UI-visible, non-conversation notification
+   - no custom-type present => conversation-visible synthetic message"
+  [ctx session-id role content custom-type]
+  (if custom-type
+    (notify-extension-in! ctx session-id role content custom-type)
+    (append-extension-message-in! ctx session-id role content)))
 
 (defn set-extension-run-fn-in!
   "Register the runtime agent-loop runner for extension-initiated prompts.

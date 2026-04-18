@@ -375,6 +375,15 @@
                                            (mutate* 'psi.extension/set-worktree-path
                                                     {:session-id session-id
                                                      :worktree-path worktree-path}))
+                      :notify (fn [content & [{:keys [role custom-type] :as opts}]]
+                                (let [params (cond-> {:content content}
+                                               (contains? opts :role) (assoc :role role)
+                                               (contains? opts :custom-type) (assoc :custom-type custom-type))]
+                                  (mutate* 'psi.extension/notify params)))
+                      :append-message (fn [role content]
+                                        (mutate* 'psi.extension/append-message
+                                                 {:role role
+                                                  :content content}))
                       :get-api-key get-key*
                       :ui-type (or (:ui-type opts*) :console)
                       :register-tool (fn [tool] (add-tool! state tool))
