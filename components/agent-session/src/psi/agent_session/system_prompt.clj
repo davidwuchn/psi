@@ -45,7 +45,14 @@
   "λ guide.\n  bash → {ls rg find} | file_ops\n  read → pre(edit) | ¬cat ¬sed\n  edit → precise(old ≡ match → new)\n  write → new_file ∨ full_rewrite\n  output → plaintext | ¬cat ¬bash\n  style → concise ∧ show(paths)")
 
 (def ^:private lambda-graph-discovery
-  "λ graph(eql).\n  purpose → discover(capabilities ∧ attrs) | ¬guess(paths)\n  endpoints → {:psi.graph/ resolver-count mutation-count resolver-syms mutation-syms env-built nodes edges capabilities domain-coverage}\n  workflow → query(resolver-syms) → query(discovered-attrs)\n  root → {root-seeds → contexts | root-queryable-attrs → attrs}\n  usage → {:psi.agent-session/ usage-input usage-output usage-cache-read usage-cache-write context-tokens context-window}")
+  "λ graph(eql).
+  purpose → discover(capabilities ∧ attrs) | ¬guess(paths)
+  endpoints → {:psi.graph/ resolver-count mutation-count resolver-syms mutation-syms env-built nodes edges capabilities domain-coverage}
+  workflow → query(root-queryable-attrs) → query(discovered-attrs) | ¬guess(attr-names)
+  root → {root-seeds → contexts | root-queryable-attrs → authoritative(root-attrs)}
+  session-targeting → entity({:psi.agent-session/session-id \"sid\"}) | ¬omit → ¬silent-wrong-session
+  child-sessions → {:psi.agent-session/context-sessions [:psi.session-info/id :psi.session-info/name :psi.session-info/parent-session-id]}
+  usage → {:psi.agent-session/ usage-input usage-output usage-cache-read usage-cache-write context-tokens context-window}")
 
 (defn- format-graph-capabilities
   "Format a terse capability list from :psi.graph/capabilities maps."
@@ -210,75 +217,66 @@
       (str/join "\n" lines)
       "(none)")))
 
+(def ^:private prose-identity
+  "You are ψ (Psi), an expert coding assistant operating inside psi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.")
+
+(def ^:private prose-graph-discovery
+  (str "Capability graph (EQL discovery):\n"
+       "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
+       "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
+       "- Workflow: 1) query :psi.graph/root-queryable-attrs (authoritative root attr list) 2) query discovered attrs directly. Do not guess attr names.\n"
+       "- Root discovery:\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-seeds]\")           ; injected root contexts\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative root attrs\n"
+       "- Session targeting (explicit):\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.agent-session/session-name :psi.agent-session/model-id]\", entity: \"{:psi.agent-session/session-id \\\"sid\\\"}\")\n"
+       "  - Always supply session-id when targeting a specific session; omitting it silently queries the wrong session.\n"
+       "- Child sessions:\n"
+       "  - psi-tool(action: \"query\", query: \"[{:psi.agent-session/context-sessions [:psi.session-info/id :psi.session-info/name :psi.session-info/parent-session-id]}]\")\n"
+       "  - Use :psi.session-info/id (not :psi.session-info/session-id) for session identity within session-info maps.\n"
+       "- Eval: psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\") — namespace must be already loaded.\n"
+       "- Reload code:\n"
+       "  - namespace mode: psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])\n"
+       "  - worktree mode (session-derived): psi-tool(action: \"reload-code\")\n"
+       "  - worktree mode (explicit): psi-tool(action: \"reload-code\", worktree-path: \"/abs/path/to/worktree\")\n"
+       "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window"))
+
+(defn- prose-guidelines [tool-names]
+  (cond-> []
+    (some #(= "bash" %) tool-names)
+    (conj "Use bash for file operations like ls, rg, find")
+
+    (and (some #(= "read" %) tool-names) (some #(= "edit" %) tool-names))
+    (conj "Use read to examine files before editing. You must use this tool instead of cat or sed.")
+
+    (some #(= "edit" %) tool-names)
+    (conj "Use edit for precise changes (old text must match exactly)")
+
+    (some #(= "write" %) tool-names)
+    (conj "Use write only for new files or complete rewrites")
+
+    (or (some #(= "edit" %) tool-names)
+        (some #(= "write" %) tool-names))
+    (conj "When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did")
+
+    true (conj "Be concise in your responses")
+    true (conj "Show file paths clearly when working with files")))
+
 (defn- build-prose-preamble
   "Build the psi-authored preamble sections in prose mode."
   [tool-names has-app-query? loaded-caps extension-tool-descriptions]
-  (let [tools-section (format-tools-section tool-names :prose extension-tool-descriptions)
-
-        guidelines
-        (cond-> []
-          (some #(= "bash" %) tool-names)
-          (conj "Use bash for file operations like ls, rg, find")
-
-          (and (some #(= "read" %) tool-names) (some #(= "edit" %) tool-names))
-          (conj "Use read to examine files before editing. You must use this tool instead of cat or sed.")
-
-          (some #(= "edit" %) tool-names)
-          (conj "Use edit for precise changes (old text must match exactly)")
-
-          (some #(= "write" %) tool-names)
-          (conj "Use write only for new files or complete rewrites")
-
-          (or (some #(= "edit" %) tool-names)
-              (some #(= "write" %) tool-names))
-          (conj "When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did")
-
-          true
-          (conj "Be concise in your responses")
-
-          true
-          (conj "Show file paths clearly when working with files"))
-
-        guidelines-section (str/join "\n" (map #(str "- " %) guidelines))
-
-        graph-discovery-section
-        (when has-app-query?
-          (str "\n\nCapability graph (EQL discovery):\n"
-               "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
-               "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
-               "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
-               "- Canonical root discovery:\n"
-               "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
-               "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
-               "- Canonical explicit session targeting:\n"
-               "  - psi-tool(action: \"query\", query: \"[:psi.agent-session/session-name :psi.agent-session/model-id]\", entity: \"{:psi.agent-session/session-id \\\"sid\\\"}\")\n"
-               "  - Session-scoped attrs require :psi.agent-session/session-id; missing targeting should fail rather than silently using another session.\n"
-               "- Eval:\n"
-               "  - psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\")\n"
-               "  - Eval is namespace-scoped and requires an already loaded namespace.\n"
-               "- Reload code:\n"
-               "  - namespace mode: psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])\n"
-               "  - worktree mode (session-derived): psi-tool(action: \"reload-code\")\n"
-               "  - worktree mode (explicit): psi-tool(action: \"reload-code\", worktree-path: \"/abs/path/to/worktree\")\n"
-               "  - Reload reports code-reload and graph-refresh separately.\n"
-               "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
-               "- Legacy compatibility: query-only psi-tool(query: \"...\") remains accepted during migration, but canonical docs use action-based requests.\n"
-               "- Example: psi-tool(action: \"query\", query: \"[:psi.graph/resolver-syms]\")"))
-
-        graph-capabilities-section
-        (when (and has-app-query? (seq loaded-caps))
-          (str "\nCurrent capabilities (from :psi.graph/capabilities):\n"
-               (format-graph-capabilities loaded-caps)))]
-
-    (str "You are ψ (Psi), an expert coding assistant operating inside psi, a coding agent harness. "
-         "You help users by reading files, executing commands, editing code, and writing new files.\n\n"
-         "Available tools:\n"
-         tools-section "\n\n"
+  (let [tools-section      (format-tools-section tool-names :prose extension-tool-descriptions)
+        guidelines-section (str/join "\n" (map #(str "- " %) (prose-guidelines tool-names)))
+        graph-section      (when has-app-query?
+                             (str "\n\n" prose-graph-discovery
+                                  (when (seq loaded-caps)
+                                    (str "\nCurrent capabilities (from :psi.graph/capabilities):\n"
+                                         (format-graph-capabilities loaded-caps)))))]
+    (str prose-identity "\n\n"
+         "Available tools:\n" tools-section "\n\n"
          "In addition to the tools above, you may have access to other custom tools depending on the project.\n\n"
-         "Guidelines:\n"
-         guidelines-section
-         (or graph-discovery-section "")
-         (or graph-capabilities-section ""))))
+         "Guidelines:\n" guidelines-section
+         (or graph-section ""))))
 
 (defn- build-lambda-preamble
   "Build the psi-authored preamble sections in lambda mode."

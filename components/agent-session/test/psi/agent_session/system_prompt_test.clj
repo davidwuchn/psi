@@ -180,8 +180,9 @@
                     {:prompt-mode :prose})]
         (is (str/includes? prompt "psi-tool(action: \"query\", query: \"[:psi.graph/root-seeds]\")"))
         (is (str/includes? prompt "psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\")"))
-        (is (str/includes? prompt "psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])") )
-        (is (str/includes? prompt "Legacy compatibility: query-only psi-tool(query: \"...\") remains accepted during migration"))))
+        (is (str/includes? prompt "psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])"))
+        (is (str/includes? prompt "psi.agent-session/context-sessions"))
+        (is (str/includes? prompt ":psi.session-info/id (not :psi.session-info/session-id)"))))
 
     (testing "excludes graph discovery when psi-tool not available"
       (let [prompt (sys-prompt/build-system-prompt
