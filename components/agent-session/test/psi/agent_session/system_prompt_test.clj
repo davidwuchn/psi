@@ -182,7 +182,9 @@
         (is (str/includes? prompt "psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\")"))
         (is (str/includes? prompt "psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])"))
         (is (str/includes? prompt "psi.agent-session/context-sessions"))
-        (is (str/includes? prompt ":psi.session-info/id (not :psi.session-info/session-id)"))))
+        (is (str/includes? prompt "psi.graph/resolver-index"))
+        (is (str/includes? prompt "psi.graph/attr-index"))
+        (is (str/includes? prompt "psi.resolver/sym"))))
 
     (testing "excludes graph discovery when psi-tool not available"
       (let [prompt (sys-prompt/build-system-prompt

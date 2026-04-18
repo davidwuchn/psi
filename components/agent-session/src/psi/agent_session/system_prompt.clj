@@ -50,8 +50,11 @@
   endpoints → {:psi.graph/ resolver-count mutation-count resolver-syms mutation-syms env-built nodes edges capabilities domain-coverage}
   workflow → query(root-queryable-attrs) → query(discovered-attrs) | ¬guess(attr-names)
   root → {root-seeds → contexts | root-queryable-attrs → authoritative(root-attrs)}
+  resolver-index → [:psi.graph/resolver-index] | [{:psi.resolver/sym :input :output}] | output preserves join maps
+  attr-index → [:psi.graph/attr-index] | {attr {:psi.attr/produced-by [...] :psi.attr/reachable-via {join-key [...]}}}
+  resolver-detail → entity({:psi.resolver/sym 'ns/name}) + [:psi.resolver/input :psi.resolver/output]
   session-targeting → entity({:psi.agent-session/session-id \"sid\"}) | ¬omit → ¬silent-wrong-session
-  child-sessions → {:psi.agent-session/context-sessions [:psi.session-info/id :psi.session-info/name :psi.session-info/parent-session-id]}
+  child-sessions → [:psi.agent-session/context-sessions] | attrs discoverable via resolver-index ∨ attr-index
   usage → {:psi.agent-session/ usage-input usage-output usage-cache-read usage-cache-write context-tokens context-window}")
 
 (defn- format-graph-capabilities
@@ -228,12 +231,15 @@
        "- Root discovery:\n"
        "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-seeds]\")           ; injected root contexts\n"
        "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative root attrs\n"
+       "- Resolver I/O surface (use these to discover valid attr names):\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.graph/resolver-index]\")       ; [{:psi.resolver/sym :psi.resolver/input :psi.resolver/output}] — output preserves join maps\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.graph/attr-index]\")           ; {attr {:psi.attr/produced-by [...] :psi.attr/reachable-via {join-key [...]}}} — look up any attr\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.resolver/input :psi.resolver/output]\", entity: \"{:psi.resolver/sym 'ns/name}\") ; single resolver detail\n"
        "- Session targeting (explicit):\n"
        "  - psi-tool(action: \"query\", query: \"[:psi.agent-session/session-name :psi.agent-session/model-id]\", entity: \"{:psi.agent-session/session-id \\\"sid\\\"}\")\n"
        "  - Always supply session-id when targeting a specific session; omitting it silently queries the wrong session.\n"
        "- Child sessions:\n"
-       "  - psi-tool(action: \"query\", query: \"[{:psi.agent-session/context-sessions [:psi.session-info/id :psi.session-info/name :psi.session-info/parent-session-id]}]\")\n"
-       "  - Use :psi.session-info/id (not :psi.session-info/session-id) for session identity within session-info maps.\n"
+       "  - psi-tool(action: \"query\", query: \"[:psi.agent-session/context-sessions]\") then use attr-index or resolver-index to discover valid child attrs.\n"
        "- Eval: psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\") — namespace must be already loaded.\n"
        "- Reload code:\n"
        "  - namespace mode: psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])\n"
