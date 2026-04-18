@@ -1,0 +1,4 @@
+- [ ] Define the canonical `psi-tool` session-targeting contract
+- [ ] Reproduce the current failure modes with focused tests
+- [ ] Fix the targeted introspection path so non-active sessions can be queried reliably
+- [ ] Add tests and docs for the supported query forms
