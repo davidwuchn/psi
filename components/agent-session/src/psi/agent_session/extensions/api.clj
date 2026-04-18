@@ -262,6 +262,12 @@
           (mutate-required :switch-session
                            'psi.extension/switch-session
                            {:session-id session-id}))
+        set-worktree-path!
+        (fn [session-id worktree-path]
+          (mutate-required :set-worktree-path
+                           'psi.extension/set-worktree-path
+                           {:session-id session-id
+                            :worktree-path worktree-path}))
         get-api-key
         (fn [provider]
           (if get-api-key-fn
@@ -301,6 +307,7 @@
      :mutate-session                 mutate-session
      :create-session                 create-session!
      :switch-session                 switch-session!
+     :set-worktree-path             set-worktree-path!
      :get-api-key                    get-api-key
      :events                         events
      :ui-type                        ui-type

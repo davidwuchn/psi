@@ -371,6 +371,10 @@
                                                    (contains? opts :thinking-level) (assoc :thinking-level thinking-level))))
                       :switch-session (fn [session-id]
                                         (mutate* 'psi.extension/switch-session {:session-id session-id}))
+                      :set-worktree-path (fn [session-id worktree-path]
+                                           (mutate* 'psi.extension/set-worktree-path
+                                                    {:session-id session-id
+                                                     :worktree-path worktree-path}))
                       :get-api-key get-key*
                       :ui-type (or (:ui-type opts*) :console)
                       :register-tool (fn [tool] (add-tool! state tool))

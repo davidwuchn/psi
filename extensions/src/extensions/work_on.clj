@@ -8,6 +8,8 @@
          :mutate-fn nil
          :create-session-fn nil
          :switch-session-fn nil
+         :set-worktree-path-fn nil
+         :send-message-fn nil
          :path nil
          :default-branch nil
          :default-branch-source nil}))
@@ -122,6 +124,21 @@
 (defn- print-line
   [text]
   (println (str text)))
+
+(defn- send-visible-message!
+  [text]
+  (when-let [f (:send-message-fn @state)]
+    (try
+      (f {:role "assistant"
+          :content (str text)})
+      (catch Exception _ nil))))
+
+(defn- set-current-session-worktree-path!
+  [session-id worktree-path]
+  (when-let [f (:set-worktree-path-fn @state)]
+    (try
+      (f session-id worktree-path)
+      (catch Exception _ nil))))
 
 (defn- create-worktree-session!
   [description worktree-path _parent-session-id]
@@ -315,9 +332,11 @@
                                 create-result)]
             (cond
               (:success add-result)
-              (let [sd (create-worktree-session! description*
+              (let [origin-session-id (:psi.agent-session/session-id session)
+                    _  (set-current-session-worktree-path! origin-session-id worktree-path)
+                    sd (create-worktree-session! description*
                                                  worktree-path
-                                                 (:psi.agent-session/session-id session))]
+                                                 origin-session-id)]
                 {:ok? true
                  :worktree-path worktree-path
                  :branch-name branch-name
@@ -326,7 +345,9 @@
 
               (= "worktree path already exists" (:error add-result))
               (if-let [existing-wt (find-worktree-by-path worktree-path)]
-                (let [existing-session (find-session-for-worktree worktree-path)]
+                (let [origin-session-id (:psi.agent-session/session-id session)
+                      _                 (set-current-session-worktree-path! origin-session-id worktree-path)
+                      existing-session  (find-session-for-worktree worktree-path)]
                   (if existing-session
                     (do
                       (switch-to-session! (:psi.session-info/id existing-session))
@@ -338,7 +359,7 @@
                        :session-name (:psi.session-info/name existing-session)})
                     (let [sd (create-worktree-session! description*
                                                        worktree-path
-                                                       (:psi.agent-session/session-id session))]
+                                                       origin-session-id)]
                       {:ok? true
                        :reused? true
                        :worktree-path worktree-path
@@ -438,11 +459,13 @@
 
 (defn- handle-work-on-command
   [args]
-  (let [result (work-on! args)]
-    (if (:ok? result)
-      (print-line (str "Working in `" (:worktree-path result)
-                       "` on branch `" (:branch-name result) "`"))
-      (print-line (:error result)))))
+  (let [result  (work-on! args)
+        message (if (:ok? result)
+                  (str "Working in `" (:worktree-path result)
+                       "` on branch `" (:branch-name result) "`")
+                  (:error result))]
+    (print-line message)
+    (send-visible-message! message)))
 
 (defn- handle-work-done-command
   [_args]
@@ -475,6 +498,9 @@
          :mutate-fn (:mutate api)
          :create-session-fn (:create-session api)
          :switch-session-fn (:switch-session api)
+         :set-worktree-path-fn (:set-worktree-path api)
+         :send-message-fn (fn [msg]
+                            ((:mutate api) 'psi.extension/send-message msg))
          :path (:path api))
   ((:on api) "session_switch"
              (fn [_]

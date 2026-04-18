@@ -1,0 +1,6 @@
+- [ ] Inspect current `/work-on` implementation and integration points
+- [ ] Add canonical session worktree-path mutation surface for extensions if needed
+- [ ] Make `/work-on` emit assistant-visible outcome messages via canonical message injection
+- [ ] Make `/work-on` update canonical session `:worktree-path`
+- [ ] Add tests for create/reuse/switch transcript + state coherence
+- [ ] Verify transcript evidence and introspection agree after `/work-on`

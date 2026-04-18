@@ -9,6 +9,7 @@
   #{'psi.extension/set-session-name
     'psi.extension/set-active-tools
     'psi.extension/set-model
+    'psi.extension/set-worktree-path
     'psi.extension/create-child-session
     'psi.extension/set-rpc-trace
     'psi.extension/interrupt

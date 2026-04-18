@@ -79,7 +79,7 @@
         (is (nil? (handler {:reason :new})))))))
 
 (deftest work-on-command-happy-path-test
-  (testing "/work-on creates worktree and a distinct session and prints deterministic summary"
+  (testing "/work-on creates worktree, updates session worktree-path, and emits visible summary"
     (let [created-session (atom nil)
           mutate-calls    (atom [])
           printed         (atom nil)
@@ -107,6 +107,8 @@
                                                                   :path "/repo/fix-footer-not-displayed"
                                                                   :branch "fix-footer-not-displayed"
                                                                   :head "abc123"}
+                                               psi.extension/set-worktree-path {:psi.agent-session/worktree-path (:worktree-path params)}
+                                               psi.extension/send-message {:psi.extension/message params}
                                                psi.extension/create-session {:psi.agent-session/session-id "s-created"
                                                                              :psi.agent-session/session-name (:session-name params)
                                                                              :psi.agent-session/worktree-path (:worktree-path params)}
@@ -115,7 +117,7 @@
         (sut/init api)
         (let [handler (get-in @state [:commands "work-on" :handler])]
           (handler "Fix footer not displayed")
-          (let [[op params] (second @mutate-calls)]
+          (let [[op params] (nth @mutate-calls 2)]
             (reset! created-op op)
             (reset! created-params params)
             (reset! created-session {:session-id "s-created"
@@ -127,11 +129,24 @@
                  (get-in (second (first @mutate-calls)) [:input :path])))
           (is (= "fix-footer-not-displayed"
                  (get-in (second (first @mutate-calls)) [:input :branch])))
+          (is (= ['git.worktree/add!
+                  'psi.extension/set-worktree-path
+                  'psi.extension/create-session
+                  'psi.extension/send-message]
+                 (mapv first @mutate-calls)))
+          (is (= {:session-id "s-main"
+                  :worktree-path "/repo/fix-footer-not-displayed"
+                  :ext-path "/test/work_on.clj"}
+                 (second (second @mutate-calls))))
           (is (= 'psi.extension/create-session @created-op))
           (is (= "s-created" (:session-id @created-session)))
           (is (= "/repo/fix-footer-not-displayed" (:worktree-path @created-session)))
           (is (= "Fix footer not displayed" (:session-name @created-session)))
           (is (nil? (:system-prompt @created-session)))
+          (is (= {:role "assistant"
+                  :content "Working in `/repo/fix-footer-not-displayed` on branch `fix-footer-not-displayed`"
+                  :ext-path "/test/work_on.clj"}
+                 (second (last @mutate-calls))))
           (is (re-find #"Working in `/repo/fix-footer-not-displayed` on branch `fix-footer-not-displayed`"
                        @printed)))))))
 
@@ -184,9 +199,10 @@
         (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
                      @printed)))))
 
-  (testing "/work-on reuses an existing worktree and switches to its existing session"
-    (let [printed  (atom nil)
-          switched (atom [])
+  (testing "/work-on reuses an existing worktree, updates worktree-path, switches session, and emits visible summary"
+    (let [printed      (atom nil)
+          switched     (atom [])
+          mutate-calls (atom [])
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
@@ -206,11 +222,14 @@
                                                                   :git.worktree/current? true}
                                                                  {:git.worktree/path "/repo/fix-repeated-thinking-output"
                                                                   :git.worktree/branch-name "fix-repeated-thinking-output"}]})
-                                :mutate-fn (fn [op _params]
+                                :mutate-fn (fn [op params]
+                                             (swap! mutate-calls conj [op params])
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
                                                git.worktree/add! {:success false
                                                                   :error "worktree path already exists"}
+                                               psi.extension/set-worktree-path {:psi.agent-session/worktree-path (:worktree-path params)}
+                                               psi.extension/send-message {:psi.extension/message params}
                                                psi.extension/switch-session (do (swap! switched conj "s-existing")
                                                                                 {:psi.agent-session/session-id "s-existing"})
                                                nil))})]
@@ -218,6 +237,19 @@
         (sut/init api)
         ((get-in @state [:commands "work-on" :handler]) "fix repeated thinking output in emacs")
         (is (= ["s-existing"] @switched))
+        (is (= ['git.worktree/add!
+                'psi.extension/set-worktree-path
+                'psi.extension/switch-session
+                'psi.extension/send-message]
+               (mapv first @mutate-calls)))
+        (is (= {:session-id "s-main"
+                :worktree-path "/repo/fix-repeated-thinking-output"
+                :ext-path "/test/work_on.clj"}
+               (second (second @mutate-calls))))
+        (is (= {:role "assistant"
+                :content "Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
+                :ext-path "/test/work_on.clj"}
+               (second (last @mutate-calls))))
         (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
                      @printed))))))
 

@@ -36,6 +36,19 @@
     {:psi.agent-session/model          (:model result)
      :psi.agent-session/thinking-level (:thinking-level result)}))
 
+(pco/defmutation set-worktree-path
+  "Set the canonical worktree-path for the current session."
+  [_ {:keys [psi/agent-session-ctx session-id worktree-path]}]
+  {::pco/op-name 'psi.extension/set-worktree-path
+   ::pco/params  [:psi/agent-session-ctx :session-id :worktree-path]
+   ::pco/output  [:psi.agent-session/worktree-path]}
+  (dispatch/dispatch! agent-session-ctx
+                      :session/set-worktree-path
+                      {:session-id session-id
+                       :worktree-path worktree-path}
+                      {:origin :mutations})
+  {:psi.agent-session/worktree-path worktree-path})
+
 (pco/defmutation create-session
   "Create a new session branch with optional name, worktree, system prompt, and thinking level."
   [_ {:keys [psi/agent-session-ctx parent-session-id session-name worktree-path system-prompt thinking-level]}]
@@ -290,6 +303,7 @@
 (def all-mutations
   [set-session-name
    set-model
+   set-worktree-path
    create-session
    create-child-session
    run-agent-loop-in-session

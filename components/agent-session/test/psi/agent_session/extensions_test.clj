@@ -613,7 +613,11 @@
                                      :system-prompt "prompt"})))
       (is (= {:op 'psi.extension/switch-session
               :params {:session-id "s1"}}
-             ((:switch-session api) "s1")))))
+             ((:switch-session api) "s1")))
+      (is (= {:op 'psi.extension/set-worktree-path
+              :params {:session-id "s1"
+                       :worktree-path "/repo/feature"}}
+             ((:set-worktree-path api) "s1" "/repo/feature")))))
 
   (testing "extension UI dispatch includes ext-id so extension-origin events are authorized"
     (let [[ctx session-id] (test-support/make-session-ctx {})
