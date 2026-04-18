@@ -3,9 +3,10 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.agent-session.core :as session]
    [psi.app-runtime.navigation :as navigation]
    [psi.app-runtime.ui-actions :as ui-actions]
+   [psi.rpc.session.command-pickers :as command-pickers]
+   [psi.rpc.session.command-results :as command-results]
    [psi.rpc.session.emit :as emit]
    [psi.rpc.transport :refer [response-frame]]))
 
@@ -17,15 +18,6 @@
   ([request data]
    (response-frame (:id request) frontend-action-result-op true data)))
 
-(defn- emit-command-text!
-  [emit! message]
-  (emit/emit-command-result! emit! {:type "text"
-                                    :message message}))
-
-(defn- emit-command-error!
-  [emit! message]
-  (emit/emit-command-result! emit! {:type "error"
-                                    :message message}))
 
 (defn- emit-navigation!
   [ctx state emit! nav]
@@ -54,26 +46,6 @@
 
       nil)))
 
-(defn- handle-model-selection!
-  [ctx session-id resolve-model emit! value]
-  (when-let [{:keys [provider id]} value]
-    (when-let [resolved (resolve-model provider id)]
-      (let [provider-str (name (:provider resolved))
-            model {:provider provider-str
-                   :id (:id resolved)
-                   :reasoning (:supports-reasoning resolved)}]
-        (session/set-model-in! ctx session-id model)
-        (emit-command-text! emit!
-                            (str "✓ Model set to " provider-str " " (:id resolved)))))))
-
-(defn- handle-thinking-level-selection!
-  [ctx session-id emit! value]
-  (when-let [level-str value]
-    (let [level  (keyword level-str)
-          result (session/set-thinking-level-in! ctx session-id level)]
-      (emit-command-text! emit!
-                          (str "✓ Thinking level set to "
-                               (name (:thinking-level result)))))))
 
 (defn- handle-submitted-action!
   [{:keys [ctx state session-id resolve-model emit! action-key value]}]
@@ -87,10 +59,10 @@
       (emit-navigation! ctx state emit! nav))
 
     :select-model
-    (handle-model-selection! ctx session-id resolve-model emit! value)
+    (command-pickers/handle-model-selection! ctx session-id resolve-model emit! value)
 
     :select-thinking-level
-    (handle-thinking-level-selection! ctx session-id emit! value)
+    (command-pickers/handle-thinking-level-selection! ctx session-id emit! value)
 
     nil))
 
@@ -107,12 +79,13 @@
     (case status
       :cancelled
       (do
-        (emit-command-text! emit! message)
+        (command-results/emit-text-command-result! emit! message)
         (accepted-frame request))
 
       :failed
       (do
-        (emit-command-error! emit! message)
+        (emit/emit-command-result! emit! {:type "error"
+                                          :message message})
         (accepted-frame request))
 
       (do

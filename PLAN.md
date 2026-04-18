@@ -28,6 +28,8 @@ Active follow-on slices from Gordian:
 Completed follow-on slices:
 - OpenAI migration completed; `psi.ai.providers.openai.common` has been deleted
 - background-job façade retirement completed; `psi.app-runtime.background-jobs` has been deleted
+- graph derivation convergence completed; active capability-graph consumers now use `psi.graph.analysis`, and `psi.introspection.graph` is now a compatibility wrapper
+- RPC action/result thinning follow-on started: picker selection side-effects now live in `psi.rpc.session.command-pickers` instead of being split across `command-pickers` and `frontend-actions`
 
 Deeper investigation queue from latest Gordian namespace analysis:
 
