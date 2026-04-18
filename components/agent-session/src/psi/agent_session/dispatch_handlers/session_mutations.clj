@@ -463,6 +463,9 @@
   (register-core-handler!
    :session/send-extension-message
    (fn [ctx {:keys [session-id message]}]
+     ;; Compatibility-only dispatch shim for the legacy ambiguous extension
+     ;; message surface. New code should route explicitly to either
+     ;; :session/notify-extension or :session/append-extension-message.
      (dispatch/dispatch! ctx
                          (if (:custom-type message)
                            :session/notify-extension
