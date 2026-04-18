@@ -31,6 +31,11 @@ Verification
 - Result: `72 tests, 300 assertions, 0 failures`
 
 Follow-on candidates
-- Migrate additional extensions off compatibility `send-message` onto explicit `notify` / `append-message`.
-- Consider whether background-job terminal emission should also move from compatibility `send-extension-message` usage to direct explicit notify semantics in the runtime callback surface.
-- Tighten docs/comments that still describe `send-message` as the primary extension transcript API.
+- Continue shrinking the remaining compatibility-only `send-message` surface to core migration plumbing + explicit regression coverage.
+- Consider when to remove the legacy compatibility mutation entirely after downstream migration pressure is gone.
+- Keep historical munera/task notes accurate by distinguishing "what the system used then" from "what is canonical now".
+
+Additional follow-on now completed after the initial slice
+- migrated extension-owned call sites in `commit_checks`, `plan_state_learning`, `agent_chain`, and `agent`
+- background-job terminal emission now prefers explicit runtime notify semantics, with compatibility fallback retained during migration
+- docs/tests now mark `send-message` as compatibility-only rather than preferred
