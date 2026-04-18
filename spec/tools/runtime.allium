@@ -92,7 +92,7 @@ rule BuiltInToolSchemasExposed {
     ensures: ContainsToolSchema("bash")
     ensures: ContainsToolSchema("edit")
     ensures: ContainsToolSchema("write")
-    ensures: ContainsToolSchema("app-query-tool")
+    ensures: ContainsToolSchema("psi-tool")
 }
 
 rule RegisteredToolNamesMustBeCanonical {
@@ -108,7 +108,7 @@ rule RuntimeToolDefinitionsExcludeFactoryOnlyTools {
     ensures: ContainsToolDefinition("bash")
     ensures: ContainsToolDefinition("edit")
     ensures: ContainsToolDefinition("write")
-    ensures: not ContainsToolDefinition("app-query-tool")
+    ensures: not ContainsToolDefinition("psi-tool")
 }
 
 rule ExecuteToolDispatchesBuiltIns {

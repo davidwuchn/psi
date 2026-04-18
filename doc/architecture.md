@@ -93,7 +93,7 @@ or session navigation domain logic.
 
 ## EQL Introspection Tips
 
-- Query only attributes that exist in the graph; unknown attrs can cause the whole `app-query-tool` request to fail.
+- Query only attributes that exist in the graph; unknown attrs can cause the whole `psi-tool` request to fail.
 - For the active system prompt, use:
   - `[:psi.agent-session/system-prompt]`
 - For runtime UI surface detection (extension/UI branching), use:

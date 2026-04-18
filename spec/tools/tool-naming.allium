@@ -31,7 +31,7 @@ rule ToolNamePolicyExposed {
 
     ensures: result = ToolNamePolicy{
         pattern: config.tool_name_pattern,
-        examples_valid: {"read", "app-query-tool", "agent-chain", "hello-wrap"},
+        examples_valid: {"read", "psi-tool", "agent-chain", "hello-wrap"},
         examples_invalid: {"agent_chain", "hello_wrap", "Tool", "a.b"}
     }
 }

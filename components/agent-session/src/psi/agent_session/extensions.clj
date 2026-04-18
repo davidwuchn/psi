@@ -85,7 +85,7 @@
 
 (defn valid-tool-name?
   "Return true when `tool-name` is canonical kebab-case ASCII.
-   Examples: read, app-query-tool, agent-chain."
+   Examples: read, psi-tool, agent-chain."
   [tool-name]
   (and (string? tool-name)
        (boolean (re-matches tool-name-pattern tool-name))))

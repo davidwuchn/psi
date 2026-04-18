@@ -116,7 +116,7 @@ default BuiltInToolDescriptions {
             lambda_description: "λf. create(f) ∨ overwrite(f)"
         ),
         ToolDescriptionPair(
-            tool_name: "app-query-tool",
+            tool_name: "psi-tool",
             prose_description: "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more.",
             lambda_description: "λq. eql(graph) → {session state tools extensions …}"
         )

@@ -3,5 +3,5 @@
 - [x] Rename the canonical tool to `psi-tool`
 - [x] Update runtime invocation/projection surfaces to use `psi-tool`
 - [x] Update tests to the canonical tool name
-- [ ] Update docs/prompts/instructions to the canonical tool name
-- [ ] Decide whether any temporary compatibility alias is needed and bound it explicitly
+- [x] Update docs/prompts/instructions to the canonical tool name
+- [x] Decide whether any temporary compatibility alias is needed and bound it explicitly

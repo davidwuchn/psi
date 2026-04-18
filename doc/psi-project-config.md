@@ -2,9 +2,9 @@
 
 Project-level configuration and runtime query conventions.
 
-## `app-query-tool`
+## `psi-tool`
 
-`app-query-tool` executes EQL queries against the live session graph.
+`psi-tool` executes EQL queries against the live session graph.
 
 Use it for:
 - session/runtime introspection

@@ -2,6 +2,7 @@
 
 -- tools/app-query-tool.allium
 -- Factory-only EQL query tool behavior.
+-- Canonical public tool name: psi-tool.
 
 value EqlQueryArgs {
     query: String
@@ -51,8 +52,8 @@ value EqlQueryTool {
 rule EqlQueryToolCreatedFromBaseSchema {
     when: MakeEqlQueryToolCalled(query_fn, opts)
 
-    ensures: tool.name = "app-query-tool"
-    ensures: tool.label = "App Query Tool"
+    ensures: tool.name = "psi-tool"
+    ensures: tool.label = "Psi Tool"
     ensures: tool.description = "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]"
     ensures: tool.parameters = JsonSchemaStringForEqlQueryVector()
     ensures: ToolExecuteUsesQueryFn(tool, query_fn)
@@ -89,7 +90,7 @@ rule EqlQueryUsesEffectivePolicyWithOverrides {
     when: ExecuteEqlQuery(query_text)
     requires: IsVector(ParsedEdn(query_text))
 
-    ensures: policy = EffectiveOutputPolicy(tool_name: "app-query-tool", overrides: opts.overrides or {})
+    ensures: policy = EffectiveOutputPolicy(tool_name: "psi-tool", overrides: opts.overrides or {})
 }
 
 rule EqlQueryAppliesHeadTruncation {
@@ -97,7 +98,7 @@ rule EqlQueryAppliesHeadTruncation {
     requires: IsVector(ParsedEdn(query_text))
 
     let serialized = PrStr(ExecuteBoundQueryFn(ParsedEdn(query_text)))
-    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("app-query-tool"))
+    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("psi-tool"))
 
     ensures: result.is_error = false
     ensures:
@@ -112,7 +113,7 @@ rule EqlQueryReturnsSerializedContentWhenNotTruncated {
     requires: IsVector(ParsedEdn(query_text))
 
     let serialized = PrStr(ExecuteBoundQueryFn(ParsedEdn(query_text)))
-    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("app-query-tool"))
+    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("psi-tool"))
     requires: not truncation.truncated
 
     ensures: result.content = truncation.content
@@ -123,11 +124,11 @@ rule EqlQueryWritesFullOutputFileWhenTruncated {
     requires: IsVector(ParsedEdn(query_text))
 
     let serialized = PrStr(ExecuteBoundQueryFn(ParsedEdn(query_text)))
-    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("app-query-tool"))
+    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("psi-tool"))
     requires: truncation.truncated
 
     ensures: path = PersistTruncatedFullOutput(
-        tool_name: "app-query-tool",
+        tool_name: "psi-tool",
         tool_call_id: opts.tool_call_id or RandomUuid(),
         full_text: serialized
     )
@@ -139,7 +140,7 @@ rule EqlQueryTruncatedContentIncludesSummaryAndGuidance {
     requires: IsVector(ParsedEdn(query_text))
 
     let serialized = PrStr(ExecuteBoundQueryFn(ParsedEdn(query_text)))
-    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("app-query-tool"))
+    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy("psi-tool"))
     requires: truncation.truncated
 
     ensures: Contains(result.content, "Output truncated")
@@ -151,7 +152,7 @@ rule EqlQueryTruncatedContentIncludesSummaryAndGuidance {
 }
 
 rule EqlQueryTruncatedFilesUseProcessTempStore {
-    when: PersistTruncatedFullOutput(tool_name: "app-query-tool", full_text)
+    when: PersistTruncatedFullOutput(tool_name: "psi-tool", full_text)
 
     ensures: path in ActiveProcessTempStore().root_dir
 }
@@ -168,9 +169,9 @@ rule EqlQueryConvertsExceptionsToErrorPayload {
 }
 
 rule EqlQueryExcludedFromDirectDispatcher {
-    when: ExecuteToolCalled("app-query-tool", args)
+    when: ExecuteToolCalled("psi-tool", args)
 
-    ensures: Error.thrown("Unknown tool: app-query-tool")
+    ensures: Error.thrown("Unknown tool: psi-tool")
 }
 
 surface EqlQueryToolApi {
@@ -180,6 +181,6 @@ surface EqlQueryToolApi {
         MakeEqlQueryToolCalled(query_fn)
 
     @guidance
-        -- app-query-tool is factory-only because it requires live query context.
+        -- psi-tool is factory-only because it requires live query context.
         -- Truncated outputs must include recoverable full_output_path metadata.
 }

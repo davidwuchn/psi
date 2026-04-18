@@ -336,7 +336,7 @@
 
 (pco/defresolver agent-session-git-context
   "Bridge resolver: derive :git/context from the explicit session worktree path so
-   history resolvers can be queried from in-session app-query-tool roots."
+   history resolvers can be queried from in-session psi-tool roots."
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
   {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
    ::pco/output [:git/context]}

@@ -293,7 +293,7 @@ B → A                  B → C
 
 ### λ Re-registering resolvers in one JVM does not prove that the live app-query graph has ingested them
 
-During the Anthropic investigation, the new turn-id lookup resolvers passed focused tests and local re-registration code ran successfully, yet `app-query-tool` still reported the old resolver set and root-queryable attrs. The reusable lesson is:
+During the Anthropic investigation, the new turn-id lookup resolvers passed focused tests and local re-registration code ran successfully, yet `psi-tool` still reported the old resolver set and root-queryable attrs. The reusable lesson is:
 - code reload success is not the same as live graph reload success
 - query-surface debugging needs an explicit checkpoint in the active runtime that serves the user-facing graph
 - when the live graph still reports the old surface, assume a stale or different JVM until proven otherwise
@@ -319,7 +319,7 @@ The Anthropic investigation reached a point where the relevant failing turn was 
 
 ### λ Code-level queryability and live-session queryability are separate states whenever a long-running runtime owns the active graph
 
-The new turn-id lookup resolvers worked immediately in focused tests and local registration paths, yet the active `app-query-tool` graph still did not advertise them after in-repo reload attempts. The practical lesson is:
+The new turn-id lookup resolvers worked immediately in focused tests and local registration paths, yet the active `psi-tool` graph still did not advertise them after in-repo reload attempts. The practical lesson is:
 - proving a resolver in unit tests only establishes repository truth
 - proving it in the live graph requires the actual long-running runtime to ingest the updated registrations and rebuild its env
 - when those differ, treat "repo updated" and "live query surface updated" as separate checkpoints in the debugging loop
