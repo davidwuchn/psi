@@ -1,4 +1,54 @@
-- [ ] Define the canonical `psi-tool` runtime execution and code-reload contract
-- [ ] Reproduce the current absence of self-reload and arbitrary in-process execution capabilities with focused evidence
-- [ ] Add execution/reload targeting semantics that can use an explicit or session-derived worktree-path
-- [ ] Add tests and docs for runtime-visible execution and reload behavior
+- [ ] Slice 1 — action-dispatched psi-tool contract + validation
+  - [ ] Update psi-tool schema/description to expose canonical `action`-based usage
+  - [ ] Add a single psi-tool action validator/dispatcher
+  - [ ] Preserve legacy query-only input as compatibility alias to `action: "query"`
+  - [ ] Return explicit structured validation errors for unknown/missing/invalid action inputs
+  - [ ] Add tests for action validation, legacy query aliasing, unknown action, and invalid action-specific argument combinations
+
+- [ ] Slice 2 — canonical query mode + compatibility proof
+  - [ ] Route `action: "query"` through existing query execution
+  - [ ] Keep existing query result/truncation behavior unchanged
+  - [ ] Add tests proving legacy `{query ...}` input still works
+  - [ ] Add tests proving canonical action-based query is the preferred equivalent
+
+- [ ] Slice 3 — eval runtime operation
+  - [ ] Add namespace-scoped in-process eval execution
+  - [ ] Require already loaded namespace and reject unknown namespaces
+  - [ ] Wrap eval results in canonical structured report shape
+  - [ ] Reuse psi-tool sanitization, truncation, and error shaping for eval results
+  - [ ] Add tests for eval success, invalid form, unknown ns, and structured failures
+
+- [ ] Slice 4 — reload target resolution
+  - [ ] Add namespace-mode validation: non-empty, distinct, non-blank namespace strings
+  - [ ] Add namespace-mode reload candidate selection in request order
+  - [ ] Add worktree-mode target resolution from explicit path or invoking session worktree
+  - [ ] Add worktree-mode canonical source-path containment candidate selection
+  - [ ] Reject unreloadable or invalid worktree targets explicitly
+  - [ ] Add focused tests for namespace-mode and worktree-mode target selection rules
+
+- [ ] Slice 5 — reload execution
+  - [ ] Add deterministic reload execution over resolved candidate set
+  - [ ] Stop on first namespace reload failure
+  - [ ] Report successfully reloaded prefix in `:psi-tool/code-reload :namespaces`
+  - [ ] Preserve explicit best-effort/non-atomic semantics in result shape
+  - [ ] Add tests for success path and partial failure path
+
+- [ ] Slice 6 — post-reload graph/runtime refresh
+  - [ ] Add resolver registration refresh step
+  - [ ] Add mutation registration refresh step
+  - [ ] Add live tool definition refresh step
+  - [ ] Add worktree-mode extension rediscovery/reload step
+  - [ ] Add namespace-mode extension-registry preservation step
+  - [ ] Report ordered refresh step results in `:psi-tool/graph-refresh :steps`
+  - [ ] Add tests proving graph-refresh success/failure is reported distinctly from code reload
+
+- [ ] Slice 7 — telemetry + transcript-visible diagnostics
+  - [ ] Record canonical action arguments in tool lifecycle telemetry
+  - [ ] Ensure truncated eval/reload output preserves required visible metadata
+  - [ ] Add tests for telemetry capture and truncation-visible metadata preservation
+
+- [ ] Slice 8 — docs + proof
+  - [ ] Update tool-facing docs/examples to canonical action-based psi-tool contract
+  - [ ] Document namespace-mode reload vs worktree-mode reload
+  - [ ] Document eval as namespace-scoped only
+  - [ ] Add/align proof tests for compatibility aliasing, reload scope, refresh behavior, and docs examples
