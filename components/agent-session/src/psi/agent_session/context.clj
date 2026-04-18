@@ -105,11 +105,31 @@
            :last-login-provider nil
            :last-login-at nil}})
 
+(defn- register-projection-listener!
+  [listeners* listener-fn]
+  (let [listener-id (str (java.util.UUID/randomUUID))]
+    (swap! listeners* assoc listener-id listener-fn)
+    listener-id))
+
+(defn- unregister-projection-listener!
+  [listeners* listener-id]
+  (swap! listeners* dissoc listener-id)
+  nil)
+
+(defn- publish-projection-change!
+  [listeners* change]
+  (doseq [[_ listener-fn] @listeners*]
+    (try
+      (listener-fn change)
+      (catch Throwable _
+        nil)))
+  nil)
+
 (defn- callback-fns
   "Build the indirection table of callback/strategy fns for ctx.
    These allow dispatch handlers and extensions to call back into the
    session layer without circular requires."
-  [mutations]
+  [mutations projection-listeners*]
   {:apply-root-state-update-fn                     ss/apply-root-state-update-in!
    :read-session-state-fn                          ss/get-state-value-in
    :execute-dispatch-effect-fn                     (fn [ctx effect] (dispatch-effects/execute-effect! ctx effect))
@@ -144,6 +164,12 @@
    :daemon-thread-fn                               dispatch-handlers/daemon-thread
    :drop-trailing-overflow-error-fn                dispatch-effects/drop-trailing-overflow-error!
    :validate-dispatch-result-fn                    dispatch/validate-dispatch-schemas
+   :register-projection-listener-fn                (fn [_ctx listener-fn]
+                                                     (register-projection-listener! projection-listeners* listener-fn))
+   :unregister-projection-listener-fn              (fn [_ctx listener-id]
+                                                     (unregister-projection-listener! projection-listeners* listener-id))
+   :publish-projection-change-fn                   (fn [_ctx change]
+                                                     (publish-projection-change! projection-listeners* change))
    :all-mutations                                  mutations})
 
 (defn- create-context*
@@ -154,6 +180,7 @@
   (let [resolved-cwd        (or cwd (System/getProperty "user.dir"))
         resolved-defaults   (resolve-session-defaults session-defaults resolved-cwd ui-type)
         state*              (atom (initial-root-state nrepl-runtime-atom recursion-ctx))
+        projection-listeners* (atom {})
         tool-batch-executor (create-tool-batch-executor (merge session/default-config (or config {})))
         ctx0                (merge
                              {:sc-env                     (sc/create-sc-env)
@@ -176,8 +203,9 @@
                               :config                     (merge session/default-config (or config {}))
                               :tool-batch-executor        tool-batch-executor
                               :extension-run-fn-atom      (atom nil)
-                              :background-job-ui-refresh-fn (atom nil)}
-                             (callback-fns mutations))
+                              :background-job-ui-refresh-fn (atom nil)
+                              :projection-listeners*      projection-listeners*}
+                             (callback-fns mutations projection-listeners*))
         _                   (dispatch-handlers/register-all! ctx0)
         actions-fn          (dispatch-handlers/make-actions-fn ctx0)
         ctx                 (assoc ctx0 :session-actions-fn actions-fn)]
