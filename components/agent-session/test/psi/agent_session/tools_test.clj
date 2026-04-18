@@ -100,6 +100,59 @@
       (is (true? (:is-error result)))
       (is (re-find #"must be an EDN vector" (:content result))))))
 
+(deftest make-psi-tool-eval-test
+  (let [tool (tools/make-psi-tool (fn [_q] {}))]
+    (testing "eval runs in named namespace"
+      (let [result ((:execute tool) {"action" "eval"
+                                     "ns" "clojure.core"
+                                     "form" "(ns-name *ns*)"})
+            parsed (read-string (:content result))]
+        (is (false? (:is-error result)))
+        (is (= :eval (:psi-tool/action parsed)))
+        (is (= "clojure.core" (:psi-tool/ns parsed)))
+        (is (= "clojure.core" (:psi-tool/value parsed)))
+        (is (= "clojure.lang.Symbol" (:psi-tool/value-type parsed)))
+        (is (integer? (:psi-tool/duration-ms parsed)))))
+
+    (testing "eval rejects unknown namespace"
+      (let [result ((:execute tool) {"action" "eval"
+                                     "ns" "psi.no.such.ns"
+                                     "form" "(+ 1 2)"})
+            parsed (read-string (:content result))]
+        (is (true? (:is-error result)))
+        (is (= :eval (:psi-tool/action parsed)))
+        (is (= "psi.no.such.ns" (:psi-tool/ns parsed)))
+        (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+    (testing "eval rejects invalid form text safely"
+      (let [result ((:execute tool) {"action" "eval"
+                                     "ns" "clojure.core"
+                                     "form" "#=(+ 1 2)"})
+            parsed (read-string (:content result))]
+        (is (true? (:is-error result)))
+        (is (= :eval (:psi-tool/action parsed)))
+        (is (= :eval (get-in parsed [:psi-tool/error :phase])))))
+
+    (testing "eval errors return structured failure output"
+      (let [result ((:execute tool) {"action" "eval"
+                                     "ns" "clojure.core"
+                                     "form" "(throw (ex-info \"boom\" {:secret [:x]}))"})
+            parsed (read-string (:content result))]
+        (is (true? (:is-error result)))
+        (is (= :eval (:psi-tool/action parsed)))
+        (is (= "boom" (get-in parsed [:psi-tool/error :message])))
+        (is (= {:secret [:x]} (get-in parsed [:psi-tool/error :data])))))
+
+    (testing "eval ignores unrelated extra arguments"
+      (let [result ((:execute tool) {"action" "eval"
+                                     "ns" "clojure.core"
+                                     "form" "(+ 1 2)"
+                                     "query" "[:ignored]"
+                                     "worktree-path" "/tmp"})
+            parsed (read-string (:content result))]
+        (is (false? (:is-error result)))
+        (is (= "3" (:psi-tool/value parsed)))))))
+
 (deftest make-psi-tool-query-fn-throws-test
   (testing "query-fn exception is caught and returned as error"
     (let [tool   (tools/make-psi-tool

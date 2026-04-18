@@ -27,3 +27,29 @@
 - Verification:
   - `clojure -M:test --focus psi.agent-session.tools-test` ✅
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅
+
+- 2026-04-18 — Slice 3 landed.
+- Added in-process namespace-scoped eval for `psi-tool`.
+- Canonical eval behavior now:
+  - requires explicit `ns`
+  - rejects unloaded namespaces via `find-ns`
+  - reads `form` with `*read-eval* false`
+  - evaluates with `*ns*` bound to the named loaded namespace
+- Eval result shape now matches the task contract:
+  - `:psi-tool/action`
+  - `:psi-tool/ns`
+  - `:psi-tool/value`
+  - `:psi-tool/value-type`
+  - `:psi-tool/duration-ms`
+  - `:psi-tool/error` on failure
+- Added structured error summaries with sanitized `ex-data` and explicit `:phase`.
+- Eval output reuses existing psi-tool sanitization + truncation machinery and sets top-level `:is-error` from the structured report.
+- Focused proof added for:
+  - eval success in a named namespace
+  - unknown namespace rejection
+  - invalid form rejection with `*read-eval*` disabled
+  - structured runtime failures
+  - ignoring unrelated extra args
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.tools-test` ✅
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅

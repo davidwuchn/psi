@@ -667,6 +667,18 @@
          :namespaces    namespaces
          :worktree-path worktree-path}))))
 
+(defn- sanitize-psi-tool-data
+  [x]
+  (sanitize-psi-tool-result x))
+
+(defn- psi-tool-error-summary
+  ([e] (psi-tool-error-summary nil e))
+  ([default-phase e]
+   {:message (or (ex-message e) (str e))
+    :class   (.getName (class e))
+    :phase   (or (:phase (ex-data e)) default-phase :execute)
+    :data    (some-> (ex-data e) sanitize-psi-tool-data)}))
+
 (defn- format-psi-tool-error
   [prefix e]
   {:content  (str prefix (or (ex-message e) (str e)))
@@ -713,6 +725,34 @@
        :is-error false
        :details  nil})))
 
+(defn- eval-namespace
+  [ns-name]
+  (or (some-> ns-name symbol find-ns)
+      (throw (ex-info (str "Eval namespace is not loaded: " ns-name)
+                      {:phase :validate
+                       :ns    ns-name}))))
+
+(defn- execute-psi-tool-eval-report
+  [{:keys [ns form]}]
+  (let [started-at (System/nanoTime)]
+    (try
+      (let [target-ns   (eval-namespace ns)
+            form-value  (parse-edn-string form)
+            value       (binding [*ns* target-ns]
+                          (eval form-value))
+            safe-value  (sanitize-psi-tool-data value)
+            duration-ms (long (/ (- (System/nanoTime) started-at) 1000000))]
+        {:psi-tool/action      :eval
+         :psi-tool/ns          ns
+         :psi-tool/value       (pr-str safe-value)
+         :psi-tool/value-type  (some-> value class .getName)
+         :psi-tool/duration-ms duration-ms})
+      (catch Exception e
+        {:psi-tool/action      :eval
+         :psi-tool/ns          ns
+         :psi-tool/duration-ms (long (/ (- (System/nanoTime) started-at) 1000000))
+         :psi-tool/error       (psi-tool-error-summary :eval e)}))))
+
 (defn make-psi-tool
   "Create a psi-tool with an :execute fn that closes over `query-fn`.
    `query-fn` should be one of:
@@ -739,9 +779,10 @@
               (serialize-psi-tool-output opts output "Use a narrower query to reduce output size."))
 
             "eval"
-            (throw (ex-info "psi-tool eval action is not implemented yet"
-                            {:phase :execute
-                             :action action}))
+            (let [report (execute-psi-tool-eval-report request)
+                  output (pr-str report)]
+              (assoc (serialize-psi-tool-output opts output "Use a smaller eval result to reduce output size.")
+                     :is-error (boolean (:psi-tool/error report))))
 
             "reload-code"
             (throw (ex-info "psi-tool reload-code action is not implemented yet"

@@ -11,12 +11,12 @@
   - [x] Add tests proving legacy `{query ...}` input still works
   - [x] Add tests proving canonical action-based query is the preferred equivalent
 
-- [ ] Slice 3 — eval runtime operation
-  - [ ] Add namespace-scoped in-process eval execution
-  - [ ] Require already loaded namespace and reject unknown namespaces
-  - [ ] Wrap eval results in canonical structured report shape
-  - [ ] Reuse psi-tool sanitization, truncation, and error shaping for eval results
-  - [ ] Add tests for eval success, invalid form, unknown ns, and structured failures
+- [x] Slice 3 — eval runtime operation
+  - [x] Add namespace-scoped in-process eval execution
+  - [x] Require already loaded namespace and reject unknown namespaces
+  - [x] Wrap eval results in canonical structured report shape
+  - [x] Reuse psi-tool sanitization, truncation, and error shaping for eval results
+  - [x] Add tests for eval success, invalid form, unknown ns, and structured failures
 
 - [ ] Slice 4 — reload target resolution
   - [ ] Add namespace-mode validation: non-empty, distinct, non-blank namespace strings
