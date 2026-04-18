@@ -20,4 +20,4 @@
 - [x] Make the auto-session-name extension request require low-latency models
 - [x] Make the auto-session-name extension request require low-cost or zero-cost models
 - [x] Add focused resolver + extension tests proving auto-session-name prefers local, low-latency, low/zero-cost helper models when such candidates exist
-- [ ] Document that extensions may define their own selection policy/request without needing a built-in role
+- [x] Document that extensions may define their own selection policy/request without needing a built-in role

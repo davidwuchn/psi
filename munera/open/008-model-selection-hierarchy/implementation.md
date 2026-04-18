@@ -305,3 +305,11 @@
 - Added focused resolver coverage showing a qualifying local helper candidate beats cloud built-ins under the extension's current policy shape.
 - Added focused auto-session-name extension coverage showing that when a qualifying local helper is present in the catalog, the extension passes that local candidate into `run-agent-loop-in-session`.
 - This closes the remaining behavioral proof gap for the local-first helper-policy direction.
+
+2026-04-17 — Step 16: docs for extension-owned selection policy
+- Updated extension docs to state explicitly that extensions do not need a built-in role to use shared model selection.
+- Documented the preferred pattern:
+  - build an explicit request in the extension
+  - optionally wrap it in an extension-local preset/request-builder for reuse
+  - pass explicit source-session context when affinity matters
+- Updated examples away from requiring a core-defined `:role` in order to use `psi.ai.model-selection/resolve-selection`.

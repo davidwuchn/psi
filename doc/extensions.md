@@ -369,10 +369,14 @@ Use them when an extension needs to create a distinct context session (for examp
 
 When a helper/background workflow needs model choice, extensions should prefer
 shared resolution via `psi.ai.model-selection/resolve-selection` rather than
-embedding provider/id fallback chains locally. The current `auto-session-name`
-extension is the reference example: it queries the source session model context,
-resolves a helper model by role, and passes the resulting candidate explicitly
-into `psi.extension/run-agent-loop-in-session`.
+embedding provider/id fallback chains locally. Extensions do not need a
+core-defined role to do this: they may submit a fully explicit request, or
+construct their own local preset/request builder.
+
+The current `auto-session-name` extension is the reference example: it queries
+the source session model context, builds its own explicit helper-model request,
+and passes the resulting candidate explicitly into
+`psi.extension/run-agent-loop-in-session`.
 
 Example:
 

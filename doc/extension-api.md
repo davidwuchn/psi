@@ -97,12 +97,18 @@ Typical usage:
 (let [model-ctx ((:query-session api) source-session-id
                  [:psi.agent-session/model-provider
                   :psi.agent-session/model-id])
+      request   {:mode :resolve
+                 :required [{:criterion :supports-text
+                             :match :true}]
+                 :strong-preferences [{:criterion :input-cost
+                                       :prefer :lower}]
+                 :weak-preferences [{:criterion :same-provider-as-session
+                                     :prefer :context-match}]
+                 :context {:session-model {:provider (some-> (:psi.agent-session/model-provider model-ctx)
+                                                             keyword)
+                                           :id       (:psi.agent-session/model-id model-ctx)}}}
       selection (psi.ai.model-selection/resolve-selection
-                 {:request {:role    :auto-session-name
-                            :mode    :resolve
-                            :context {:session-model {:provider (some-> (:psi.agent-session/model-provider model-ctx)
-                                                                        keyword)
-                                                      :id       (:psi.agent-session/model-id model-ctx)}}}})]
+                 {:request request})]
   (when (= :ok (:outcome selection))
     (:candidate selection)))
 ```
@@ -134,7 +140,9 @@ Current result shape:
 ```
 
 Guidance:
-- express intent via role + constraints/preferences
+- extensions do not need a built-in role to use the resolver
+- an extension may submit a fully explicit request of its own
+- if an extension wants reuse, it may define its own local preset/request builder rather than requiring a core-defined role
 - pass source-session context explicitly when affinity matters
 - treat `:no-winner` as a first-class outcome
 - use `:trace` when an extension needs explainability/debug output
