@@ -109,7 +109,7 @@
 
 (defn- send-message!
   [mutate-fn text]
-  (mutate-fn 'psi.extension/send-message
+  (mutate-fn 'psi.extension/notify
              {:role "assistant"
               :content text
               :custom-type custom-type}))
