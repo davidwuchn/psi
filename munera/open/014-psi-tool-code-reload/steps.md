@@ -5,11 +5,11 @@
   - [x] Return explicit structured validation errors for unknown/missing/invalid action inputs
   - [x] Add tests for action validation, legacy query aliasing, unknown action, and invalid action-specific argument combinations
 
-- [ ] Slice 2 — canonical query mode + compatibility proof
-  - [ ] Route `action: "query"` through existing query execution
-  - [ ] Keep existing query result/truncation behavior unchanged
-  - [ ] Add tests proving legacy `{query ...}` input still works
-  - [ ] Add tests proving canonical action-based query is the preferred equivalent
+- [x] Slice 2 — canonical query mode + compatibility proof
+  - [x] Route `action: "query"` through existing query execution
+  - [x] Keep existing query result/truncation behavior unchanged
+  - [x] Add tests proving legacy `{query ...}` input still works
+  - [x] Add tests proving canonical action-based query is the preferred equivalent
 
 - [ ] Slice 3 — eval runtime operation
   - [ ] Add namespace-scoped in-process eval execution

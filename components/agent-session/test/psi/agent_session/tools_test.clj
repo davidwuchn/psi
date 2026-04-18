@@ -216,13 +216,19 @@
                                                          ([q] (session/query-in ctx active-session-id q))
                                                          ([q entity] (session/query-in ctx q entity))))
           exec                    (:execute tool)
-          result                  (exec {"query" "[:psi.agent-session/session-id :psi.agent-session/session-name :psi.agent-session/model-id]"
+          legacy-result           (exec {"query" "[:psi.agent-session/session-id :psi.agent-session/session-name :psi.agent-session/model-id]"
                                          "entity" (str "{:psi.agent-session/session-id \"" child-session-id "\"}")})
-          parsed                  (read-string (:content result))]
-      (is (false? (:is-error result)))
-      (is (= child-session-id (:psi.agent-session/session-id parsed)))
-      (is (= "helper session" (:psi.agent-session/session-name parsed)))
-      (is (= "gemma-3" (:psi.agent-session/model-id parsed)))))
+          action-result           (exec {"action" "query"
+                                         "query" "[:psi.agent-session/session-id :psi.agent-session/session-name :psi.agent-session/model-id]"
+                                         "entity" (str "{:psi.agent-session/session-id \"" child-session-id "\"}")})
+          legacy-parsed           (read-string (:content legacy-result))
+          action-parsed           (read-string (:content action-result))]
+      (is (false? (:is-error legacy-result)))
+      (is (false? (:is-error action-result)))
+      (is (= legacy-parsed action-parsed))
+      (is (= child-session-id (:psi.agent-session/session-id action-parsed)))
+      (is (= "helper session" (:psi.agent-session/session-name action-parsed)))
+      (is (= "gemma-3" (:psi.agent-session/model-id action-parsed)))))
 
   (testing "psi-tool reports explicit errors for missing session targeting on session-scoped attrs"
     (let [[ctx _active-session-id] (create-session-context {:persist? false})

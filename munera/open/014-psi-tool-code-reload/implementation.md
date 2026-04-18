@@ -17,3 +17,13 @@
 - Verification:
   - `clojure -M:test --focus psi.agent-session.tools-test` ✅
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅
+
+- 2026-04-18 — Slice 2 landed.
+- Canonical `action: "query"` now runs through the same query parsing, entity seeding, sanitization, and truncation path as legacy query-only requests.
+- Query output remains intentionally unwrapped EDN payload rather than an action envelope.
+- Added compatibility proof for explicit entity seeding in both forms:
+  - legacy `{query ..., entity ...}`
+  - canonical `{action: "query", query: ..., entity: ...}`
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.tools-test` ✅
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅
