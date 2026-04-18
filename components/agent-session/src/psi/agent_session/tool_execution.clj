@@ -14,6 +14,7 @@
    [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.psi_tool :as psi-tool]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.tool-output :as tool-output]
@@ -140,7 +141,9 @@
       ctx session-id
       (tool-lifecycle-event :tool-executing call-id name
                             :arguments (:arguments tool-call)
-                            :parsed-args args)))
+                            :parsed-args (if (= "psi-tool" name)
+                                           (psi-tool/telemetry-args args)
+                                           args))))
     (let [sd              (session/get-session-data-in ctx session-id)
           opts            {:cwd          (session/session-worktree-path-in ctx session-id)
                            :overrides    (:tool-output-overrides sd)

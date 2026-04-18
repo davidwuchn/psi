@@ -118,3 +118,24 @@
 - Added/updated proof in `system_prompt_test.clj` so prompt docs now assert the new lambda/prose descriptions and action-based examples.
 - Verification:
   - `clojure -M:test --focus psi.agent-session.system-prompt-test --focus psi.agent-session.tools-test` ✅
+
+- 2026-04-18 — Slice 7 landed.
+- Added `psi_tool/telemetry-args` so tool lifecycle telemetry records canonical psi-tool action arguments instead of raw/unfiltered parsed request maps.
+- `tool_execution/execute-tool-call!` now special-cases `psi-tool` telemetry projection so lifecycle `:parsed-args` retains only the canonical action payload fields:
+  - `action`
+  - `query`
+  - `ns`
+  - `form`
+  - `namespaces`
+  - `worktree-path`
+- Added truncation-visible metadata preservation for imperative psi-tool actions:
+  - eval truncation prefixes visible output with `action`, `ns`, and `form`
+  - reload truncation prefixes visible output with `action`, mode, and effective worktree target when applicable
+  - query output behavior remains unchanged unless already truncated by the generic path
+- Important implementation detail: the visible metadata prefix is only prepended when truncation actually occurs, so non-truncated eval/reload reports preserve the original structured EDN payload shape expected by existing tests and callers.
+- Added proof for:
+  - lifecycle telemetry capturing canonical psi-tool eval arguments
+  - truncated eval output preserving visible action metadata
+  - truncated reload output preserving visible worktree metadata
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.tools-test --focus psi.agent-session.tool-execution-test --focus psi.agent-session.system-prompt-test` ✅

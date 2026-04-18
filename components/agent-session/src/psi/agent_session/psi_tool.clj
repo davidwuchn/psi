@@ -115,6 +115,10 @@
   [x]
   (sanitize-psi-tool-result x))
 
+(defn- ordered-map
+  [& kvs]
+  (apply array-map kvs))
+
 (defn- psi-tool-error-summary
   ([e] (psi-tool-error-summary nil e))
   ([default-phase e]
@@ -127,6 +131,16 @@
   [prefix e]
   {:content  (str prefix (or (ex-message e) (str e)))
    :is-error true})
+
+(defn telemetry-args
+  [{:strs [action query ns form namespaces worktree-path]}]
+  (cond-> (ordered-map)
+    action (assoc "action" action)
+    query (assoc "query" query)
+    ns (assoc "ns" ns)
+    form (assoc "form" form)
+    namespaces (assoc "namespaces" namespaces)
+    worktree-path (assoc "worktree-path" worktree-path)))
 
 (defn- execute-psi-tool-query
   [query-fn {:keys [query entity]}]
@@ -380,6 +394,19 @@
       (assoc :psi-tool/worktree-path effective-path
              :psi-tool/worktree-source worktree-source))))
 
+(defn truncation-visible-prefix
+  [{:keys [action ns form namespaces worktree-path]}]
+  (case action
+    "eval"
+    (str "Eval action=eval ns=" ns " form=" form)
+
+    "reload-code"
+    (if namespaces
+      (str "Reload action=reload-code mode=namespaces namespaces=" (pr-str namespaces))
+      (str "Reload action=reload-code mode=worktree worktree-path=" worktree-path))
+
+    nil))
+
 (defn- execute-psi-tool-eval-report
   [{:keys [ns form]}]
   (let [started-at (System/nanoTime)]
@@ -400,6 +427,15 @@
          :psi-tool/ns          ns
          :psi-tool/duration-ms (long (/ (- (System/nanoTime) started-at) 1000000))
          :psi-tool/error       (psi-tool-error-summary :eval e)}))))
+
+(defn serialize-operation-output
+  [opts request output narrowing-hint]
+  (let [policy     (tool-output/effective-policy (or (:overrides opts) {}) "psi-tool")
+        truncation (tool-output/head-truncate output policy)]
+    (if (and (:truncated truncation)
+             (truncation-visible-prefix request))
+      (serialize-psi-tool-output opts (str (truncation-visible-prefix request) "\n" output) narrowing-hint)
+      (serialize-psi-tool-output opts output narrowing-hint))))
 
 (defn make-psi-tool
   "Create a psi-tool with an :execute fn that closes over `query-fn`.
@@ -432,7 +468,7 @@
             "eval"
             (let [report (execute-psi-tool-eval-report request)
                   output (pr-str report)]
-              (assoc (serialize-psi-tool-output opts output "Use a smaller eval result to reduce output size.")
+              (assoc (serialize-operation-output opts request output "Use a smaller eval result to reduce output size.")
                      :is-error (boolean (:psi-tool/error report))))
 
             "reload-code"
@@ -441,7 +477,7 @@
                                                           :cwd        (:cwd opts)}
                                                          request)
                   output (pr-str report)]
-              (assoc (serialize-psi-tool-output opts output "Use a narrower reload scope to reduce output size.")
+              (assoc (serialize-operation-output opts request output "Use a narrower reload scope to reduce output size.")
                      :is-error (not= :ok (:psi-tool/overall-status report))))))
         (catch StackOverflowError _
           {:content  "EQL query error: result contains recursive data that overflowed printer stack"

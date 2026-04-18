@@ -155,6 +155,29 @@
           (is (= blocks (:content result-e)))
           (is (= "hello" (:result-text result-e))))))))
 
+(deftest psi-tool-lifecycle-telemetry-test
+  (testing "psi-tool lifecycle captures canonical action arguments"
+    (let [agent-ctx                (setup-agent-ctx!)
+          [session-ctx session-id] (setup-session-ctx! agent-ctx)
+          tc                       {:id "call-psi" :name "psi-tool" :arguments "{\"action\":\"eval\",\"ns\":\"clojure.core\",\"form\":\"(+ 1 2)\"}"}]
+      (with-redefs [tool-plan/execute-tool-runtime-in!
+                    (fn [_ _ _ _]
+                      {:content "#:psi-tool{:action :eval, :psi-tool/ns \"clojure.core\", :psi-tool/value \"3\"}"
+                       :is-error false
+                       :details {:truncation {:truncated false}}})
+                    agent/emit-tool-start-in! (fn [_ _] nil)
+                    agent/emit-tool-end-in! (fn [_ _ _ _] nil)
+                    agent/record-tool-result-in! (fn [_ _] nil)]
+        (#'tool-batch/run-tool-call! session-ctx session-id tc nil)
+        (let [events (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events session-id))
+              exec-event (some #(when (= :tool-executing (:event-kind %)) %) events)]
+          (is (= "{\"action\":\"eval\",\"ns\":\"clojure.core\",\"form\":\"(+ 1 2)\"}"
+                 (:arguments exec-event)))
+          (is (= {"action" "eval"
+                  "ns" "clojure.core"
+                  "form" "(+ 1 2)"}
+                 (:parsed-args exec-event))))))))
+
 (deftest dispatch-visible-tool-lifecycle-test
   (testing "tool lifecycle stages are appended through dispatch-visible session events"
     (let [agent-ctx   (setup-agent-ctx!)

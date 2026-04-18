@@ -42,10 +42,10 @@
   - [x] Report ordered refresh step results in `:psi-tool/graph-refresh :steps`
   - [x] Add tests proving graph-refresh success/failure is reported distinctly from code reload
 
-- [ ] Slice 7 — telemetry + transcript-visible diagnostics
-  - [ ] Record canonical action arguments in tool lifecycle telemetry
-  - [ ] Ensure truncated eval/reload output preserves required visible metadata
-  - [ ] Add tests for telemetry capture and truncation-visible metadata preservation
+- [x] Slice 7 — telemetry + transcript-visible diagnostics
+  - [x] Record canonical action arguments in tool lifecycle telemetry
+  - [x] Ensure truncated eval/reload output preserves required visible metadata
+  - [x] Add tests for telemetry capture and truncation-visible metadata preservation
 
 - [x] Slice 8 — docs + proof
   - [x] Update tool-facing docs/examples to canonical action-based psi-tool contract
