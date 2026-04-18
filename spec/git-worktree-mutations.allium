@@ -292,9 +292,9 @@ surface GitWorktreeMutationApi {
         BranchRebaseRequested(req)
         DefaultBranchRequested()
 
-    @guarantee WorktreeAddCreatesSiblingDirectory
-        -- Worktree paths are created as siblings of the main worktree directory.
-        -- The path is derived from the main worktree parent + branch slug.
+    @guarantee WorktreeAddUsesCallerDerivedTargetPath
+        -- Worktree add uses the caller-provided target path.
+        -- Placement policy is determined by the higher-level workflow that derives that target path.
 
     @guarantee WorktreeRemoveCannotRemoveMain
         -- The main worktree cannot be removed via this mutation.
@@ -313,7 +313,7 @@ surface GitWorktreeMutationApi {
 }
 
 -- Decisions
-decision "Worktree paths are sibling directories of the main worktree"
+decision "Worktree placement is derived by the calling workflow from main/current layout relationships"
 decision "Branch merge defaults to --ff-only; user must rebase before merge if not fast-forwardable"
 decision "Merge and rebase abort on conflict and leave working tree clean"
 decision "Default branch resolution: symbolic-ref > git config > 'main' fallback"

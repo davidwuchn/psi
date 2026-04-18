@@ -71,17 +71,31 @@ rule SlugContainsOnlyValidBranchChars {
     ensures: not Contains(slug.slug, "--")
 }
 
-rule WorkOnRequested {
+rule WorkOnTargetPathDerivedFromMainAndCurrentLayout {
     when: SlashCommandDispatched("/work-on", description: String)
     requires: Length(Trim(description)) > 0
     requires: worktrees/GitWorktreeRegistry.has_current
 
     let slug = SlugRequested(description)
     let main_worktree = worktrees/GitWorktreeRegistry.main
-    let sibling_path = ParentDirectory(main_worktree.path) + "/" + slug.slug
+    let current_worktree = worktrees/GitWorktreeRegistry.current
+
+    ensures:
+        if ParentDirectory(current_worktree.path) = main_worktree.path
+        then WorktreeTargetPath(description) = main_worktree.path + "/" + slug.slug
+        else WorktreeTargetPath(description) = ParentDirectory(main_worktree.path) + "/" + slug.slug
+}
+
+rule WorkOnRequested {
+    when: SlashCommandDispatched("/work-on", description: String)
+    requires: Length(Trim(description)) > 0
+    requires: worktrees/GitWorktreeRegistry.has_current
+
+    let slug = SlugRequested(description)
+    let target_path = WorktreeTargetPath(description)
 
     ensures: git/WorktreeAddRequested(
-        path: sibling_path,
+        path: target_path,
         branch: slug.branch_name,
         base_ref: null,
         create_branch: true
@@ -89,28 +103,28 @@ rule WorkOnRequested {
 
     ensures: core/SessionCreateRequested(
         project_id: CurrentProjectId(),
-        worktree_path: sibling_path,
+        worktree_path: target_path,
         system_prompt: CurrentEffectiveSessionPrompt(),
         name: description
     )
 
     ensures: core/SessionSwitchRequested(
         project_id: CurrentProjectId(),
-        worktree_path: sibling_path,
-        session_id: CreatedSessionForWorktree(sibling_path).id
+        worktree_path: target_path,
+        session_id: CreatedSessionForWorktree(target_path).id
     )
 
     ensures: WorkOnResult.created(
         success: true,
-        worktree_path: sibling_path,
+        worktree_path: target_path,
         branch_name: slug.branch_name,
-        context_id: context_id_for(CurrentProjectId(), sibling_path),
-        session_id: CreatedSessionForWorktree(sibling_path).id,
+        context_id: context_id_for(CurrentProjectId(), target_path),
+        session_id: CreatedSessionForWorktree(target_path).id,
         session_name: description,
         error: null
     )
 
-    ensures: AssistantMessage("Working in `{sibling_path}` on branch `{slug.branch_name}`")
+    ensures: AssistantMessage("Working in `{target_path}` on branch `{slug.branch_name}`")
 }
 
 rule WorkOnAttachesExistingBranchWhenSlugBranchAlreadyExists {
@@ -119,18 +133,17 @@ rule WorkOnAttachesExistingBranchWhenSlugBranchAlreadyExists {
     requires: worktrees/GitWorktreeRegistry.has_current
 
     let slug = SlugRequested(description)
-    let main_worktree = worktrees/GitWorktreeRegistry.main
-    let sibling_path = ParentDirectory(main_worktree.path) + "/" + slug.slug
+    let target_path = WorktreeTargetPath(description)
 
     requires: git/WorktreeAddRequested(
-        path: sibling_path,
+        path: target_path,
         branch: slug.branch_name,
         base_ref: null,
         create_branch: true
     ).error = "branch already exists"
 
     ensures: git/WorktreeAddRequested(
-        path: sibling_path,
+        path: target_path,
         branch: slug.branch_name,
         base_ref: null,
         create_branch: false
@@ -138,23 +151,23 @@ rule WorkOnAttachesExistingBranchWhenSlugBranchAlreadyExists {
 
     ensures: core/SessionCreateRequested(
         project_id: CurrentProjectId(),
-        worktree_path: sibling_path,
+        worktree_path: target_path,
         system_prompt: CurrentEffectiveSessionPrompt(),
         name: description
     )
 
     ensures: core/SessionSwitchRequested(
         project_id: CurrentProjectId(),
-        worktree_path: sibling_path,
-        session_id: CreatedSessionForWorktree(sibling_path).id
+        worktree_path: target_path,
+        session_id: CreatedSessionForWorktree(target_path).id
     )
 
     ensures: WorkOnResult.created(
         success: true,
-        worktree_path: sibling_path,
+        worktree_path: target_path,
         branch_name: slug.branch_name,
-        context_id: context_id_for(CurrentProjectId(), sibling_path),
-        session_id: CreatedSessionForWorktree(sibling_path).id,
+        context_id: context_id_for(CurrentProjectId(), target_path),
+        session_id: CreatedSessionForWorktree(target_path).id,
         session_name: description,
         error: null
     )
@@ -166,24 +179,23 @@ rule WorkOnReusesExistingRegisteredWorktree {
     requires: worktrees/GitWorktreeRegistry.has_current
 
     let slug = SlugRequested(description)
-    let main_worktree = worktrees/GitWorktreeRegistry.main
-    let sibling_path = ParentDirectory(main_worktree.path) + "/" + slug.slug
+    let target_path = WorktreeTargetPath(description)
 
     requires: git/WorktreeAddRequested(
-        path: sibling_path,
+        path: target_path,
         branch: slug.branch_name,
         base_ref: null,
         create_branch: true
     ).error = "worktree path already exists"
-    requires: exists wt in worktrees/GitWorktreeRegistry.worktrees where wt.path = sibling_path
+    requires: exists wt in worktrees/GitWorktreeRegistry.worktrees where wt.path = target_path
 
     ensures: WorkOnResult.created(
         success: true,
-        worktree_path: sibling_path,
+        worktree_path: target_path,
         branch_name: slug.branch_name,
-        context_id: context_id_for(CurrentProjectId(), sibling_path),
-        session_id: ExistingOrCreatedSessionForWorktree(sibling_path).id,
-        session_name: ExistingOrCreatedSessionForWorktree(sibling_path).name,
+        context_id: context_id_for(CurrentProjectId(), target_path),
+        session_id: ExistingOrCreatedSessionForWorktree(target_path).id,
+        session_name: ExistingOrCreatedSessionForWorktree(target_path).name,
         error: null
     )
 }
