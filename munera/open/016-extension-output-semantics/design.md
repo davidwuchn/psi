@@ -58,7 +58,7 @@ API direction:
 - add an explicit UI-only extension API/mutation
 - add an explicit conversation-visible extension API/mutation
 - keep existing `send-prompt` separate
-- ambiguous `send-message` should become compatibility-only and be deprecated or narrowed after migration lands
+- ambiguous `send-message` was treated as compatibility-only during migration and has now been removed
 
 Naming direction:
 The exact final names may vary, but the semantics are fixed. Preferred conceptual names are:
@@ -89,8 +89,8 @@ Migration requirements:
 - the migration must remove semantic reliance on stdout for at least one slash-command path
 
 Backward-compatibility guidance:
-- existing extensions using `send-message` or `println` may need transitional support
-- if `send-message` remains temporarily, its compatibility semantics must be documented explicitly during the migration window
+- existing extensions using `send-message` or `println` may need transitional support during migration
+- `send-message` compatibility semantics were documented explicitly during the migration window and the compatibility layer has now been removed
 - compatibility behavior must not block establishing the new explicit contract
 
 Non-goals:

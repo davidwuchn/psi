@@ -25,11 +25,11 @@ Use the following explicit extension output surfaces:
 
 Compatibility policy
 
-- keep existing `psi.extension/send-message` during migration only
-- compatibility meaning:
+- `psi.extension/send-message` was kept during migration only and has now been removed
+- migration compatibility meaning was:
   - if `:custom-type` is present, preserve current UI-only behavior semantics
   - otherwise preserve current synthetic conversation-visible insertion semantics
-- new code should use only `notify` and `append-message`
+- new code uses only `notify` and `append-message`
 - stdout capture remains fallback-only during migration and is not part of the preferred contract
 
 Concrete implementation slices
@@ -58,7 +58,7 @@ Changes:
 - add mutation `psi.extension/notify`
 - add mutation `psi.extension/append-message`
 - include both in session-scoped extension mutation op allowlist
-- keep `psi.extension/send-message` as compatibility mutation for now
+- remove `psi.extension/send-message` after migration is complete
 - update mutation docs so semantics are explicit and unambiguous
 
 Expected mutation shapes:
@@ -118,9 +118,9 @@ Files:
 Required tests:
 1. `notify` emits visible output but does not alter future LLM conversation assembly
 2. `append-message` emits visible output and does alter future LLM conversation assembly
-3. compatibility `send-message` still behaves as documented during migration
-4. migrated `work_on` command paths no longer depend on stdout for semantic output
-5. RPC/TUI no longer need placeholder semantics for migrated explicit-output paths
+3. migrated `work_on` command paths no longer depend on stdout for semantic output
+4. RPC/TUI no longer need placeholder semantics for migrated explicit-output paths
+5. removal of `send-message` does not break migrated explicit-output paths
 
 Ambiguities resolved for implementation
 
