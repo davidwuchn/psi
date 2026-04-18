@@ -39,12 +39,13 @@ Add to `::pco/output` and resolver body:
   querying :psi.graph/resolver-index, :psi.graph/attr-index,
   and resolver-detail by sym
 
-### 5. Simplify system prompt
+### 5. Update system prompt
 
+- Add resolver-index/attr-index/resolver-detail to both lambda-graph-discovery
+  and prose-graph-discovery so agents know the surface exists and how to use it
 - Remove hardcoded `:psi.session-info/id (not :psi.session-info/session-id)` hint
-  from both prose and lambda graph-discovery sections — it's now discoverable
-- Keep the child-sessions query example but note agent can use resolver-index
-  to discover output attrs
+  — now discoverable via resolver-index
+- Keep child-sessions query example; replace attr hint with pointer to resolver-index
 
 ## Order
 
