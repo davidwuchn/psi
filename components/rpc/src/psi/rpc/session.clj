@@ -22,6 +22,7 @@
    [psi.rpc.session.navigation :as navigation]
    [psi.rpc.session.ops :as ops]
    [psi.rpc.session.prompt :as prompt]
+   [psi.rpc.session.projections :as projections]
    [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [default-session-id-in error-frame response-frame targetable-rpc-ops]]))
@@ -314,19 +315,9 @@
                                                   :error-message (or (ex-message e) "extension run failed")}}))))]
       (ext-rt/set-extension-run-fn-in! ctx session-id run-fn))))
 
-(defn- maybe-start-ui-watch-loop!
+(defn- ensure-projection-listener!
   [ctx emit-frame! state]
-  (when (and (some events/extension-ui-topic? (rpc.state/subscribed-topics state))
-             (nil? (rpc.state/ui-watch-loop state)))
-    (let [watch-loop (future
-                       (binding [*out* (rpc.state/err-writer state)
-                                 *err* (rpc.state/err-writer state)]
-                         (loop [last-snap (or (events/ui-snapshot ctx) {})]
-                           (let [current (or (events/ui-snapshot ctx) {})]
-                             (events/emit-ui-snapshot-events! emit-frame! state last-snap current)
-                             (Thread/sleep 50)
-                             (recur current)))))]
-      (rpc.state/set-ui-watch-loop! state watch-loop))))
+  (projections/ensure-projection-listener! ctx emit-frame! state))
 
 (defn- maybe-start-external-event-loop!
   [ctx emit-frame! state session-id]
@@ -465,8 +456,8 @@
 (defn- subscribe-dispatch
   [ctx request emit-frame! params state session-id session-deps]
   (case (:op request)
-    "subscribe" (ops/handle-subscribe {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-id session-id :session-deps session-deps :maybe-start-external-event-loop! maybe-start-external-event-loop! :register-rpc-extension-run-fn! register-rpc-extension-run-fn! :maybe-start-ui-watch-loop! maybe-start-ui-watch-loop!})
-    "unsubscribe" (ops/handle-unsubscribe {:request request :params params :state state})
+    "subscribe" (ops/handle-subscribe {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-id session-id :session-deps session-deps :maybe-start-external-event-loop! maybe-start-external-event-loop! :register-rpc-extension-run-fn! register-rpc-extension-run-fn! :ensure-projection-listener! ensure-projection-listener!})
+    "unsubscribe" (ops/handle-unsubscribe {:ctx ctx :request request :params params :state state})
     nil))
 
 (defn- dialog-dispatch

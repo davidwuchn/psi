@@ -7,6 +7,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.app-runtime.messages :as app-messages]
    [psi.rpc.events :as events]
+   [psi.rpc.session.projections :as projections]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [error-frame protocol-version response-frame supported-rpc-ops]]))
 
@@ -200,7 +201,7 @@
   (response-frame (:id request) (:op request) true {:stats (session/diagnostics-in ctx session-id)}))
 
 (defn handle-subscribe
-  [{:keys [ctx request params state session-id session-deps maybe-start-external-event-loop! register-rpc-extension-run-fn! maybe-start-ui-watch-loop!]}]
+  [{:keys [ctx request params state session-id session-deps maybe-start-external-event-loop! register-rpc-extension-run-fn! ensure-projection-listener!]}]
   (let [topics            (or (:topics params) [])
         _                 (when-not (sequential? topics)
                             (throw (ex-info "subscribe :topics must be sequential"
@@ -215,8 +216,8 @@
               (contains? (rpc.state/subscribed-topics state) "assistant/message"))
       (maybe-start-external-event-loop! ctx (:emit-frame! request) state sid))
     (register-rpc-extension-run-fn! ctx (:emit-frame! request) state sid session-deps)
+    (ensure-projection-listener! ctx (:emit-frame! request) state)
     (when ui-topic-request?
-      (maybe-start-ui-watch-loop! ctx (:emit-frame! request) state)
       (events/emit-ui-snapshot-events! (:emit-frame! request)
                                        state
                                        {}
@@ -233,7 +234,7 @@
     (response-frame (:id request) (:op request) true {:subscribed (->> (rpc.state/subscribed-topics state) sort vec)})))
 
 (defn handle-unsubscribe
-  [{:keys [request params state]}]
+  [{:keys [ctx request params state]}]
   (let [topics  (or (:topics params) [])
         _       (when-not (sequential? topics)
                   (throw (ex-info "unsubscribe :topics must be sequential"
@@ -242,6 +243,8 @@
     (if (seq topics*)
       (rpc.state/unsubscribe-topics! state topics*)
       (rpc.state/clear-subscriptions! state))
+    (when-not (projections/projection-topic-subscribed? state)
+      (projections/unregister-projection-listener! ctx state))
     (response-frame (:id request) (:op request) true {:subscribed (->> (rpc.state/subscribed-topics state) sort vec)})))
 
 (defn handle-op-not-supported

@@ -4,7 +4,7 @@
    State shape:
    {:transport  {:ready? :negotiated-protocol-version :pending :max-pending-requests :err}
     :connection {:focus-session-id :subscribed-topics :event-seq}
-    :workers    {:inflight-futures :rpc-run-fn-registered? :ui-watch-loop :external-event-loop}}")
+    :workers    {:inflight-futures :rpc-run-fn-registered? :ui-watch-loop :external-event-loop :projection-listener-id}}")
 
 (def default-max-pending-requests 64)
 
@@ -25,7 +25,8 @@
          {:inflight-futures []
           :rpc-run-fn-registered? false
           :ui-watch-loop nil
-          :external-event-loop nil}}))
+          :external-event-loop nil
+          :projection-listener-id nil}}))
 
 (defn initialize-transport-state!
   [state err]
@@ -52,7 +53,8 @@
                          (merge {:inflight-futures []
                                  :rpc-run-fn-registered? false
                                  :ui-watch-loop nil
-                                 :external-event-loop nil}
+                                 :external-event-loop nil
+                                 :projection-listener-id nil}
                                 (or workers {})))))))
   state)
 
@@ -150,6 +152,15 @@
 (defn set-external-event-loop!
   [state x]
   (swap! state assoc-in [:workers :external-event-loop] x)
+  state)
+
+(defn projection-listener-id
+  [state]
+  (get-in @state [:workers :projection-listener-id]))
+
+(defn set-projection-listener-id!
+  [state listener-id]
+  (swap! state assoc-in [:workers :projection-listener-id] listener-id)
   state)
 
 (defn add-inflight-future!
