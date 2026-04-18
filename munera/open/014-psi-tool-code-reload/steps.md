@@ -1,4 +1,4 @@
-- [ ] Define the canonical `psi-tool` code-reload contract
-- [ ] Reproduce the current absence of a self-reload capability with focused evidence
-- [ ] Add reload targeting semantics that can use an explicit or session-derived worktree-path
-- [ ] Add tests and docs for runtime-visible reload behavior
+- [ ] Define the canonical `psi-tool` runtime execution and code-reload contract
+- [ ] Reproduce the current absence of self-reload and arbitrary in-process execution capabilities with focused evidence
+- [ ] Add execution/reload targeting semantics that can use an explicit or session-derived worktree-path
+- [ ] Add tests and docs for runtime-visible execution and reload behavior
