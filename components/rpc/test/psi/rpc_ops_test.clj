@@ -280,3 +280,48 @@
           (future-cancel loop-future)
           (try (.close in-writer) (catch Exception _ nil))
           (try (.close in-reader) (catch Exception _ nil)))))))
+
+(deftest rpc-event-driven-ui-projection-streams-notifications-without-prompt-test
+  (testing "after subscribe, ui notifications stream from event-driven projection delivery without a prompt request"
+    (let [[ctx _]     (support/create-session-context)
+          state       (atom {:transport {:ready? true :pending {}}
+                             :connection {:subscribed-topics #{}}})
+          handler     (support/make-handler ctx state)
+          in-reader   (java.io.PipedReader.)
+          in-writer   (java.io.PipedWriter. in-reader)
+          out-writer  (java.io.StringWriter.)
+          err-writer  (java.io.StringWriter.)
+          write-line! (fn [line]
+                        (.write in-writer (str line "\n"))
+                        (.flush in-writer))
+          loop-future (future
+                        (rpc.transport/run-stdio-loop! {:in              in-reader
+                                                        :out             out-writer
+                                                        :err             err-writer
+                                                        :state           state
+                                                        :request-handler handler}))]
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/notification\"]}}")
+        (Thread/sleep 100)
+        (dispatch/dispatch! ctx :session/ui-notify
+                            {:extension-id "ext.demo"
+                             :message "live note"
+                             :level :warning}
+                            {:origin :test})
+        (Thread/sleep 180)
+        (.close in-writer)
+        (deref loop-future 500 nil)
+        (let [frames               (support/parse-frames (->> (str/split-lines (str out-writer))
+                                                              (remove str/blank?)
+                                                              vec))
+              notification-events  (filter #(= "ui/notification" (:event %)) frames)
+              latest               (last notification-events)]
+          (is (seq notification-events))
+          (is (= "ext.demo" (get-in latest [:data :extension-id])))
+          (is (= "live note" (get-in latest [:data :message])))
+          (is (= "warning" (get-in latest [:data :level]))))
+        (finally
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil)))))))
