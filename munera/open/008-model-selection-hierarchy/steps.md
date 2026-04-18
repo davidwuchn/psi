@@ -9,7 +9,7 @@
 - [x] Implement resolver filtering for reference viability + required constraints
 - [x] Implement resolver ranking for strong/weak preference tiers with canonical tie-breaks
 - [x] Implement ambiguity and no-winner outcomes
-- [ ] Implement core result + full trace payloads
+- [x] Implement core result + full trace payloads
 - [ ] Adopt the resolver in an initial caller (likely auto-session-name)
 - [ ] Add focused unit/integration tests for catalog/request/resolver/trace behavior
 - [ ] Sync docs/config surfaces if public behavior changes

@@ -468,6 +468,34 @@
     {:ranked     ranked
      :ambiguous? (boolean ambiguous?)}))
 
+(defn short-trace
+  "Project a terse explanation from a full resolver result."
+  [result]
+  (case (:outcome result)
+    :ok
+    {:outcome     :ok
+     :selected    (select-keys (:candidate result) [:provider :id :name])
+     :ambiguous?  (:ambiguous? result)
+     :pool-count  (count (get-in result [:filtering :pool]))
+     :survivors   (count (get-in result [:filtering :survivors]))}
+
+    :no-winner
+    {:outcome     :no-winner
+     :reason      (:reason result)
+     :pool-count  (count (get-in result [:filtering :pool]))
+     :survivors   (count (get-in result [:filtering :survivors]))}))
+
+(defn full-trace
+  "Project the full explainability payload from a resolver result."
+  [result]
+  {:effective-request (:effective-request result)
+   :filtering         (:filtering result)
+   :ranking           (:ranking result)
+   :outcome           (:outcome result)
+   :reason            (:reason result)
+   :candidate         (:candidate result)
+   :ambiguous?        (:ambiguous? result)})
+
 (defn resolve-selection
   "Resolve model selection through composition, filtering, and ranking.
 
@@ -479,13 +507,15 @@
     :ambiguous? boolean
     :effective-request request
     :filtering filtering-result
-    :ranking ranking-result}
+    :ranking ranking-result
+    :trace {:short ... :full ...}}
 
    {:outcome :no-winner
     :reason keyword
     :effective-request request
     :filtering filtering-result
-    :ranking {:ranked [] :ambiguous? false}}
+    :ranking {:ranked [] :ambiguous? false}
+    :trace {:short ... :full ...}}
 
    v1 no-winner reasons:
    - `:reference-not-found` for explicit/inherit requests with an empty pool
@@ -498,27 +528,30 @@
                                                       :request request})
         filtering         (filter-candidates catalog effective-request)
         ranking           (rank-candidates effective-request (:survivors filtering))
-        mode              (:mode effective-request)]
-    (cond
-      (and (empty? (:pool filtering))
-           (contains? #{:explicit :inherit-session} mode))
-      {:outcome           :no-winner
-       :reason            :reference-not-found
-       :effective-request effective-request
-       :filtering         filtering
-       :ranking           ranking}
+        mode              (:mode effective-request)
+        result            (cond
+                            (and (empty? (:pool filtering))
+                                 (contains? #{:explicit :inherit-session} mode))
+                            {:outcome           :no-winner
+                             :reason            :reference-not-found
+                             :effective-request effective-request
+                             :filtering         filtering
+                             :ranking           ranking}
 
-      (empty? (:survivors filtering))
-      {:outcome           :no-winner
-       :reason            :required-constraints-unsatisfied
-       :effective-request effective-request
-       :filtering         filtering
-       :ranking           ranking}
+                            (empty? (:survivors filtering))
+                            {:outcome           :no-winner
+                             :reason            :required-constraints-unsatisfied
+                             :effective-request effective-request
+                             :filtering         filtering
+                             :ranking           ranking}
 
-      :else
-      {:outcome           :ok
-       :candidate         (first (:ranked ranking))
-       :ambiguous?        (:ambiguous? ranking)
-       :effective-request effective-request
-       :filtering         filtering
-       :ranking           ranking})))
+                            :else
+                            {:outcome           :ok
+                             :candidate         (first (:ranked ranking))
+                             :ambiguous?        (:ambiguous? ranking)
+                             :effective-request effective-request
+                             :filtering         filtering
+                             :ranking           ranking})]
+    (assoc result
+           :trace {:short (short-trace result)
+                   :full  (full-trace result)})))

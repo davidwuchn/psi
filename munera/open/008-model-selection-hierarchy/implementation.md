@@ -204,3 +204,25 @@
   - missing explicit references return `:no-winner / :reference-not-found`
   - required-filter failures return `:no-winner / :required-constraints-unsatisfied`
   - ambiguity remains surfaced on successful outcomes
+
+2026-04-17 — Step 8: core result and trace payloads
+- Extended `resolve-selection` so the shared resolver now returns a first-class trace payload.
+- Added `short-trace` for terse operational explanation:
+  - outcome
+  - selected candidate summary when present
+  - ambiguity flag
+  - pool/survivor counts
+- Added `full-trace` for debug/explainability use:
+  - effective request
+  - filtering details
+  - ranking details
+  - outcome / reason
+  - selected candidate
+  - ambiguity flag
+- `resolve-selection` now includes:
+  - `:trace {:short ... :full ...}`
+- This completes the initial catalog → request → effective-request → filtering → ranking → outcome → trace loop for the shared resolver library.
+- Added tests proving:
+  - successful resolutions expose both short and full traces
+  - short traces project the selected candidate summary cleanly
+  - failure traces retain reason and filtering evidence

@@ -350,3 +350,36 @@
                                :weak-preferences []}})]
         (is (= :ok (:outcome result)))
         (is (boolean? (:ambiguous? result)))))))
+
+(deftest trace-projection-test
+  (registry/init! {:user-models-path (write-temp-models! no-auth-provider-config)})
+  (let [catalog (sut/catalog-view)]
+    (testing "ok results expose both short and full traces"
+      (let [result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :explicit
+                               :model {:provider :anthropic :id "claude-sonnet-4-6"}}})
+            short  (sut/short-trace result)
+            full   (sut/full-trace result)]
+        (is (= short (get-in result [:trace :short])))
+        (is (= full (get-in result [:trace :full])))
+        (is (= :ok (:outcome short)))
+        (is (= {:provider :anthropic
+                :id "claude-sonnet-4-6"
+                :name "Claude Sonnet 4.6"}
+               (:selected short)))
+        (is (= :ok (:outcome full)))
+        (is (= "claude-sonnet-4-6" (get-in full [:candidate :id])))))
+
+    (testing "no-winner traces retain reason and filtering evidence"
+      (let [result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :explicit
+                               :model {:provider :openai :id "does-not-exist"}}})
+            short  (sut/short-trace result)
+            full   (sut/full-trace result)]
+        (is (= :no-winner (:outcome short)))
+        (is (= :reference-not-found (:reason short)))
+        (is (= :no-winner (:outcome full)))
+        (is (= :reference-not-found (:reason full)))
+        (is (empty? (get-in full [:filtering :pool])))))))
