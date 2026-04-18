@@ -240,12 +240,11 @@ Usage:
 ## Suggested next step
 - Next active threads are now:
   1. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
-  2. **Auto session name**: add helper model selection using the new model-selection-hierarchy thread
-  3. **Model selection hierarchy**: task-class helper/background model resolution
-  4. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
-  5. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
+  2. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
+  3. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
 - Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes.
-- For auto-session-name specifically, the next highest-leverage step is helper model selection, not more title plumbing.
+- `008-model-selection-hierarchy` is now closed in `munera/closed/008-model-selection-hierarchy/`.
+- Model selection hierarchy is now available as shared infrastructure and already adopted by auto-session-name; remaining work is downstream adoption/refinement rather than core resolver invention.
 
 ## Notes for future ψ
 - `munera/plan.md` is now the main active-work tracker, with the active threads split into task directories under `munera/open/`.
