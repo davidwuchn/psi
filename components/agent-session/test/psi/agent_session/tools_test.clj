@@ -15,67 +15,67 @@
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 
-(deftest app-query-tool-schema-test
-  (testing "app-query-tool schema is well-formed"
-    (is (= "app-query-tool" (:name tools/app-query-tool)))
-    (is (string? (:description tools/app-query-tool)))
-    (is (map? (:parameters tools/app-query-tool)))))
+(deftest psi-tool-schema-test
+  (testing "psi-tool schema is well-formed"
+    (is (= "psi-tool" (:name tools/psi-tool)))
+    (is (string? (:description tools/psi-tool)))
+    (is (map? (:parameters tools/psi-tool)))))
 
-(deftest app-query-tool-in-all-schemas-test
-  (testing "app-query-tool appears in all-tool-schemas"
-    (is (some #(= "app-query-tool" (:name %)) tools/all-tool-schemas))))
+(deftest psi-tool-in-all-schemas-test
+  (testing "psi-tool appears in all-tool-schemas"
+    (is (some #(= "psi-tool" (:name %)) tools/all-tool-schemas))))
 
-(deftest app-query-tool-not-in-all-tools-test
-  (testing "app-query-tool is excluded from all-tools (requires context)"
-    (is (not (some #(= "app-query-tool" (:name %)) tools/all-tools)))))
+(deftest psi-tool-not-in-all-tools-test
+  (testing "psi-tool is excluded from all-tools (requires context)"
+    (is (not (some #(= "psi-tool" (:name %)) tools/all-tools)))))
 
-(deftest make-app-query-tool-valid-query-test
+(deftest make-psi-tool-valid-query-test
   (testing "valid EQL query returns EDN result"
     (let [query-fn (fn [q]
                      (is (= [:foo/bar] q))
                      {:foo/bar 42})
-          tool     (tools/make-app-query-tool query-fn)
+          tool     (tools/make-psi-tool query-fn)
           result   ((:execute tool) {"query" "[:foo/bar]"})]
       (is (false? (:is-error result)))
       (is (= {:foo/bar 42} (read-string (:content result)))))))
 
-(deftest make-app-query-tool-nested-query-test
+(deftest make-psi-tool-nested-query-test
   (testing "nested EQL query with joins"
     (let [query-fn (fn [_q]
                      {:psi.agent-session/stats {:total-messages 5}})
-          tool     (tools/make-app-query-tool query-fn)
+          tool     (tools/make-psi-tool query-fn)
           result   ((:execute tool)
                     {"query" "[{:psi.agent-session/stats [:total-messages]}]"})]
       (is (false? (:is-error result)))
       (is (string? (:content result))))))
 
-(deftest make-app-query-tool-invalid-edn-test
+(deftest make-psi-tool-invalid-edn-test
   (testing "invalid EDN returns error"
-    (let [tool   (tools/make-app-query-tool (fn [_q] {}))
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
           result ((:execute tool) {"query" "[not valid edn!!!"})]
       (is (true? (:is-error result)))
       (is (re-find #"EQL query error" (:content result))))))
 
-(deftest make-app-query-tool-not-a-vector-test
+(deftest make-psi-tool-not-a-vector-test
   (testing "non-vector EDN returns error"
-    (let [tool   (tools/make-app-query-tool (fn [_q] {}))
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
           result ((:execute tool) {"query" ":just-a-keyword"})]
       (is (true? (:is-error result)))
       (is (re-find #"must be an EDN vector" (:content result))))))
 
-(deftest make-app-query-tool-query-fn-throws-test
+(deftest make-psi-tool-query-fn-throws-test
   (testing "query-fn exception is caught and returned as error"
-    (let [tool   (tools/make-app-query-tool
+    (let [tool   (tools/make-psi-tool
                   (fn [_q] (throw (ex-info "resolver failed" {}))))
           result ((:execute tool) {"query" "[:foo]"})]
       (is (true? (:is-error result)))
       (is (re-find #"resolver failed" (:content result))))))
 
-(deftest make-app-query-tool-truncation-test
-  (testing "truncated app-query-tool output includes spill path and narrowing guidance"
-    (let [tool   (tools/make-app-query-tool
+(deftest make-psi-tool-truncation-test
+  (testing "truncated psi-tool output includes spill path and narrowing guidance"
+    (let [tool   (tools/make-psi-tool
                   (fn [_q] {:big (apply str (repeat 500 "x"))})
-                  {:overrides {"app-query-tool" {:max-lines 1000 :max-bytes 80}}
+                  {:overrides {"psi-tool" {:max-lines 1000 :max-bytes 80}}
                    :tool-call-id "test-call-id"})
           result ((:execute tool) {"query" "[:big]"})
           spill  (get-in result [:details :full-output-path])]
@@ -85,18 +85,18 @@
       (is (string? spill))
       (is (.exists (io/file spill))))))
 
-(deftest make-app-query-tool-read-eval-disabled-test
+(deftest make-psi-tool-read-eval-disabled-test
   (testing "read-eval is disabled for safety"
-    (let [tool   (tools/make-app-query-tool (fn [_q] {}))
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
           result ((:execute tool) {"query" "#=(+ 1 2)"})]
       (is (true? (:is-error result))))))
 
-(deftest make-app-query-tool-sanitizes-recursive-session-ctx-test
+(deftest make-psi-tool-sanitizes-recursive-session-ctx-test
   (testing "result maps containing :psi/agent-session-ctx do not overflow printer"
     (let [cyclic (let [l (java.util.ArrayList.)]
                    (.add l l)
                    l)
-          tool   (tools/make-app-query-tool
+          tool   (tools/make-psi-tool
                   (fn [_q]
                     {:psi.agent-session/api-errors
                      [{:psi.api-error/http-status 400
@@ -136,27 +136,27 @@
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown tool"
                             (tools/execute-tool tool-name {})))))
 
-  (testing "built-in dispatch does not handle app-query-tool"
+  (testing "built-in dispatch does not handle psi-tool"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown tool"
-                          (tools/execute-tool "app-query-tool" {"query" "[:foo]"})))))
+                          (tools/execute-tool "psi-tool" {"query" "[:foo]"})))))
 
-(deftest app-query-tool-integration-test
-  (testing "app-query-tool works with a real session context"
+(deftest psi-tool-integration-test
+  (testing "psi-tool works with a real session context"
     (let [[ctx _]            (create-session-context {:persist? false})
           sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
-          tool               (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
+          tool               (tools/make-psi-tool (fn [q] (session/query-in ctx session-id q)))
           exec               (:execute tool)
           result             (exec {"query" "[:psi.agent-session/phase]"})
           parsed             (read-string (:content result))]
       (is (false? (:is-error result)))
       (is (= :idle (:psi.agent-session/phase parsed)))))
 
-  (testing "app-query-tool returns session-id from live context"
+  (testing "psi-tool returns session-id from live context"
     (let [[ctx _]            (create-session-context {:persist? false})
           sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
-          tool               (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
+          tool               (tools/make-psi-tool (fn [q] (session/query-in ctx session-id q)))
           exec               (:execute tool)
           result             (exec {"query" "[:psi.agent-session/session-id]"})
           parsed             (read-string (:content result))]

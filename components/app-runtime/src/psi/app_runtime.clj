@@ -352,11 +352,11 @@ Available: " (str/join ", " (map name (keys all))))
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt base-prompt} {:origin :core})
          ext-paths        (ext/discover-extension-paths [] cwd)
-         app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
+         psi-tool         (tools/make-psi-tool (fn [q] (session/query-in ctx session-id q)))
          summary          (session-bootstrap/bootstrap-in!
                            ctx session-id
                            {:register-global-query? false
-                            :base-tools             (conj (vec tools/all-tools) app-query-tool)
+                            :base-tools             (conj (vec tools/all-tools) psi-tool)
                             :system-prompt          base-prompt
                             :developer-prompt       developer-prompt
                             :developer-prompt-source (if developer-prompt :env :fallback)

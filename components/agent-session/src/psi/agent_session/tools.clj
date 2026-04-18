@@ -59,16 +59,19 @@
                               :content {:type "string" :description "Content to write"}}
                  :required   ["path" "content"]}})
 
-(def app-query-tool
-  {:name        "app-query-tool"
-   :label       "App Query Tool"
+(def psi-tool
+  {:name        "psi-tool"
+   :label       "Psi Tool"
    :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]"
    :parameters  {:type       "object"
                  :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
                  :required   ["query"]}})
 
+(def app-query-tool
+  psi-tool)
+
 (def all-tool-schemas
-  [read-tool bash-tool edit-tool write-tool app-query-tool])
+  [read-tool bash-tool edit-tool write-tool psi-tool])
 
 ;; ============================================================
 ;; Tool implementations
@@ -565,11 +568,11 @@
                      :bytes bytes}]
       :enrichments []})))
 
-(defn- sanitize-app-query-result
+(defn- sanitize-psi-tool-result
   "Remove recursive/non-printable session roots from query results before pr-str.
 
    Some resolver entities intentionally include :psi/agent-session-ctx for join
-   continuity. When app-query-tool renders full EDN, that can create cyclic data
+   continuity. When psi-tool renders full EDN, that can create cyclic data
    graphs and trigger StackOverflowError during printing.
 
    This sanitizer removes root context pointers that are not part of the public
@@ -582,8 +585,8 @@
        x))
    result))
 
-(defn make-app-query-tool
-  "Create an app-query tool with an :execute fn that closes over `query-fn`.
+(defn make-psi-tool
+  "Create a psi-tool with an :execute fn that closes over `query-fn`.
    `query-fn` should be (fn [eql-query-vec] -> result-map), typically
    `(partial resolvers/query-in ctx)` or `(fn [q] (session/query-in ctx q))`.
 
@@ -591,9 +594,9 @@
    - :overrides   output-policy overrides map
    - :tool-call-id identifier for temp artifact naming when output is truncated"
   ([query-fn]
-   (make-app-query-tool query-fn nil))
+   (make-psi-tool query-fn nil))
   ([query-fn {:keys [overrides tool-call-id]}]
-   (assoc app-query-tool
+   (assoc psi-tool
           :execute
           (fn [{:strs [query]}]
             (try
@@ -602,14 +605,14 @@
                 (when-not (vector? q)
                   (throw (ex-info "Query must be an EDN vector" {:input query})))
                 (let [result      (query-fn q)
-                      safe-result (sanitize-app-query-result result)
+                      safe-result (sanitize-psi-tool-result result)
                       output      (pr-str safe-result)
-                      policy      (tool-output/effective-policy (or overrides {}) "app-query-tool")
+                      policy      (tool-output/effective-policy (or overrides {}) "psi-tool")
                       truncation  (tool-output/head-truncate output policy)
                       truncated?  (:truncated truncation)
                       spill-path  (when truncated?
                                     (tool-output/persist-truncated-output!
-                                     "app-query-tool"
+                                     "psi-tool"
                                      (or tool-call-id (str (java.util.UUID/randomUUID)))
                                      output))]
                   (if truncated?
@@ -631,11 +634,15 @@
                 {:content  (str "EQL query error: " (ex-message e))
                  :is-error true}))))))
 
+(defn make-app-query-tool
+  [& args]
+  (apply make-psi-tool args))
+
 (def all-tools
   "Built-in tool definitions including execution fns.
    Use this when registering tools into agent state.
-   Note: app-query-tool is excluded — it requires a session context.
-   Use `make-app-query-tool` to create it with a query-fn."
+   Note: psi-tool is excluded — it requires a session context.
+   Use `make-psi-tool` to create it with a query-fn."
   [{:name        (:name read-tool)
     :label       (:label read-tool)
     :description (:description read-tool)
@@ -711,7 +718,7 @@
 (defn execute-tool
   "Dispatch a tool call by name. Returns {:content string|blocks :is-error boolean}.
   Throws ex-info for unknown tools.
-  Note: app-query-tool is not dispatched here — it requires a session context
+  Note: psi-tool is not dispatched here — it requires a session context
   and is handled via the tool registry's :execute fn."
   ([tool-name args-map]
    (execute-tool tool-name args-map nil))

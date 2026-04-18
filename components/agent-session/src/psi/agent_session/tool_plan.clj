@@ -34,10 +34,10 @@
         from-ext
         from-agent)))
 
-(defn- execute-app-query-tool-in!
-  "Execute a session-bound app-query-tool instance.
+(defn- execute-psi-tool-in!
+  "Execute a session-bound psi-tool instance.
 
-   app-query-tool cannot use the generic built-in dispatcher because it needs
+   psi-tool cannot use the generic built-in dispatcher because it needs
    access to the live query graph scoped to the current session-id. Build a
    fresh query context at call time so the resolver/mutation graph matches the
    current runtime state, and bind resolver session targeting explicitly."
@@ -47,7 +47,7 @@
         qctx                (query/create-query-context)
         _                   (register-resolvers! qctx false)
         _                   (register-mutations! qctx (:all-mutations ctx) true)
-        tool                (tools/make-app-query-tool
+        tool                (tools/make-psi-tool
                              (fn [eql-query]
                                (query/query-in qctx
                                                {:psi/agent-session-ctx        ctx
@@ -64,7 +64,7 @@
    child sessions without an agent-ctx) and falls back to built-in tool
    dispatch. Supports both 1-arity and 2-arity execute fn contracts.
 
-   app-query-tool is special: its schema is session-persistable, but its
+   psi-tool is special: its schema is session-persistable, but its
    executable implementation must be synthesized per session because it closes
    over the live query graph and current session-id.
 
@@ -74,8 +74,9 @@
   (let [tool-def   (find-tool-def ctx session-id tool-name)
         execute-fn (:execute tool-def)]
     (cond
-      (= tool-name "app-query-tool")
-      (execute-app-query-tool-in! ctx session-id args opts)
+      (or (= tool-name "psi-tool")
+          (= tool-name "app-query-tool"))
+      (execute-psi-tool-in! ctx session-id args opts)
 
       (fn? execute-fn)
       (try
