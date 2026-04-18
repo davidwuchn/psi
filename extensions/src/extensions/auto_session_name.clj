@@ -171,8 +171,14 @@
 (defn- helper-model-selection-request [model-ctx]
   {:mode                :resolve
    :required            [{:criterion :supports-text
-                          :match     :true}]
-   :strong-preferences  [{:criterion :input-cost
+                          :match     :true}
+                         {:criterion :latency-tier
+                          :equals    :low}
+                         {:criterion :cost-tier
+                          :one-of    [:zero :low]}]
+   :strong-preferences  [{:criterion :locality
+                          :equals    :local}
+                         {:criterion :input-cost
                           :prefer    :lower}
                          {:criterion :output-cost
                           :prefer    :lower}]

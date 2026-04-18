@@ -286,3 +286,17 @@
 - Added derived built-in `:cost-tier` annotation from input/output cost.
 - Updated the AI model schema in `psi.ai.schemas` so these additional built-in fields remain schema-valid across the core AI runtime.
 - Added/updated tests proving built-in catalog entries now project explicit locality/latency/cost metadata instead of leaving those dimensions undefined.
+
+2026-04-17 — Step 14: auto-session-name local-first low-latency low/zero-cost policy
+- Tightened the extension-owned helper-model request in `extensions.auto-session-name`.
+- The extension now:
+  - requires text capability
+  - requires `:latency-tier = :low`
+  - requires `:cost-tier ∈ #{:zero :low}`
+  - strongly prefers `:locality = :local`
+  - still keeps source-session provider affinity as a weak preference
+- Important current consequence with the annotated built-in catalog:
+  - built-in providers remain `:cloud`
+  - so locality does not exclude them
+  - among qualifying low-latency, low/zero-cost built-ins, the current winner is still `:openai/gpt-5.3-codex-spark` because no local candidate exists in the tested setup and it wins the cost ordering
+- Updated extension tests to match the refined policy under the current catalog.

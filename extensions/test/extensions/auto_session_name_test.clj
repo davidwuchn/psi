@@ -2,6 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [extensions.auto-session-name :as sut]
+   [psi.ai.model-registry :as model-registry]
    [psi.extension-test-helpers.nullable-api :as nullable]))
 
 (defn- reset-state! []
@@ -12,14 +13,21 @@
            :turn-interval 2
            :delay-ms 250
            :log-fn nil
-           :ui nil}))
+           :ui nil})
+  (model-registry/init! {}))
 
 (deftest helper-model-selection-request-test
   (testing "extension defines its own explicit resolver request"
     (is (= {:mode :resolve
             :required [{:criterion :supports-text
-                        :match :true}]
-            :strong-preferences [{:criterion :input-cost
+                        :match :true}
+                       {:criterion :latency-tier
+                        :equals :low}
+                       {:criterion :cost-tier
+                        :one-of [:zero :low]}]
+            :strong-preferences [{:criterion :locality
+                                  :equals :local}
+                                 {:criterion :input-cost
                                   :prefer :lower}
                                  {:criterion :output-cost
                                   :prefer :lower}]
@@ -34,8 +42,14 @@
   (testing "missing source-session model still yields an explicit extension-owned request"
     (is (= {:mode :resolve
             :required [{:criterion :supports-text
-                        :match :true}]
-            :strong-preferences [{:criterion :input-cost
+                        :match :true}
+                       {:criterion :latency-tier
+                        :equals :low}
+                       {:criterion :cost-tier
+                        :one-of [:zero :low]}]
+            :strong-preferences [{:criterion :locality
+                                  :equals :local}
+                                 {:criterion :input-cost
                                   :prefer :lower}
                                  {:criterion :output-cost
                                   :prefer :lower}]

@@ -421,6 +421,16 @@
                       (candidate-attribute right criterion)
                       :higher)
 
+      :equals
+      (let [target       (:equals criterion)
+            left-match?  (= (candidate-attribute left criterion) target)
+            right-match? (= (candidate-attribute right criterion) target)]
+        (cond
+          (= left-match? right-match?) 0
+          left-match? -1
+          right-match? 1
+          :else 0))
+
       :context-match
       (let [target (context-value request criterion)
             left*  (case (:criterion criterion)

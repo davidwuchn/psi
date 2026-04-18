@@ -2,6 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [extensions.auto-session-name :as sut]
+   [psi.ai.model-registry :as model-registry]
    [psi.agent-session.core :as session]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.extensions.runtime-fns :as runtime-fns]
@@ -68,6 +69,9 @@
                             :delay-ms 250
                             :log-fn nil
                             :ui nil})
+      (model-registry/init! {})
+      (model-registry/init! {})
+      (model-registry/init! {})
       (seed-conversation! ctx session-id)
       (sut/init api)
       ((checkpoint-handler ctx ext-path) {:session-id session-id :turn-count 2})
