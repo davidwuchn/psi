@@ -6,7 +6,7 @@
 - [x] Define initial roles and their default constraint/preference bundles
 - [x] Define policy layering and effective-request merge semantics
 - [x] Define preference criterion identity and ordering semantics
-- [ ] Implement resolver filtering for reference viability + required constraints
+- [x] Implement resolver filtering for reference viability + required constraints
 - [ ] Implement resolver ranking for strong/weak preference tiers with canonical tie-breaks
 - [ ] Implement ambiguity and no-winner outcomes
 - [ ] Implement core result + full trace payloads

@@ -5,9 +5,10 @@
    - the resolver-facing catalog view
    - request shapes and role defaults
    - policy layering and effective-request composition
+   - resolver stage 1 filtering
 
-   Later steps will add filtering, ranking, and trace production on top of
-   these data structures."
+   Later steps will add ranking and trace production on top of these data
+   structures."
   (:require
    [psi.ai.model-registry :as model-registry]))
 
@@ -237,8 +238,8 @@
 
    Returns a normalized effective request."
   [{:keys [system user project request]}]
-  (let [request*      (normalize-request (or request {}))
-        role          (:role request*)
+  (let [request*       (normalize-request (or request {}))
+        role           (:role request*)
         layers-by-scope {:role-defaults (normalize-policy-layer (role-defaults role))
                          :system        (normalize-policy-layer (or system {}))
                          :user          (normalize-policy-layer (or user {}))
@@ -252,3 +253,97 @@
      :weak-preferences    (merge-preference-tier ordered-layers :weak-preferences)
      :context             (apply merge {} (map :context ordered-layers))
      :model               (some :model (reverse ordered-layers))}))
+
+(defn- candidate-attribute
+  [candidate criterion]
+  (let [k (or (:criterion criterion) (:attribute criterion))]
+    (or (get-in candidate [:facts k])
+        (get-in candidate [:estimates k])
+        (get-in candidate [:reference k])
+        (get candidate k))))
+
+(defn- required-constraint-satisfied?
+  [candidate constraint]
+  (let [value (candidate-attribute candidate constraint)]
+    (cond
+      (contains? constraint :match)
+      (= value (case (:match constraint)
+                 :true true
+                 :false false
+                 (:match constraint)))
+
+      (contains? constraint :at-least)
+      (and (number? value)
+           (>= value (:at-least constraint)))
+
+      (contains? constraint :at-most)
+      (and (number? value)
+           (<= value (:at-most constraint)))
+
+      (contains? constraint :equals)
+      (= value (:equals constraint))
+
+      :else
+      (boolean value))))
+
+(defn- explicit-request-candidates
+  [catalog request]
+  (if-let [{:keys [provider id]} (:model request)]
+    (if-let [candidate (find-candidate catalog provider id)]
+      [candidate]
+      [])
+    []))
+
+(defn- inherit-session-candidates
+  [catalog request]
+  (let [provider (or (get-in request [:context :session-model :provider])
+                     (get-in request [:context :session-provider]))
+        id       (or (get-in request [:context :session-model :id])
+                     (get-in request [:context :session-model-id]))]
+    (if (and provider id)
+      (if-let [candidate (find-candidate catalog provider id)]
+        [candidate]
+        [])
+      [])))
+
+(defn candidate-pool
+  "Return the candidate pool implied by request mode before required filtering."
+  [catalog request]
+  (case (:mode request)
+    :explicit        (explicit-request-candidates catalog request)
+    :inherit-session (inherit-session-candidates catalog request)
+    :resolve         (:candidates catalog)
+    (:candidates catalog)))
+
+(defn filter-candidates
+  "Apply stage-1 resolver filtering.
+
+   Returns:
+   {:pool [...]
+    :survivors [...]
+    :eliminated [{:candidate c :reasons [constraint*]} ...]}
+
+   v1 filtering includes:
+   - mode-specific candidate pool restriction
+   - required constraint checks over that pool
+
+   This does not yet rank survivors or produce the final resolver result."
+  [catalog request]
+  (let [pool      (vec (candidate-pool catalog request))
+        required  (:required request)
+        results   (mapv (fn [candidate]
+                          (let [failed (->> required
+                                            (remove #(required-constraint-satisfied? candidate %))
+                                            vec)]
+                            {:candidate candidate
+                             :failed    failed}))
+                        pool)]
+    {:pool       pool
+     :survivors  (->> results
+                      (filter #(empty? (:failed %)))
+                      (mapv :candidate))
+     :eliminated (->> results
+                      (remove #(empty? (:failed %)))
+                      (mapv (fn [{:keys [candidate failed]}]
+                              {:candidate candidate
+                               :reasons   failed})))}))

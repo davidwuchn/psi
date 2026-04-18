@@ -133,3 +133,35 @@
   - preference replacement by identity is deterministic
   - context merges by precedence
   - explicit model precedence is deterministic
+
+2026-04-17 — Step 5: resolver stage-1 filtering
+- Extended `psi.ai.model-selection` with stage-1 filtering over the normalized catalog and effective request.
+- Added mode-aware candidate pool selection:
+  - `:resolve` → whole catalog
+  - `:explicit` → exact provider/id candidate only
+  - `:inherit-session` → candidate implied by explicit session-model context
+- Added initial required-constraint evaluation over the normalized catalog surface.
+- v1 required-constraint operators now support:
+  - `:match`
+  - `:at-least`
+  - `:at-most`
+  - `:equals`
+  - bare truthiness fallback
+- Candidate attributes are read from the normalized candidate across:
+  - `:facts`
+  - `:estimates`
+  - `:reference`
+  - top-level identity fields as final fallback
+- Added `filter-candidates` returning:
+  - `:pool`
+  - `:survivors`
+  - `:eliminated` with explicit failed-constraint reasons
+- Important v1 note:
+  - this is still filtering only
+  - no winner selection or failure/ambiguity result type exists yet
+- Added tests proving:
+  - resolve-mode filtering across the full catalog
+  - explicit-mode pool restriction
+  - inherit-session pool restriction
+  - missing explicit references yield an empty pool
+  - eliminated candidates retain explicit failed-constraint reasons

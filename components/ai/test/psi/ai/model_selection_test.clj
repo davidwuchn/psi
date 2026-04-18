@@ -210,3 +210,63 @@
       (is (= :explicit (:mode request)))
       (is (= {:provider :openai :id "gpt-5"}
              (:model request))))))
+
+(deftest filter-candidates-test
+  (registry/init! {:user-models-path (write-temp-models! no-auth-provider-config)})
+  (let [catalog (sut/catalog-view)]
+    (testing "resolve mode filters across full catalog by required constraints"
+      (let [request (sut/compose-effective-request
+                     {:request {:role :interactive
+                                :required [{:criterion :configured? :match :true}
+                                           {:criterion :context-window :at-least 200000}]}})
+            result  (sut/filter-candidates catalog request)]
+        (is (seq (:pool result)))
+        (is (seq (:survivors result)))
+        (is (every? #(true? (get-in % [:reference :configured?]))
+                    (:survivors result)))
+        (is (every? #(>= (get-in % [:facts :context-window]) 200000)
+                    (:survivors result)))
+        (is (some #(= "public-model" (get-in % [:candidate :id]))
+                  (:eliminated result)))))
+
+    (testing "explicit mode restricts pool to the requested model before filtering"
+      (let [request (sut/compose-effective-request
+                     {:request {:mode :explicit
+                                :model {:provider :anthropic :id "claude-sonnet-4-6"}
+                                :required [{:criterion :supports-reasoning :match :true}]}})
+            result  (sut/filter-candidates catalog request)]
+        (is (= 1 (count (:pool result))))
+        (is (= ["claude-sonnet-4-6"] (mapv :id (:survivors result))))))
+
+    (testing "explicit mode yields empty pool when reference does not exist"
+      (let [request (sut/compose-effective-request
+                     {:request {:mode :explicit
+                                :model {:provider :openai :id "does-not-exist"}}})
+            result  (sut/filter-candidates catalog request)]
+        (is (empty? (:pool result)))
+        (is (empty? (:survivors result)))
+        (is (empty? (:eliminated result)))))
+
+    (testing "inherit-session mode restricts pool to session-model context"
+      (let [request (sut/compose-effective-request
+                     {:request {:mode :inherit-session
+                                :context {:session-model {:provider :anthropic
+                                                          :id "claude-sonnet-4-6"}}
+                                :required [{:criterion :supports-reasoning :match :true}]}})
+            result  (sut/filter-candidates catalog request)]
+        (is (= 1 (count (:pool result))))
+        (is (= ["claude-sonnet-4-6"] (mapv :id (:survivors result))))))
+
+    (testing "failed required constraints are attached as elimination reasons"
+      (let [request (sut/compose-effective-request
+                     {:request {:mode :explicit
+                                :model {:provider :public :id "public-model"}
+                                :required [{:criterion :configured? :match :true}
+                                           {:criterion :context-window :at-least 200000}]}})
+            result  (sut/filter-candidates catalog request)
+            eliminated (first (:eliminated result))]
+        (is (empty? (:survivors result)))
+        (is (= "public-model" (get-in eliminated [:candidate :id])))
+        (is (= [{:criterion :configured? :match :true}
+                {:criterion :context-window :at-least 200000}]
+               (:reasons eliminated)))))))
