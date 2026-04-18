@@ -435,6 +435,8 @@
    (fn [_ctx {:keys [message]}]
      {:effects [{:effect/type :runtime/agent-append-message
                  :message message}
+                {:effect/type :persist/journal-append-message-entry
+                 :message message}
                 {:effect/type :runtime/agent-emit
                  :event {:type :message-start :message message}}
                 {:effect/type :runtime/agent-emit
@@ -448,6 +450,8 @@
    (fn [_ctx {:keys [message]}]
      {:effects [{:effect/type :runtime/agent-append-message
                  :message message}
+                {:effect/type :persist/journal-append-message-entry
+                 :message message}
                 {:effect/type :runtime/agent-emit
                  :event {:type :message-start :message message}}
                 {:effect/type :runtime/agent-emit
@@ -458,12 +462,13 @@
 
   (register-core-handler!
    :session/send-extension-message
-   (fn [ctx {:keys [message]}]
+   (fn [ctx {:keys [session-id message]}]
      (dispatch/dispatch! ctx
                          (if (:custom-type message)
                            :session/notify-extension
                            :session/append-extension-message)
-                         {:message message}
+                         {:session-id session-id
+                          :message message}
                          {:origin :core})))
 
   (register-core-handler!

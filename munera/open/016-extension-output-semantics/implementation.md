@@ -1,49 +1,36 @@
-Concrete implementation target
+Implementation update
 
-Chosen canonical names
-- mutation/API for UI-only messages: `psi.extension/notify` / `:notify`
-- mutation/API for conversation-visible synthetic messages: `psi.extension/append-message` / `:append-message`
-- keep `psi.extension/send-prompt` unchanged as the execution path for real prompt turns
+Completed the initial end-to-end 016 slice.
 
-Expected touched files
+What landed
+- `psi.extension/notify` and `psi.extension/append-message` were already present at the mutation/API/runtime seam; this pass finished the missing persistence and regression proof work.
+- Extension-authored `notify` and `append-message` dispatch paths now both append canonical journal message entries in addition to updating runtime agent message state and emitting external-message UI events.
+- This means extension-visible output now survives transcript rebuild / rehydration from journal instead of existing only in live agent-core memory.
+- `:session/send-extension-message` now forwards `:session-id` explicitly to the chosen semantic handler, preserving session-scoped persistence/effect routing.
+- Nullable extension test helpers now understand the explicit `psi.extension/notify` and `psi.extension/append-message` mutations rather than only the legacy `send-message` path.
+- `send-message` compatibility still preserves the migration split:
+  - with `:custom-type` => UI-only/non-conversation notification
+  - without `:custom-type` => conversation-visible synthetic message
+- `extensions.work-on` was already migrated to `:notify`; tests now no longer carry a dead local stdout-capture helper.
 
-Runtime + dispatch
-- `components/agent-session/src/psi/agent_session/extension_runtime.clj`
+Why this mattered
+- Before this pass, explicit extension output semantics existed live, but journal-backed transcript rehydration could drop extension-authored messages because only runtime agent state was updated.
+- Since canonical transcript rebuild and provider request preparation both derive from the journal, persistence was required for the output split to be coherent across replay/resume.
+
+Files changed
 - `components/agent-session/src/psi/agent_session/dispatch_handlers/session_mutations.clj`
+- `components/extension-test-helpers/src/psi/extension_test_helpers/nullable_api.clj`
+- `extensions/test/extensions/work_on_test.clj`
 
-Mutations + session-scoped extension op list
-- `components/agent-session/src/psi/agent_session/mutations/extensions.clj`
-- `components/agent-session/src/psi/agent_session/extensions/runtime_eql.clj`
+Verification
+- Focused test run passed:
+  - `extensions.work-on-test`
+  - `psi.agent-session.extension-output-semantics-test`
+  - `psi.agent-session.extensions-test`
+  - `psi.agent-session.background-jobs-test`
+- Result: `72 tests, 300 assertions, 0 failures`
 
-Extension API
-- `components/agent-session/src/psi/agent_session/extensions/api.clj`
-
-Conversation/persistence proofs
-- `components/agent-session/src/psi/agent_session/conversation.clj`
-- relevant tests in `components/agent-session/test`
-
-Initial extension migration target
-- `extensions/src/extensions/work_on.clj`
-
-Possible follow-on migration targets
-- `extensions/src/extensions/lsp.clj`
-- `extensions/src/extensions/agent_chain.clj`
-
-Compatibility notes
-- `psi.extension/send-message` remains temporarily as compatibility-only
-- its current latent behavior should be preserved during migration so existing extensions do not silently change semantics
-- new code should not be written against `send-message`
-- stdout capture in CLI/TUI/RPC remains fallback-only until migrations complete
-
-Test strategy
-- add focused tests for `notify` vs `append-message` semantics in conversation reconstruction
-- add tests for new extension API helpers
-- update or add `work_on` tests proving command-visible output comes from explicit extension messaging instead of stdout semantics
-- preserve the existing RPC regression proof that blank extension stdout does not create fake messages
-
-Unresolved implementation choice to settle while coding
-- whether UI-only notifications should internally remain represented as messages carrying `:custom-type`, or move to a distinct journal/runtime artifact type
-
-Current recommendation:
-- allow internal reuse of `:custom-type`-based representation initially if it minimizes risk
-- but keep that detail internal and do not expose it as the public semantic contract
+Follow-on candidates
+- Migrate additional extensions off compatibility `send-message` onto explicit `notify` / `append-message`.
+- Consider whether background-job terminal emission should also move from compatibility `send-extension-message` usage to direct explicit notify semantics in the runtime callback surface.
+- Tighten docs/comments that still describe `send-message` as the primary extension transcript API.

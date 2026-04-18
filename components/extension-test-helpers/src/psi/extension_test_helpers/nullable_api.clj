@@ -204,9 +204,18 @@
   (swap! state update :entries conj params)
   {:psi.extension/entry-appended? true})
 
-(defn- send-message! [state params]
+(defn- notify! [state params]
+  (swap! state update :messages conj (assoc params :custom-type (or (:custom-type params) "extension-notification")))
+  {:psi.extension/message params})
+
+(defn- append-message! [state params]
   (swap! state update :messages conj params)
-  {:psi.extension/message-sent? true})
+  {:psi.extension/message params})
+
+(defn- send-message! [state params]
+  (if (:custom-type params)
+    (notify! state params)
+    (append-message! state params)))
 
 (defn- send-prompt! [state params]
   (swap! state update :messages conj (assoc params :role "user" :custom-type "extension-prompt"))
@@ -266,6 +275,8 @@
    'psi.extension/update-prompt-contribution update-prompt-contribution!
    'psi.extension/unregister-prompt-contribution unregister-prompt-contribution!
    'psi.extension/append-entry append-entry!
+   'psi.extension/notify notify!
+   'psi.extension/append-message append-message!
    'psi.extension/send-message send-message!
    'psi.extension/send-prompt send-prompt!
    'psi.extension/schedule-event schedule-event!

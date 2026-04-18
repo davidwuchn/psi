@@ -24,10 +24,6 @@
       {:git.branch/default-branch {:branch "main" :source :fallback}}
       :else {})))
 
-(defn- with-printed-output [printed f]
-  (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
-    (f)))
-
 (defn- worktree-ff-state
   [state]
   (fn [ctx branch]
