@@ -218,7 +218,7 @@ README.md - primary top-level user documentation
 doc/ - user-facing documentation (guides, references, workflows)
 
 META.md - psi meta model (internal)
-PLAN.md - next (what should happen) (internal)
+munera/plan.md - active task orchestration (internal)
 CHANGELOG.md - terse change summary (user facing)
 
 Canonical process: keep user docs (`README.md` + `doc/`) synchronized with meta/spec/code/tests on every change.

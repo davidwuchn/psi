@@ -1,0 +1,5 @@
+- [ ] Define task-class-based model selection requests
+- [ ] Implement hard capability filtering
+- [ ] Implement soft preference ranking
+- [ ] Expose explainable selection outcomes
+- [ ] Wire auto-session-name helper execution to the selector

@@ -1,0 +1,4 @@
+- [ ] Integrate helper model selection for rename inference
+- [ ] Evaluate explicit `:manual` vs `:auto` source metadata
+- [ ] Evaluate stronger non-user-facing helper-session contract
+- [ ] Assess persistence/reload needs for rename state

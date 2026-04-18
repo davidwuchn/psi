@@ -309,7 +309,7 @@
 
 ## 2026-03-06
 
-- λ Δ Added `spec/git-worktrees.allium` and Step 11a acceptance checklist in `PLAN.md`.
+- λ Δ Added `spec/git-worktrees.allium` and Step 11a acceptance checklist in the active planning tracker.
 - λ Δ Implemented git worktree query surface:
   - history attrs: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`, `:git.worktree/inside-repo?`
   - direct session-root attrs: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`

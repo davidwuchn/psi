@@ -1,0 +1,7 @@
+- [ ] Converge remaining shared-session prompt semantics into request preparation
+- [ ] Finish persisted header cleanup around `:worktree-path`
+- [ ] Strengthen remaining canonical-only RPC proofs
+- [ ] Run `bb clojure:test`
+- [ ] Run `bb lint`
+- [ ] Run `bb fmt:check`
+- [ ] Update `mementum/state.md` after slices land

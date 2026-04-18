@@ -1,0 +1,4 @@
+- [ ] Inspect current request preparation and skill-prelude composition
+- [ ] Implement intended cache-breakpoint shaping
+- [ ] Remove/simplify residual prompt-path seams and hooks
+- [ ] Add or tighten focused proof

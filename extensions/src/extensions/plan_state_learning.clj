@@ -1,5 +1,5 @@
 (ns extensions.plan-state-learning
-  "Automate PLAN/STATE/LEARNING maintenance after non-PSL commits.
+  "Automate munera/STATE/LEARNING maintenance after non-PSL commits.
 
    Trigger:
    - extension event: git_commit_created
@@ -8,7 +8,7 @@
    - skip when latest commit subject contains [psi:psl-auto]
    - create a PSL workflow that runs after the current agent turn completes
    - workflow job: sends one user-style prompt turn to the agent with source commit context
-   - agent updates PLAN.md, STATE.md, LEARNING.md and commits changes
+   - agent updates munera/plan.md, STATE.md, LEARNING.md and commits changes
    - emit visible transcript messages via psi.extension/send-message
 
    Ordering:
@@ -132,7 +132,7 @@
                       (str "commit: " (squish subject)))
         action-line (case phase
                       :idle "waiting for session idle"
-                      :running "updating PLAN/STATE/LEARNING"
+                      :running "updating munera/STATE/LEARNING"
                       :done (when-not (:accepted? result)
                               "inspect PSL agent result")
                       :error "inspect PSL error"
@@ -191,7 +191,7 @@
      "PSL follow-up for commit " source7 "\n"
      "\n"
      "Task:\n"
-     "1) Update PLAN.md and STATE.md\n"
+     "1) Update munera/plan.md and STATE.md\n"
      "2) Commit those changes\n"
      "3) Update LEARNING.md\n"
      "4) Commit LEARNING.md\n"

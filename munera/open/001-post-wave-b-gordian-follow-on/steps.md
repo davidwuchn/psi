@@ -1,0 +1,4 @@
+- [ ] Inspect remaining overlap between `psi.rpc.session.commands` and `psi.rpc.session.frontend-actions`
+- [ ] Choose one minimal thinning slice
+- [ ] Implement with focused tests
+- [ ] Re-check structural impact if needed

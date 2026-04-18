@@ -1,0 +1,4 @@
+- [ ] Inspect current dispatch trace coverage gaps
+- [ ] Decide on LSP findings as first-class dispatch events
+- [ ] Decide on service lifecycle transition trace entries
+- [ ] Add focused proof for any new trace stages

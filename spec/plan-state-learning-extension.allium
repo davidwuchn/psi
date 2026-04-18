@@ -1,7 +1,7 @@
 -- allium: 2
 
 -- plan-state-learning-extension.allium
--- Post-commit automation extension for PLAN/STATE/LEARNING synchronization.
+-- Post-commit automation extension for munera/STATE/LEARNING synchronization.
 
 use "./extension-system.allium" as ext
 use "./session-core.allium" as core
@@ -32,7 +32,7 @@ value PlanStateLearningRun {
 config {
     psl_enabled: Boolean = true
     psl_marker: String = "[psi:psl-auto]"
-    psl_phase1_files: Set<String> = {"PLAN.md", "STATE.md"}
+    psl_phase1_files: Set<String> = {"munera/plan.md", "STATE.md"}
     psl_phase2_files: Set<String> = {"LEARNING.md"}
 }
 
@@ -93,7 +93,7 @@ rule PlanStateLearningCreatesAgentTurn {
 rule PlanStateLearningAgentExecutesPhase1 {
     when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 
-    ensures: UpdateFile("PLAN.md")
+    ensures: UpdateFile("munera/plan.md")
     ensures: UpdateFile("STATE.md")
     ensures: GitCommitIfChanged(
         files: config.psl_phase1_files,
@@ -117,7 +117,7 @@ rule PlanStateLearningMessagesVisibleInTranscript {
     ensures: ext/CustomMessageSent(SessionForWorktree(payload.worktree_path), Message{
         role: "assistant",
         customType: "plan-state-learning",
-        content: "PLAN/STATE/LEARNING update considered",
+        content: "munera/STATE/LEARNING update considered",
         display: visible
     })
 }

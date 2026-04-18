@@ -1,0 +1,4 @@
+- [ ] Inspect current prelude seeding and cache-breakpoint behavior
+- [ ] Implement intended 2-breakpoint split
+- [ ] Decide whether acknowledgement becomes a canonical marker
+- [ ] Document or expose metadata if needed

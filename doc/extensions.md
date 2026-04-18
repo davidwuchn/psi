@@ -203,7 +203,7 @@ Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
 - Behavior:
   - skips self-commits with marker `[psi:psl-auto]`
   - creates PSL workflow
-  - runs agent to update/commit `PLAN.md`, `STATE.md`, `LEARNING.md`
+  - runs agent to update/commit `munera/plan.md`, `STATE.md`, `LEARNING.md`
 - Workflow public data:
   - exposes `:psl/display` using the shared workflow display-map convention
   - `/psl` lists active PSL workflows by rendering that public display through `extensions.workflow-display/text-lines`

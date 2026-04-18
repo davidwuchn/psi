@@ -9,7 +9,7 @@ Bootstrapped on 2026-04-02.
 ## Key files
 - `README.md` — top-level user documentation
 - `META.md` — project meta model
-- `PLAN.md` — current implementation plan
+- `munera/plan.md` — active task orchestration
 - `STATE.md` — project-local state file
 - `AGENTS.md` — bootstrap/system instructions
 
@@ -248,7 +248,7 @@ Usage:
 - For auto-session-name specifically, the next highest-leverage step is helper model selection, not more title plumbing.
 
 ## Notes for future ψ
-- `PLAN.md` is still the main active-work tracker, but auto-session-name and model-selection-hierarchy are now live active threads rather than just design notes.
+- `munera/plan.md` is now the main active-work tracker, with the active threads split into task directories under `munera/open/`.
 - For auto-session-name, trust the journal-backed source-session read path over agent-core `message-history`; the latter was the wrong surface for rename inference.
 - The explicit session-targeting extension API (`:query-session`, `:mutate-session`) now exists because delayed/scheduled extension handlers must not rely on ambient session scope.
 - The current manual-vs-auto protection is intentionally extension-local and heuristic:
