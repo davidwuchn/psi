@@ -24,7 +24,10 @@
                        :session-file   session-file}]
        {:root-state-update #(ss/initialize-new-session-state % current-sd payload)
         :return-key        (ss/session-data-path new-session-id)
-        :effects [{:effect/type :runtime/agent-reset}]})))
+        :effects [{:effect/type :runtime/agent-reset}
+                  {:effect/type :projection/context-changed
+                   :session-id new-session-id
+                   :reason :session/new-initialize}]})))
 
   (dispatch/register-handler!
    :session/resume-loaded
@@ -42,7 +45,10 @@
         :return-key        (ss/session-data-path session-id)
         :effects (cond-> [{:effect/type :runtime/agent-reset}
                           {:effect/type :runtime/agent-set-thinking-level
-                           :level       thinking-level}]
+                           :level       thinking-level}
+                          {:effect/type :projection/context-changed
+                           :session-id session-id
+                           :reason :session/resume-loaded}]
                    model    (conj {:effect/type :runtime/agent-set-model :model model})
                    messages (conj {:effect/type :runtime/agent-replace-messages :messages messages}))})))
 
@@ -55,8 +61,10 @@
                       :session-file   session-file}]
        {:root-state-update #(ss/initialize-forked-session-state % parent-sd payload)
         :return-key        (ss/session-data-path new-session-id)
-        :effects (when messages
-                   [{:effect/type :runtime/agent-replace-messages :messages messages}])})))
+        :effects (cond-> [{:effect/type :projection/context-changed
+                           :session-id new-session-id
+                           :reason :session/fork-initialize}]
+                   messages (conj {:effect/type :runtime/agent-replace-messages :messages messages}))})))
 
   (dispatch/register-handler!
    :session/create-child
