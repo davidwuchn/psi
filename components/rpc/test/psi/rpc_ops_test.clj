@@ -94,6 +94,23 @@
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
       (is (= #{"assistant/delta"} (get-in state [:connection :subscribed-topics])))))
 
+  (testing "projection listener unregisters when projection topics are removed but unrelated topics remain"
+    (let [[ctx _] (support/create-session-context)
+          state   (atom {:transport {:ready? true :pending {}}
+                         :connection {:subscribed-topics #{}}})
+          handler (support/make-handler ctx state)
+          {:keys [out-lines state]}
+          (support/run-loop (str "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"context/updated\"]}}\n"
+                                 "{:id \"s2\" :kind :request :op \"unsubscribe\" :params {:topics [\"context/updated\"]}}\n")
+                            handler
+                            state)
+          responses (filter #(= :response (:kind %)) (support/parse-frames out-lines))
+          f2 (second responses)]
+      (is (= :response (:kind f2)))
+      (is (= ["assistant/message"] (get-in f2 [:data :subscribed])))
+      (is (= #{"assistant/message"} (get-in state [:connection :subscribed-topics])))
+      (is (nil? (get-in state [:workers :projection-listener-id])))))
+
   (testing "background job list/inspect/cancel ops route through session job store"
     (let [[ctx thread-id] (support/create-session-context)
           _               (dispatch/dispatch! ctx :session/update-background-jobs-state
