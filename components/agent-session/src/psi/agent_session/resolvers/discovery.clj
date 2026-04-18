@@ -92,6 +92,21 @@
         tool  (first (filter #(= (:name %) name) tools))]
     {:psi.tool/detail tool}))
 
+;; ── Resolver introspection ───────────────────────────────
+
+(pco/defresolver resolver-detail-resolver
+  "Resolve I/O detail for a single resolver by sym.
+   Pathom provides :psi.graph/resolver-index (from query-graph-bridge) and
+   :psi.resolver/sym (from the seed entity).
+   Seed input: {:psi.resolver/sym 'psi.agent-session.resolvers.session/agent-session-identity}
+   Returns nil attrs when sym is not found."
+  [{:keys [psi.graph/resolver-index psi.resolver/sym]}]
+  {::pco/input  [:psi.graph/resolver-index :psi.resolver/sym]
+   ::pco/output [:psi.resolver/input :psi.resolver/output]}
+  (let [entry (first (filter #(= sym (:psi.resolver/sym %)) resolver-index))]
+    {:psi.resolver/input  (:psi.resolver/input entry)
+     :psi.resolver/output (:psi.resolver/output entry)}))
+
 ;; ── Session listing ─────────────────────────────────────
 
 (defn- session-info->eql
@@ -160,5 +175,6 @@
    skill-detail-resolver
    tool-summary-resolver
    tool-detail-resolver
+   resolver-detail-resolver
    session-list-resolver
    session-list-all-resolver])

@@ -29,6 +29,14 @@
                            :session-id)]
     (session/query-in @shared-ctx session-id eql)))
 
+(defn- qe
+  "Run EQL query with extra entity seed against a shared session context."
+  [eql extra-entity]
+  (let [session-id (some-> (ss/list-context-sessions-in @shared-ctx)
+                           first
+                           :session-id)]
+    (session/query-in @shared-ctx session-id eql extra-entity)))
+
 (defn- join-attr?
   [x]
   (and (map? x) (= 1 (count x)) (keyword? (ffirst x))))
@@ -350,6 +358,22 @@
         (let [entry (get index :psi.agent-session/session-name)]
           (is entry)
           (is (empty? (:psi.attr/reachable-via entry))))))))
+
+(deftest resolver-detail-test
+  (testing "resolver-detail resolves I/O for a known sym"
+    (let [result (qe [:psi.resolver/input :psi.resolver/output]
+                     {:psi.resolver/sym 'psi.agent-session.resolvers.session/agent-session-identity})]
+      (is (vector? (:psi.resolver/input result)))
+      (is (vector? (:psi.resolver/output result)))
+      (is (some #{:psi.agent-session/session-name} (:psi.resolver/output result)))
+      (is (some #(and (map? %) (contains? % :psi.agent-session/context-sessions))
+                (:psi.resolver/output result)))))
+
+  (testing "resolver-detail returns nil attrs for unknown sym"
+    (let [result (qe [:psi.resolver/input :psi.resolver/output]
+                     {:psi.resolver/sym 'psi.no.such/resolver})]
+      (is (nil? (:psi.resolver/input result)))
+      (is (nil? (:psi.resolver/output result))))))
 
 (deftest worktree-attr-discovery-and-query-contract-test
   (testing "worktree attrs are queryable from session root"
