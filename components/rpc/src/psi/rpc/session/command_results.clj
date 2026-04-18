@@ -3,6 +3,16 @@
    [clojure.string :as str]
    [psi.rpc.session.emit :as emit]))
 
+(defn extension-command-output
+  [cmd-result]
+  (try
+    (let [out (with-out-str
+                ((:handler cmd-result) (:args cmd-result)))]
+      (when-not (str/blank? out)
+        out))
+    (catch Throwable e
+      (str "[extension command error: " (ex-message e) "]"))))
+
 (defn handle-prompt-command-result!
   "Legacy prompt-path slash command event mapping.
    Keeps existing prompt RPC behavior stable while the new `command` op
@@ -47,14 +57,7 @@
                          :text (str "[session switch requested: " (:session-id cmd-result) "]")}]})
 
       :extension-cmd
-      (let [output (try
-                     (let [out (with-out-str
-                                 ((:handler cmd-result) (:args cmd-result)))]
-                       (if (str/blank? out)
-                         "[extension command returned no output]"
-                         out))
-                     (catch Throwable e
-                       (str "[extension command error: " (ex-message e) "]")))]
+      (when-let [output (extension-command-output cmd-result)]
         (emit! "assistant/message"
                {:role    "assistant"
                 :content [{:type :text :text output}]}))
@@ -63,17 +66,6 @@
              {:role    "assistant"
               :content [{:type :text :text (str "[command result: " result-type "]")}]})
       nil)))
-
-(defn extension-command-output
-  [cmd-result]
-  (try
-    (let [out (with-out-str
-                ((:handler cmd-result) (:args cmd-result)))]
-      (if (str/blank? out)
-        "[extension command returned no output]"
-        out))
-    (catch Throwable e
-      (str "[extension command error: " (ex-message e) "]"))))
 
 (defn emit-text-command-result!
   [emit! message]
@@ -121,7 +113,8 @@
       (emit/emit-frontend-action-request! emit! request-id cmd-result)
 
       :extension-cmd
-      (emit-text-command-result! emit! (extension-command-output cmd-result))
+      (when-let [output (extension-command-output cmd-result)]
+        (emit-text-command-result! emit! output))
 
       (emit-text-command-result! emit! (str "[command result: " result-type "]"))
       nil)))

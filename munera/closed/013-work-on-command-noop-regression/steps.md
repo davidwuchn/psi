@@ -1,0 +1,17 @@
+- [x] Reproduce the current `/work-on` user-visible regression with focused evidence
+  - observed in RPC/Emacs as a misleading extra assistant line after successful `/work-on`
+  - actual visible sequence was:
+    - user `/work-on …`
+    - correct extension-emitted success message
+    - spurious `[extension command returned no output]`
+- [x] Identify the failing boundary in command registration, execution, or result delivery
+  - command registration and extension execution were working
+  - failing boundary was RPC extension-command result delivery
+  - RPC treated blank stdout from extension handlers as a synthetic visible message
+- [x] Restore a visible success/error contract for `/work-on`
+  - successful `/work-on` now shows only the extension-owned visible success message
+  - blank extension handler stdout no longer produces a fake placeholder result
+  - real handler errors still surface deterministically
+- [x] Add regression coverage for the observed silent-no-op behavior
+  - added RPC command-result tests proving blank extension stdout emits nothing
+  - added coverage for both canonical command-result and legacy prompt command paths

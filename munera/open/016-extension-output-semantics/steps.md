@@ -1,0 +1,5 @@
+- [ ] Inspect current extension output surfaces across runtime, RPC, TUI, CLI, and existing extensions
+- [ ] Choose and document the explicit API split for UI-only vs conversation-visible extension messages
+- [ ] Implement the runtime/API seam for the split semantics
+- [ ] Migrate at least one existing extension path off stdout-based semantic output
+- [ ] Add regression coverage proving the two output kinds remain distinct
