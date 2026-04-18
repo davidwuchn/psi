@@ -10,7 +10,7 @@
    - workflow job: sends one user-style prompt turn to the agent with source commit context
    - agent updates munera/plan.md and mementum/state.md and commits changes
    - agent may suggest mementum memory/knowledge candidates, but does not auto-write them
-   - emit visible transcript messages via psi.extension/send-message
+   - emit visible transcript messages via psi.extension/notify
 
    Ordering:
    - git_commit_created fires during/after the triggering agent turn
@@ -76,7 +76,7 @@
 
 (defn- send-message!
   [mutate-fn text]
-  (mutate-fn 'psi.extension/send-message
+  (mutate-fn 'psi.extension/notify
              {:role "assistant"
               :content text
               :custom-type custom-type}))

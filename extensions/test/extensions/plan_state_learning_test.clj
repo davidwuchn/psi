@@ -131,7 +131,7 @@
                                   (git-log-response "abc1234" "◈ Δ Auto-update munera/mementum state [psi:psl-auto]")
                                   {:psi.extension.tool/content "" :psi.extension.tool/is-error false}))
                     sut/send-message! (fn [mutate-fn text]
-                                        (mutate-fn 'psi.extension/send-message
+                                        (mutate-fn 'psi.extension/notify
                                                    {:role "assistant"
                                                     :content text
                                                     :custom-type "plan-state-learning"}))]
@@ -155,9 +155,9 @@
                           {:psi.extension.tool-plan/succeeded? true
                            :psi.extension.tool-plan/results [{:id "psl-agent"
                                                               :result {:content "ok" :is-error false}}]})
-                        psi.extension/send-message
+                        psi.extension/notify
                         (do (swap! sent conj (:content params))
-                            {:psi.extension/message-sent? true})
+                            {:psi.extension/message params})
                         {}))]
       (set-psl-state! {:mutate-fn mutate-fn :query-fn (fn [_] {})})
       (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})
@@ -184,9 +184,9 @@
                         {:psi.extension.tool-plan/succeeded? false
                          :psi.extension.tool-plan/results [{:id "psl-agent"
                                                             :result {:content "boom" :is-error true}}]}
-                        psi.extension/send-message
+                        psi.extension/notify
                         (do (swap! sent conj (:content params))
-                            {:psi.extension/message-sent? true})
+                            {:psi.extension/message params})
                         {}))]
       (set-psl-state! {:mutate-fn mutate-fn :query-fn (fn [_] {})})
       (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})]
