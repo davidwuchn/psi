@@ -150,7 +150,7 @@
       (try
         ;; Emit the final result directly as a normal assistant message so only
         ;; the final agent output reaches parent conversation/transcript.
-        (mf 'psi.extension/send-message
+        (mf 'psi.extension/append-message
             {:role    "assistant"
              :content full})
         (catch Exception _ nil)))))
