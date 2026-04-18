@@ -1,0 +1,15 @@
+- [ ] Inventory all current public projection emit paths for context and shared UI events
+- [ ] Reproduce and record the stale-tree-after-child-create behavior as task-local evidence
+- [ ] Define canonical projection-change effect schema, including replay semantics
+- [ ] Define the canonical subscriber-aware fanout boundary for request-scoped and out-of-band runtime changes
+- [ ] Add failing RPC test proving child-session creation emits fresh `context/updated` without `/tree`
+- [ ] Add failing test for at least one out-of-band runtime path that currently depends on polling or incidental refresh
+- [ ] Implement context-change effect production from `:session/create-child`
+- [ ] Implement context-change effect production from other in-scope context membership transitions (new/resume/fork/close-or-equivalent)
+- [ ] Route `context/updated` emission through the canonical fanout boundary
+- [ ] Implement ui-change effect production for runtime-owned shared UI projection mutations
+- [ ] Route shared UI public event emission through the canonical fanout boundary
+- [ ] Remove RPC UI watch-loop polling for shared UI projection delivery
+- [ ] Converge or remove old ad hoc explicit emit paths to avoid duplicate steady-state events
+- [ ] Add/adjust tests for ordering, no-duplicate-emission behavior, and adapter-visible payload stability
+- [ ] Update docs to describe the canonical event-driven projection delivery contract

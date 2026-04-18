@@ -1,0 +1,15 @@
+2026-04-18
+- Task created after verifying a live regression-shaped behavior that turned out to be stale UI context projection rather than failed auto-session-name execution.
+- Live debugging established:
+  - auto-session-name was creating helper child sessions successfully
+  - helper child sessions existed in runtime context state and were visible via context introspection
+  - the footer/session name had already updated reasonably, so rename execution was not the issue
+  - `/tree` immediately made the helper child sessions visible in the session tree
+- Current interpretation:
+  - child-session creation updates runtime context membership
+  - but that change is not propagated immediately to subscribed clients via canonical `context/updated`
+  - command handling (`/tree`) forces a fresh snapshot emission, masking the missing automatic propagation
+- Architectural direction chosen with the user:
+  - prefer evented propagation from session-model/runtime changes
+  - do not rely on UI polling for context/session-tree changes
+  - create a full task covering both canonical context-change signaling and removal/narrowing of UI polling
