@@ -107,7 +107,7 @@
        (str/join "\n" (map #(render-failure-section (or max-output-chars default-max-output-chars) %) failures))
        "\nPlease inspect these failures and make the minimal necessary fixes."))
 
-(defn- send-message!
+(defn- notify!
   [mutate-fn text]
   (mutate-fn 'psi.extension/notify
              {:role "assistant"
@@ -141,8 +141,8 @@
                                                          :session-id session-id
                                                          :workspace-dir workspace-dir*
                                                          :head head})]
-              (send-message! mutate-fn
-                             (str "Commit checks found " (count failures)
+              (notify! mutate-fn
+                       (str "Commit checks found " (count failures)
                                   " failing command"
                                   (when (not= 1 (count failures)) "s")
                                   "; injected follow-up prompt ("
@@ -159,7 +159,7 @@
                               (try
                                 (handle-git-commit-created mutate-fn ev)
                                 (catch Exception e
-                                  (send-message! mutate-fn
-                                                 (str "Commit checks error: " (ex-message e)))
+                                  (notify! mutate-fn
+                                           (str "Commit checks error: " (ex-message e)))
                                   {:error (ex-message e)})))})
     nil))
