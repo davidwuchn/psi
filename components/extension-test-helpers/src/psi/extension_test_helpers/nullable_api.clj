@@ -212,7 +212,7 @@
   (swap! state update :messages conj params)
   {:psi.extension/message params})
 
-(defn- send-message! [state params]
+(defn- compatibility-send-message! [state params]
   (if (:custom-type params)
     (notify! state params)
     (append-message! state params)))
@@ -277,7 +277,7 @@
    'psi.extension/append-entry append-entry!
    'psi.extension/notify notify!
    'psi.extension/append-message append-message!
-   'psi.extension/send-message send-message!
+   'psi.extension/send-message compatibility-send-message!
    'psi.extension/send-prompt send-prompt!
    'psi.extension/schedule-event schedule-event!
    'psi.extension/register-post-tool-processor register-post-tool-processor!
