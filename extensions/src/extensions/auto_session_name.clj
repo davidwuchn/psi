@@ -8,7 +8,8 @@
 
    This does not rename sessions yet."
   (:require
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [psi.ai.model-selection :as model-selection]))
 
 (def ^:private default-turn-interval 2)
 (def ^:private default-delay-ms 250)
@@ -163,10 +164,26 @@
   (:psi.agent-session/session-name
    ((:query-session api) session-id [:psi.agent-session/session-name])))
 
+(defn- query-session-model-context [api session-id]
+  ((:query-session api) session-id [:psi.agent-session/model-provider
+                                    :psi.agent-session/model-id]))
+
+(defn- select-helper-model [api source-session-id]
+  (let [model-ctx (query-session-model-context api source-session-id)
+        result    (model-selection/resolve-selection
+                   {:request {:role    :auto-session-name
+                              :mode    :resolve
+                              :context {:session-model {:provider (some-> (:psi.agent-session/model-provider model-ctx)
+                                                                          keyword)
+                                                        :id       (:psi.agent-session/model-id model-ctx)}}}})]
+    (when (= :ok (:outcome result))
+      (:candidate result))))
+
 (defn- infer-session-title [api source-session-id checkpoint-turn-count]
   (when-not (stale-checkpoint? source-session-id checkpoint-turn-count)
-    (let [lines  (sanitize-session-entries (query-session-entries api source-session-id))
-          prompt (build-rename-prompt lines)]
+    (let [lines        (sanitize-session-entries (query-session-entries api source-session-id))
+          prompt       (build-rename-prompt lines)
+          helper-model (select-helper-model api source-session-id)]
       (when (seq prompt)
         (let [child ((:mutate-session api) source-session-id 'psi.extension/create-child-session
                      {:session-name   "auto-session-name"
@@ -176,7 +193,9 @@
           (when child-session-id
             (remember-helper-session! child-session-id)
             (let [run-result ((:mutate-session api) child-session-id 'psi.extension/run-agent-loop-in-session
-                              {:prompt prompt})
+                              (cond-> {:prompt prompt}
+                                helper-model
+                                (assoc :model helper-model)))
                   title      (some-> (:psi.agent-session/agent-run-text run-result)
                                      normalize-title)
                   current-name (query-session-name api source-session-id)]

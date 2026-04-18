@@ -16,23 +16,26 @@
     [ctx (:session-id sd)]))
 
 (defn- create-ext-api [ctx session-id ext-path]
-  (let [reg         (:extension-registry ctx)
-        runtime-fs  (runtime-fns/make-extension-runtime-fns ctx session-id ext-path)
-        base-mutate (:mutate-fn runtime-fs)
-        runtime-fs' (assoc runtime-fs
-                           :mutate-fn
-                           (fn [op params]
-                             (case op
-                               psi.extension/create-child-session
-                               {:psi.agent-session/session-id "child-1"}
+  (let [reg              (:extension-registry ctx)
+        runtime-fs       (runtime-fns/make-extension-runtime-fns ctx session-id ext-path)
+        base-mutate      (:mutate-fn runtime-fs)
+        last-run-params* (atom nil)
+        runtime-fs'      (assoc runtime-fs
+                                :mutate-fn
+                                (fn [op params]
+                                  (case op
+                                    psi.extension/create-child-session
+                                    {:psi.agent-session/session-id "child-1"}
 
-                               psi.extension/run-agent-loop-in-session
-                               {:psi.agent-session/agent-run-ok? true
-                                :psi.agent-session/agent-run-text "Fix footer rendering"}
+                                    psi.extension/run-agent-loop-in-session
+                                    (do (reset! last-run-params* params)
+                                        {:psi.agent-session/agent-run-ok? true
+                                         :psi.agent-session/agent-run-text "Fix footer rendering"})
 
-                               (base-mutate op params))))]
+                                    (base-mutate op params))))]
     (ext/register-extension-in! reg ext-path)
-    (ext/create-extension-api reg ext-path runtime-fs')))
+    {:api              (ext/create-extension-api reg ext-path runtime-fs')
+     :last-run-params* last-run-params*}))
 
 (defn- seed-conversation! [ctx session-id]
   (ss/journal-append-in! ctx session-id
@@ -55,9 +58,9 @@
 
 (deftest checkpoint-runtime-path-renames-source-session-test
   (testing "real runtime api path renames source session from checkpoint handler"
-    (let [[ctx session-id] (create-runtime-session)
-          ext-path         "/test/auto_session_name.clj"
-          api              (create-ext-api ctx session-id ext-path)]
+    (let [[ctx session-id]   (create-runtime-session)
+          ext-path           "/test/auto_session_name.clj"
+          {:keys [api last-run-params*]} (create-ext-api ctx session-id ext-path)]
       (reset! @#'sut/state {:turn-counts {}
                             :helper-session-ids #{}
                             :last-auto-name-by-session {}
@@ -69,13 +72,18 @@
       (sut/init api)
       ((checkpoint-handler ctx ext-path) {:session-id session-id :turn-count 2})
       (is (= "Fix footer rendering"
-             (:session-name (ss/get-session-data-in ctx session-id)))))))
+             (:session-name (ss/get-session-data-in ctx session-id))))
+      (is (= {:provider :openai
+              :id "gpt-5.3-codex-spark"}
+             (some-> @last-run-params*
+                     :model
+                     (select-keys [:provider :id])))))))
 
 (deftest stale-checkpoint-runtime-path-preserves-current-name-test
   (testing "stale checkpoint does not rename source session"
-    (let [[ctx session-id] (create-runtime-session)
-          ext-path         "/test/auto_session_name.clj"
-          api              (create-ext-api ctx session-id ext-path)]
+    (let [[ctx session-id]   (create-runtime-session)
+          ext-path           "/test/auto_session_name.clj"
+          {:keys [api]}      (create-ext-api ctx session-id ext-path)]
       (reset! @#'sut/state {:turn-counts {}
                             :helper-session-ids #{}
                             :last-auto-name-by-session {}
@@ -92,9 +100,9 @@
 
 (deftest manual-override-runtime-path-preserves-current-name-test
   (testing "manual current name blocks auto overwrite"
-    (let [[ctx session-id] (create-runtime-session)
-          ext-path         "/test/auto_session_name.clj"
-          api              (create-ext-api ctx session-id ext-path)]
+    (let [[ctx session-id]   (create-runtime-session)
+          ext-path           "/test/auto_session_name.clj"
+          {:keys [api]}      (create-ext-api ctx session-id ext-path)]
       (reset! @#'sut/state {:turn-counts {}
                             :helper-session-ids #{}
                             :last-auto-name-by-session {}

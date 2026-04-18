@@ -226,3 +226,20 @@
   - successful resolutions expose both short and full traces
   - short traces project the selected candidate summary cleanly
   - failure traces retain reason and filtering evidence
+
+2026-04-17 — Step 9: initial caller adoption in auto-session-name
+- Adopted the shared resolver in `extensions.auto-session-name` as the first real caller.
+- Added source-session model-context query in the extension:
+  - `:psi.agent-session/model-provider`
+  - `:psi.agent-session/model-id`
+- Added helper-model selection via `psi.ai.model-selection/resolve-selection` with:
+  - role `:auto-session-name`
+  - mode `:resolve`
+  - context seeded from the source session model
+- The helper child session still runs with explicit `:thinking-level :off`, but the helper turn now passes an explicitly resolved `:model` when selection succeeds.
+- Current role defaults make auto-session-name choose a cheap text-capable helper model, with session-model affinity only as a weak preference.
+- In the current catalog this resolves to `:openai/gpt-5.3-codex-spark` for the tested cases, which is consistent with the current cost-first role defaults.
+- Added/updated tests proving:
+  - extension unit path passes the resolved helper model into `run-agent-loop-in-session`
+  - runtime path also passes the resolved helper model into the helper run mutation
+  - existing rename/manual-override/stale-checkpoint behavior remains intact

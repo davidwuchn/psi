@@ -69,6 +69,13 @@
                                                  req)
                                               {:psi.agent-session/session-name "initial"}
 
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/model-provider
+                                                          :psi.agent-session/model-id]}
+                                                 req)
+                                              {:psi.agent-session/model-provider "anthropic"
+                                               :psi.agent-session/model-id "claude-sonnet-4-6"}
+
                                               :else {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [:mutate op params])
@@ -89,6 +96,15 @@
                     (keep (fn [[kind op _]] (when (= kind :mutate) op)))
                     (remove #{'psi.extension/schedule-event})
                     vec)))
+        (is (= {:provider :openai
+                :id "gpt-5.3-codex-spark"
+                :name "GPT-5.3 Codex Spark"}
+               (some->> @calls
+                        (keep (fn [[kind op params]]
+                                (when (and (= kind :mutate)
+                                           (= op 'psi.extension/run-agent-loop-in-session))
+                                  (select-keys (:model params) [:provider :id :name]))))
+                        first)))
         (is (true? (contains? (:helper-session-ids @@#'sut/state) "child-1")))))))
 
 (deftest checkpoint-handler-invalid-helper-result-does-not-rename-test
@@ -113,6 +129,13 @@
                                                   :query [:psi.agent-session/session-name]}
                                                  req)
                                               {:psi.agent-session/session-name "initial"}
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/model-provider
+                                                          :psi.agent-session/model-id]}
+                                                 req)
+                                              {:psi.agent-session/model-provider "anthropic"
+                                               :psi.agent-session/model-id "claude-sonnet-4-6"}
 
                                               :else {}))
                                 :mutate-fn (fn [op params]
@@ -171,6 +194,13 @@
                                                  req)
                                               {:psi.agent-session/session-name "initial"}
 
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/model-provider
+                                                          :psi.agent-session/model-id]}
+                                                 req)
+                                              {:psi.agent-session/model-provider "anthropic"
+                                               :psi.agent-session/model-id "claude-sonnet-4-6"}
+
                                               :else {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [op params])
@@ -209,6 +239,13 @@
                                                  req)
                                               {:psi.agent-session/session-name "Manual name"}
 
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/model-provider
+                                                          :psi.agent-session/model-id]}
+                                                 req)
+                                              {:psi.agent-session/model-provider "anthropic"
+                                               :psi.agent-session/model-id "claude-sonnet-4-6"}
+
                                               :else {}))
                                 :mutate-fn (fn [op params]
                                              (swap! calls conj [op params])
@@ -245,6 +282,13 @@
                                                   :query [:psi.agent-session/session-name]}
                                                  req)
                                               {:psi.agent-session/session-name "Old auto name"}
+
+                                              (= {:session-id "s1"
+                                                  :query [:psi.agent-session/model-provider
+                                                          :psi.agent-session/model-id]}
+                                                 req)
+                                              {:psi.agent-session/model-provider "anthropic"
+                                               :psi.agent-session/model-id "claude-sonnet-4-6"}
 
                                               :else {}))
                                 :mutate-fn (fn [op params]
