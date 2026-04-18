@@ -250,6 +250,9 @@
                "- Canonical root discovery:\n"
                "  - psi-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
                "  - psi-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
+               "- Canonical explicit session targeting:\n"
+               "  - psi-tool(query: \"[:psi.agent-session/session-name :psi.agent-session/model-id]\", entity: \"{:psi.agent-session/session-id \\\"sid\\\"}\")\n"
+               "  - Session-scoped attrs require :psi.agent-session/session-id; missing targeting should fail rather than silently using another session.\n"
                "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
                "- Example: psi-tool(query: \"[:psi.graph/resolver-syms]\")"))
 

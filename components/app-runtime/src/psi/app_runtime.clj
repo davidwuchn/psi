@@ -352,7 +352,9 @@ Available: " (str/join ", " (map name (keys all))))
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt base-prompt} {:origin :core})
          ext-paths        (ext/discover-extension-paths [] cwd)
-         psi-tool         (tools/make-psi-tool (fn [q] (session/query-in ctx session-id q)))
+         psi-tool         (tools/make-psi-tool (fn
+                                                 ([q] (session/query-in ctx session-id q))
+                                                 ([q entity] (session/query-in ctx q entity))))
          summary          (session-bootstrap/bootstrap-in!
                            ctx session-id
                            {:register-global-query? false

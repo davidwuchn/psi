@@ -62,9 +62,10 @@
 (def psi-tool
   {:name        "psi-tool"
    :label       "Psi Tool"
-   :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]"
+   :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]. Optional `entity` seeds root attributes for explicit targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}."
    :parameters  {:type       "object"
-                 :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
+                 :properties {:query  {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}
+                              :entity {:type "string" :description "Optional EDN root entity map to seed the query, e.g. \"{:psi.agent-session/session-id \\\"sid\\\"}\" for explicit session targeting."}}
                  :required   ["query"]}})
 
 (def all-tool-schemas
@@ -573,19 +574,27 @@
    graphs and trigger StackOverflowError during printing.
 
    This sanitizer removes root context pointers that are not part of the public
-   query surface while preserving all user-facing diagnostic attrs."
+   query surface while preserving all user-facing diagnostic attrs. Throwable
+   values are stringified as a final guard because Pathom error payloads can
+   otherwise retain large recursive structures through ex-data/env references."
   [result]
   (walk/postwalk
    (fn [x]
-     (if (map? x)
+     (cond
+       (map? x)
        (dissoc x :psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx)
-       x))
+
+       (instance? Throwable x)
+       (str x)
+
+       :else x))
    result))
 
 (defn make-psi-tool
   "Create a psi-tool with an :execute fn that closes over `query-fn`.
-   `query-fn` should be (fn [eql-query-vec] -> result-map), typically
-   `(partial resolvers/query-in ctx)` or `(fn [q] (session/query-in ctx q))`.
+   `query-fn` should be one of:
+   - (fn [eql-query-vec] -> result-map)
+   - (fn [eql-query-vec entity-map] -> result-map)
 
    Optional opts:
    - :overrides   output-policy overrides map
@@ -593,43 +602,56 @@
   ([query-fn]
    (make-psi-tool query-fn nil))
   ([query-fn {:keys [overrides tool-call-id]}]
-   (assoc psi-tool
-          :execute
-          (fn [{:strs [query]}]
-            (try
-              (let [q (binding [*read-eval* false]
-                        (read-string query))]
-                (when-not (vector? q)
-                  (throw (ex-info "Query must be an EDN vector" {:input query})))
-                (let [result      (query-fn q)
-                      safe-result (sanitize-psi-tool-result result)
-                      output      (pr-str safe-result)
-                      policy      (tool-output/effective-policy (or overrides {}) "psi-tool")
-                      truncation  (tool-output/head-truncate output policy)
-                      truncated?  (:truncated truncation)
-                      spill-path  (when truncated?
-                                    (tool-output/persist-truncated-output!
-                                     "psi-tool"
-                                     (or tool-call-id (str (java.util.UUID/randomUUID)))
-                                     output))]
-                  (if truncated?
-                    {:content  (str "Output truncated ("
-                                    (:total-lines truncation) " lines / "
-                                    (:total-bytes truncation) " bytes). Full output: " spill-path
-                                    ". Use a narrower query to reduce output size.\n\n"
-                                    (:content truncation))
-                     :is-error false
-                     :details  {:truncation       truncation
-                                :full-output-path spill-path}}
-                    {:content  (:content truncation)
-                     :is-error false
-                     :details  nil})))
-              (catch StackOverflowError _
-                {:content  "EQL query error: result contains recursive data that overflowed printer stack"
-                 :is-error true})
-              (catch Exception e
-                {:content  (str "EQL query error: " (ex-message e))
-                 :is-error true}))))))
+   (assoc
+    psi-tool
+    :execute
+    (fn [{:strs [query entity]}]
+      (try
+        (let [q           (binding [*read-eval* false]
+                            (read-string query))
+              entity-map  (when (some? entity)
+                            (binding [*read-eval* false]
+                              (read-string entity)))]
+          (when-not (vector? q)
+            (throw (ex-info "Query must be an EDN vector" {:input query})))
+          (when (some? entity-map)
+            (when-not (map? entity-map)
+              (throw (ex-info "Entity must be an EDN map" {:input entity-map}))))
+          (let [result (if (some? entity-map)
+                         (try
+                           (query-fn q entity-map)
+                           (catch clojure.lang.ArityException _
+                             (throw (ex-info "psi-tool query-fn does not support explicit entity seeding"
+                                             {:entity entity-map}))))
+                         (query-fn q))
+                safe-result (sanitize-psi-tool-result result)
+                output      (pr-str safe-result)
+                policy      (tool-output/effective-policy (or overrides {}) "psi-tool")
+                truncation  (tool-output/head-truncate output policy)
+                truncated?  (:truncated truncation)
+                spill-path  (when truncated?
+                              (tool-output/persist-truncated-output!
+                               "psi-tool"
+                               (or tool-call-id (str (java.util.UUID/randomUUID)))
+                               output))]
+            (if truncated?
+              {:content  (str "Output truncated ("
+                              (:total-lines truncation) " lines / "
+                              (:total-bytes truncation) " bytes). Full output: " spill-path
+                              ". Use a narrower query to reduce output size.\n\n"
+                              (:content truncation))
+               :is-error false
+               :details  {:truncation       truncation
+                          :full-output-path spill-path}}
+              {:content  (:content truncation)
+               :is-error false
+               :details  nil})))
+        (catch StackOverflowError _
+          {:content  "EQL query error: result contains recursive data that overflowed printer stack"
+           :is-error true})
+        (catch Exception e
+          {:content  (str "EQL query error: " (or (ex-message e) (str e)))
+           :is-error true}))))))
 
 (def all-tools
   "Built-in tool definitions including execution fns.

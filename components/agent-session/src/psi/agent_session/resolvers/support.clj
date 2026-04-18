@@ -9,9 +9,19 @@
    [psi.agent-session.session-state :as ss]))
 
 (defn session-data
-  "Get session data for an explicit session-id."
+  "Get session data for an explicit session-id.
+
+   Fails explicitly when the session-id is missing or unknown so targeted
+   introspection cannot silently collapse to some other ambient session."
   [agent-session-ctx session-id]
-  (session/get-session-data-in agent-session-ctx session-id))
+  (when-not (seq session-id)
+    (throw (ex-info "session-scoped resolver requires :psi.agent-session/session-id"
+                    {:session-id session-id
+                     :callback :session-data})))
+  (or (session/get-session-data-in agent-session-ctx session-id)
+      (throw (ex-info "unknown session-id for session-scoped resolver"
+                      {:session-id session-id
+                       :callback :session-data}))))
 
 (defn session-worktree-path
   "Get the required worktree-path for an explicit session-id."

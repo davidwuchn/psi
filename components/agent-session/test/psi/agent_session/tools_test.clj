@@ -161,7 +161,45 @@
           result             (exec {"query" "[:psi.agent-session/session-id]"})
           parsed             (read-string (:content result))]
       (is (false? (:is-error result)))
-      (is (= session-id (:psi.agent-session/session-id parsed))))))
+      (is (= session-id (:psi.agent-session/session-id parsed)))))
+
+  (testing "psi-tool supports canonical explicit session targeting via entity seed"
+    (let [[ctx active-session-id] (create-session-context {:persist? false})
+          child-sd                (session/new-session-in! ctx active-session-id {})
+          child-session-id        (:session-id child-sd)
+          _                       (swap! (:state* ctx)
+                                        assoc-in
+                                        [:agent-session :sessions child-session-id :data :session-name]
+                                        "helper session")
+          _                       (swap! (:state* ctx)
+                                        assoc-in
+                                        [:agent-session :sessions child-session-id :data :model]
+                                        {:provider "local" :id "gemma-3" :reasoning false})
+          tool                    (tools/make-psi-tool (fn
+                                                         ([q] (session/query-in ctx active-session-id q))
+                                                         ([q entity] (session/query-in ctx q entity))))
+          exec                    (:execute tool)
+          result                  (exec {"query" "[:psi.agent-session/session-id :psi.agent-session/session-name :psi.agent-session/model-id]"
+                                         "entity" (str "{:psi.agent-session/session-id \"" child-session-id "\"}")})
+          parsed                  (read-string (:content result))]
+      (is (false? (:is-error result)))
+      (is (= child-session-id (:psi.agent-session/session-id parsed)))
+      (is (= "helper session" (:psi.agent-session/session-name parsed)))
+      (is (= "gemma-3" (:psi.agent-session/model-id parsed)))))
+
+  (testing "psi-tool reports explicit errors for missing session targeting on session-scoped attrs"
+    (let [[ctx _active-session-id] (create-session-context {:persist? false})
+          tool                     (tools/make-psi-tool (fn [q] (session/query-in ctx q)))
+          exec                     (:execute tool)
+          result                   (exec {"query" "[:psi.agent-session/model-id]"})]
+      (is (true? (:is-error result)))
+      (is (re-find #"EQL query error:" (:content result)))))
+
+  (testing "psi-tool rejects non-map entity seeds"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"query" "[:foo/bar]" "entity" "[:not-a-map]"})]
+      (is (true? (:is-error result)))
+      (is (re-find #"Entity must be an EDN map" (:content result))))))
 
 ;;; CWD support tests
 

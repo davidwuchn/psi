@@ -48,11 +48,17 @@
         _                   (register-resolvers! qctx false)
         _                   (register-mutations! qctx (:all-mutations ctx) true)
         tool                (tools/make-psi-tool
-                             (fn [eql-query]
-                               (query/query-in qctx
-                                               {:psi/agent-session-ctx        ctx
-                                                :psi.agent-session/session-id session-id}
-                                               eql-query))
+                             (fn
+                               ([eql-query]
+                                (query/query-in qctx
+                                                {:psi/agent-session-ctx        ctx
+                                                 :psi.agent-session/session-id session-id}
+                                                eql-query))
+                               ([eql-query entity]
+                                (query/query-in qctx
+                                                (merge {:psi/agent-session-ctx ctx}
+                                                       entity)
+                                                eql-query)))
                              {:overrides   (:overrides opts)
                               :tool-call-id (:tool-call-id opts)})]
     ((:execute tool) args)))

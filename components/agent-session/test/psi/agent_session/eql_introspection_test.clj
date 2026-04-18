@@ -80,6 +80,24 @@
       (is (some #(= :agent-session (:domain %))
                 (:psi.graph/capabilities result)))))
 
+  (testing "query-in supports explicit non-active session targeting via extra entity"
+    (let [[ctx active-session-id] (create-session-context)
+          child-sd                (session/new-session-in! ctx active-session-id {:session-name "child helper"})
+          child-session-id        (:session-id child-sd)
+          _                       (dispatch/dispatch! ctx :session/set-model {:session-id child-session-id
+                                                                              :model {:provider "local" :id "gemma-3" :reasoning false}}
+                                              {:origin :core})
+          result                  (session/query-in ctx
+                                                    [:psi.agent-session/session-id
+                                                     :psi.agent-session/session-name
+                                                     :psi.agent-session/model-provider
+                                                     :psi.agent-session/model-id]
+                                                    {:psi.agent-session/session-id child-session-id})]
+      (is (= child-session-id (:psi.agent-session/session-id result)))
+      (is (= "child helper" (:psi.agent-session/session-name result)))
+      (is (= "local" (:psi.agent-session/model-provider result)))
+      (is (= "gemma-3" (:psi.agent-session/model-id result)))))
+
   (testing "query-in resolves developer prompt"
     (let [[ctx session-id] (create-session-context {:session-defaults {:developer-prompt "dev layer"
                                                                       :developer-prompt-source :explicit}})
@@ -300,7 +318,7 @@
           result (session/query-in ctx session-id [:psi.agent-session/model-reasoning
                                         :psi.agent-session/effective-reasoning-effort])]
       (is (true? (:psi.agent-session/model-reasoning result)))
-      (is (= "high" (:psi.agent-session/effective-reasoning-effort result))))))
+      (is (= "high" (:psi.agent-session/effective-reasoning-effort result)))))
 
 (deftest tool-output-eql-introspection-test
   (testing "query-in resolves tool-output policy defaults and overrides"
@@ -779,4 +797,4 @@
                                    [{:psi.agent-session/request-shape
                                      [:psi.request-shape/headroom-tokens]}])
               h2 (-> r2 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]
-          (is (< h2 h1)))))))
+          (is (< h2 h1))))))))
