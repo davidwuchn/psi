@@ -270,3 +270,43 @@
         (is (= [{:criterion :configured? :match :true}
                 {:criterion :context-window :at-least 200000}]
                (:reasons eliminated)))))))
+
+(deftest rank-candidates-test
+  (registry/init! {:user-models-path (write-temp-models! no-auth-provider-config)})
+  (let [catalog (sut/catalog-view)]
+    (testing "strong preferences dominate weak preferences"
+      (let [request (sut/compose-effective-request
+                     {:request {:role :interactive
+                                :strong-preferences [{:criterion :input-cost :prefer :lower}]
+                                :weak-preferences [{:criterion :same-provider-as-session
+                                                    :prefer :context-match}]
+                                :context {:session-provider :anthropic}}})
+            survivors [(sut/find-candidate catalog :anthropic "claude-3-5-haiku-20241022")
+                       (sut/find-candidate catalog :openai "gpt-5.3-codex-spark")]
+            ranked   (sut/rank-candidates request survivors)]
+        (is (= ["gpt-5.3-codex-spark" "claude-3-5-haiku-20241022"]
+               (mapv :id (:ranked ranked))))
+        (is (false? (:ambiguous? ranked)))))
+
+    (testing "weak context-match preference breaks ties when strong preferences tie"
+      (let [request (sut/compose-effective-request
+                     {:request {:role :interactive
+                                :strong-preferences [{:criterion :input-cost :prefer :lower}]
+                                :weak-preferences [{:criterion :same-provider-as-session
+                                                    :prefer :context-match}]
+                                :context {:session-provider :openai}}})
+            survivors [(sut/find-candidate catalog :anthropic "claude-3-5-haiku-20241022")
+                       (sut/find-candidate catalog :openai "gpt-5.3-codex-spark")]
+            ranked    (sut/rank-candidates request survivors)]
+        (is (= ["gpt-5.3-codex-spark" "claude-3-5-haiku-20241022"]
+               (mapv :id (:ranked ranked))))
+        (is (false? (:ambiguous? ranked)))))
+
+    (testing "canonical provider/id tie-break is deterministic when preferences fully tie"
+      (let [request (sut/compose-effective-request {:request {:role :interactive}})
+            survivors [(sut/find-candidate catalog :anthropic "claude-sonnet-4-6")
+                       (sut/find-candidate catalog :openai "gpt-5")]
+            ranked    (sut/rank-candidates request survivors)]
+        (is (= ["claude-sonnet-4-6" "gpt-5"]
+               (mapv :id (:ranked ranked))))
+        (is (true? (:ambiguous? ranked)))))))

@@ -347,3 +347,123 @@
                       (mapv (fn [{:keys [candidate failed]}]
                               {:candidate candidate
                                :reasons   failed})))}))
+
+(defn- compare-values
+  [left right prefer]
+  (cond
+    (and (nil? left) (nil? right))
+    0
+
+    (nil? left)
+    0
+
+    (nil? right)
+    0
+
+    (= left right)
+    0
+
+    (= prefer :lower)
+    (compare left right)
+
+    (= prefer :higher)
+    (compare right left)
+
+    :else
+    0))
+
+(defn- context-value
+  [request criterion]
+  (let [context   (:context request)
+        provider  (or (get-in context [:session-model :provider])
+                      (:session-provider context))
+        model-id  (or (get-in context [:session-model :id])
+                      (:session-model-id context))]
+    (case (:criterion criterion)
+      :same-provider-as-session provider
+      :same-model-as-session    {:provider provider :id model-id}
+      nil)))
+
+(defn- compare-by-criterion
+  [request left right criterion]
+  (let [prefer (:prefer criterion)]
+    (case prefer
+      :lower
+      (compare-values (candidate-attribute left criterion)
+                      (candidate-attribute right criterion)
+                      :lower)
+
+      :higher
+      (compare-values (candidate-attribute left criterion)
+                      (candidate-attribute right criterion)
+                      :higher)
+
+      :context-match
+      (let [target (context-value request criterion)
+            left*  (case (:criterion criterion)
+                     :same-provider-as-session (:provider left)
+                     :same-model-as-session    {:provider (:provider left)
+                                                :id       (:id left)}
+                     (candidate-attribute left criterion))
+            right* (case (:criterion criterion)
+                     :same-provider-as-session (:provider right)
+                     :same-model-as-session    {:provider (:provider right)
+                                                :id       (:id right)}
+                     (candidate-attribute right criterion))
+            left-match? (= left* target)
+            right-match? (= right* target)]
+        (cond
+          (= left-match? right-match?) 0
+          left-match? -1
+          right-match? 1
+          :else 0))
+
+      0)))
+
+(defn- tier-comparison
+  [request left right criteria]
+  (loop [[criterion & more] criteria]
+    (if-not criterion
+      0
+      (let [result (compare-by-criterion request left right criterion)]
+        (if (zero? result)
+          (recur more)
+          result)))))
+
+(defn- candidate-sort-key
+  [candidate]
+  [(some-> (:provider candidate) name)
+   (:id candidate)])
+
+(defn rank-candidates
+  "Apply stage-2 resolver ranking to survivor candidates.
+
+   Returns:
+   {:ranked [...]
+    :ambiguous? boolean}
+
+   Ranking is lexicographic:
+   1. strong preferences in declared order
+   2. weak preferences in declared order
+   3. canonical provider/id tie-break
+
+   Ambiguity is true when the top two ranked candidates tie on all effective
+   preferences and are separated only by the canonical tie-break."
+  [request survivors]
+  (let [strong (:strong-preferences request)
+        weak   (:weak-preferences request)
+        cmp    (fn [left right]
+                 (let [strong* (tier-comparison request left right strong)]
+                   (if (zero? strong*)
+                     (let [weak* (tier-comparison request left right weak)]
+                       (if (zero? weak*)
+                         (compare (candidate-sort-key left)
+                                  (candidate-sort-key right))
+                         weak*))
+                     strong*)))
+        ranked (vec (sort cmp survivors))
+        ambiguous? (when (<= 2 (count ranked))
+                     (and (zero? (tier-comparison request (first ranked) (second ranked) strong))
+                          (zero? (tier-comparison request (first ranked) (second ranked) weak))))]
+    {:ranked     ranked
+     :ambiguous? (boolean ambiguous?)}))

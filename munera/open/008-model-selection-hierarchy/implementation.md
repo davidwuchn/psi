@@ -165,3 +165,23 @@
   - inherit-session pool restriction
   - missing explicit references yield an empty pool
   - eliminated candidates retain explicit failed-constraint reasons
+
+2026-04-17 — Step 6: resolver stage-2 ranking
+- Extended `psi.ai.model-selection` with lexicographic survivor ranking.
+- Added stage-2 ranking semantics aligned with the task design:
+  1. strong preferences in declared order
+  2. weak preferences in declared order
+  3. canonical provider/id tie-break
+- v1 supported preference forms now include:
+  - `{:prefer :lower}`
+  - `{:prefer :higher}`
+  - `{:prefer :context-match}` for context-derived comparisons such as session provider/model affinity
+- Added canonical tie-break key based on provider/id ordering.
+- Added `rank-candidates` returning:
+  - `:ranked`
+  - `:ambiguous?`
+- Ambiguity in v1 is surfaced when the top two ranked candidates tie across all effective strong+weak preferences and are separated only by the canonical tie-break.
+- Added tests proving:
+  - strong preferences dominate weak ones
+  - weak context-derived affinity can break otherwise equal strong preference results
+  - canonical tie-break stays deterministic and marks ambiguity when preferences fully tie
