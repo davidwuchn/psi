@@ -112,3 +112,81 @@
         (is (= operation-count (:operation-count coverage)))
         (is (= resolver-count (:resolver-count coverage)))
         (is (= mutation-count (:mutation-count coverage)))))))
+
+(deftest derive-resolver-index-test
+  (testing "resolver-index contains only psi.* attrs"
+    (let [index (graph/derive-resolver-index (:resolver-ops (cached-operation-metadata)))]
+      (is (seq index))
+      (is (every? symbol? (map :psi.resolver/sym index)))
+      (is (every? vector? (map :psi.resolver/input index)))
+      (is (every? vector? (map :psi.resolver/output index)))
+
+      (testing "no internal seed keys in input or output"
+        (let [all-inputs  (mapcat :psi.resolver/input index)
+              all-outputs (mapcat :psi.resolver/output index)
+              seed-keys   #{:psi/agent-session-ctx :psi/memory-ctx
+                            :psi/recursion-ctx :psi/engine-ctx}]
+          (is (not-any? #(contains? seed-keys %) all-inputs))
+          (is (not-any? #(and (keyword? %) (contains? seed-keys %)) all-outputs))))
+
+      (testing "all keyword attrs in psi.* namespace"
+        (let [flat-attrs (fn [io-vec]
+                           (mapcat (fn [x]
+                                     (cond
+                                       (keyword? x) [x]
+                                       (map? x) (concat (keys x) (mapcat val x))
+                                       :else []))
+                                   io-vec))
+              all-attrs  (->> index
+                              (mapcat (fn [r]
+                                        (concat (flat-attrs (:psi.resolver/input r))
+                                                (flat-attrs (:psi.resolver/output r)))))
+                              (filter keyword?))]
+          (is (every? #(clojure.string/starts-with? (namespace %) "psi.") all-attrs))))
+
+      (testing "sorted by sym"
+        (let [syms (map (comp str :psi.resolver/sym) index)]
+          (is (= syms (sort syms)))))
+
+      (testing "join maps preserved in output"
+        (let [join-outputs (->> index
+                                (mapcat :psi.resolver/output)
+                                (filter map?))]
+          (is (seq join-outputs) "expected at least one join map in resolver outputs")))))
+
+  (testing "context-sessions resolver output contains session-info join"
+    (let [index  (graph/derive-resolver-index (:resolver-ops (cached-operation-metadata)))
+          entry  (first (filter #(= 'psi.agent-session.resolvers.session/agent-session-identity
+                                    (:psi.resolver/sym %))
+                                index))
+          joins  (filter map? (:psi.resolver/output entry))
+          cs-key :psi.agent-session/context-sessions]
+      (is entry "agent-session-identity resolver should be in index")
+      (is (some #(contains? % cs-key) joins))
+      (is (some #(contains? (set (get % cs-key [])) :psi.session-info/id) joins)))))
+
+(deftest derive-attr-index-test
+  (testing "attr-index inverts resolver-index correctly"
+    (let [resolver-index (graph/derive-resolver-index (:resolver-ops (cached-operation-metadata)))
+          attr-index     (graph/derive-attr-index resolver-index)]
+      (is (map? attr-index))
+      (is (seq attr-index))
+
+      (testing "all keys are psi.* keywords"
+        (is (every? #(clojure.string/starts-with? (namespace %) "psi.") (keys attr-index))))
+
+      (testing "each entry has produced-by and reachable-via"
+        (doseq [[_ v] attr-index]
+          (is (vector? (:psi.attr/produced-by v)))
+          (is (map? (:psi.attr/reachable-via v)))))
+
+      (testing "psi.session-info/id is indexed and reachable via context-sessions"
+        (let [entry (get attr-index :psi.session-info/id)]
+          (is entry ":psi.session-info/id should appear in attr-index")
+          (is (contains? (:psi.attr/reachable-via entry)
+                         :psi.agent-session/context-sessions))))
+
+      (testing "flat attrs have empty reachable-via"
+        (let [flat-entry (get attr-index :psi.agent-session/session-name)]
+          (is flat-entry)
+          (is (empty? (:psi.attr/reachable-via flat-entry))))))))

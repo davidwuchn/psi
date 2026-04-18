@@ -248,6 +248,112 @@
                 vec)
            (recur known' attr->inputs')))))))
 
+;; ── Resolver I/O surface ────────────────────────────────
+
+(def ^:private internal-seed-keys
+  "Pathom seed keys injected into the entity map that are not user-facing attrs."
+  #{:psi/agent-session-ctx
+    :psi/memory-ctx
+    :psi/recursion-ctx
+    :psi/engine-ctx})
+
+(defn- psi-attr?
+  "True for keyword attrs in a psi.* namespace (not internal seed keys)."
+  [x]
+  (and (keyword? x)
+       (not (contains? internal-seed-keys x))
+       (when-let [ns (namespace x)]
+         (str/starts-with? ns "psi."))))
+
+(defn- filter-psi-io
+  "Filter a Pathom I/O vector to psi.* attrs only, preserving join map structure.
+   Join maps whose key is a psi.* attr have their child vectors filtered too.
+   Internal seed keys and non-psi attrs are removed."
+  [io-vec]
+  (into []
+        (keep (fn [x]
+                (cond
+                  (keyword? x)
+                  (when (psi-attr? x) x)
+
+                  (map? x)
+                  (let [filtered (into {}
+                                       (keep (fn [[k v]]
+                                               (when (psi-attr? k)
+                                                 [k (filterv psi-attr? v)]))
+                                             x))]
+                    (when (seq filtered) filtered))
+
+                  :else nil)))
+        io-vec))
+
+(defn derive-resolver-index
+  "Derive a sorted vector of resolver I/O descriptors filtered to psi.* attrs.
+
+   Each entry:
+   {:psi.resolver/sym    <qualified-symbol>
+    :psi.resolver/input  [<psi-attrs>]
+    :psi.resolver/output [<psi-attrs-and-join-maps>]}
+
+   Sorted by sym for deterministic output."
+  [resolver-ops]
+  (->> resolver-ops
+       (map (fn [{:keys [symbol input output]}]
+              {:psi.resolver/sym    symbol
+               :psi.resolver/input  (filter-psi-io input)
+               :psi.resolver/output (filter-psi-io output)}))
+       (sort-by (comp str :psi.resolver/sym))
+       vec))
+
+(defn- output-entries
+  "Expand a filtered output vector into [attr join-key-or-nil] pairs.
+   Flat attrs produce [attr nil]. Join map entries produce [child-attr join-key]
+   for each child attr."
+  [output sym]
+  (mapcat (fn [x]
+            (cond
+              (keyword? x)
+              [[x {:produced-by sym :reachable-via nil}]]
+
+              (map? x)
+              (mapcat (fn [[join-key children]]
+                        (map (fn [child]
+                               [child {:produced-by sym :reachable-via join-key}])
+                             children))
+                      x)
+
+              :else nil))
+          output))
+
+(defn derive-attr-index
+  "Derive an attr→resolver index from a resolver-index.
+
+   Each entry maps a psi.* attr keyword to:
+   {:psi.attr/produced-by  [<resolver-syms>]
+    :psi.attr/reachable-via {<join-key> [<resolver-syms>]}}
+
+   :psi.attr/reachable-via is a map of join-key → syms for attrs that are
+   only reachable inside a join. Flat attrs have an empty reachable-via map.
+
+   Sorted by attr for deterministic output."
+  [resolver-index]
+  (let [raw (reduce (fn [acc {:keys [psi.resolver/sym psi.resolver/output]}]
+                      (reduce (fn [acc [attr {:keys [produced-by reachable-via]}]]
+                                (-> acc
+                                    (update-in [attr :produced-by] (fnil conj []) produced-by)
+                                    (cond-> reachable-via
+                                      (update-in [attr :reachable-via reachable-via]
+                                                 (fnil conj []) produced-by))))
+                              acc
+                              (output-entries output sym)))
+                    {}
+                    resolver-index)]
+    (into (sorted-map)
+          (map (fn [[attr {:keys [produced-by reachable-via]}]]
+                 [attr {:psi.attr/produced-by   (vec (distinct produced-by))
+                        :psi.attr/reachable-via (or reachable-via {})}]))
+          raw)))
+
 (defn derive-capability-graph
   "Derive complete Step 7 capability graph structure from operation metadata.
 
