@@ -83,3 +83,57 @@
           (is (false? (get-in candidate [:reference :configured?])))))
       (finally
         (java.io.File/.delete (java.io.File. path))))))
+
+(deftest role-defaults-test
+  (testing "known roles expose default bundles"
+    (is (= :auto-session-name (:role (sut/role-defaults :auto-session-name))))
+    (is (= [{:criterion :supports-text :match :true}]
+           (:required (sut/role-defaults :auto-session-name))))
+    (is (= [{:criterion :same-provider-as-session :prefer :context-match}]
+           (:weak-preferences (sut/role-defaults :auto-session-name)))))
+
+  (testing "unknown roles return nil"
+    (is (nil? (sut/role-defaults :does-not-exist)))))
+
+(deftest normalize-request-test
+  (testing "defaults to resolve/interactive with normalized collections"
+    (let [request (sut/normalize-request {})]
+      (is (= :resolve (:mode request)))
+      (is (= :interactive (:role request)))
+      (is (= [] (:required request)))
+      (is (= [] (:strong-preferences request)))
+      (is (= [] (:weak-preferences request)))
+      (is (= {} (:context request)))))
+
+  (testing "role defaults are merged underneath caller request"
+    (let [request (sut/normalize-request {:role :auto-session-name})]
+      (is (= :auto-session-name (:role request)))
+      (is (= [{:criterion :supports-text :match :true}]
+             (:required request)))
+      (is (= [{:criterion :input-cost :prefer :lower}
+              {:criterion :output-cost :prefer :lower}]
+             (:strong-preferences request)))
+      (is (= [{:criterion :same-provider-as-session :prefer :context-match}]
+             (:weak-preferences request)))))
+
+  (testing "caller-supplied criteria replace role defaults for the same fields in v1"
+    (let [request (sut/normalize-request {:role :auto-session-name
+                                          :required [{:criterion :supports-reasoning
+                                                      :match :true}]
+                                          :weak-preferences [{:criterion :same-model-as-session
+                                                              :prefer :context-match}]
+                                          :context {:session-provider :anthropic}})]
+      (is (= [{:criterion :supports-reasoning :match :true}]
+             (:required request)))
+      (is (= [{:criterion :same-model-as-session :prefer :context-match}]
+             (:weak-preferences request)))
+      (is (= {:session-provider :anthropic}
+             (:context request)))))
+
+  (testing "explicit model request normalizes provider to keyword"
+    (let [request (sut/normalize-request {:mode :explicit
+                                          :model {:provider "openai"
+                                                  :id "gpt-5-mini"}})]
+      (is (= :explicit (:mode request)))
+      (is (= {:provider :openai :id "gpt-5-mini"}
+             (:model request))))))

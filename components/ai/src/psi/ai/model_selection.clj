@@ -1,13 +1,50 @@
 (ns psi.ai.model-selection
-  "Shared model-selection catalog surface.
+  "Shared model-selection surfaces.
 
-   v1 establishes the resolver-facing catalog view used by forthcoming
-   request/resolver/trace logic. The catalog view is deliberately thin and only
-   exposes attributes that already exist in the runtime catalog or adjacent auth
-   registry. Richer policy metadata can be added later without changing caller
-   intent."
+   v1 establishes:
+   - the resolver-facing catalog view
+   - request shapes and role defaults
+
+   Later steps will add policy composition, filtering, ranking, and trace
+   production on top of these data structures."
   (:require
    [psi.ai.model-registry :as model-registry]))
+
+(def ^:private default-role
+  :interactive)
+
+(def ^:private role-defaults-map
+  {:interactive
+   {:role                :interactive
+    :required            []
+    :strong-preferences  []
+    :weak-preferences    []}
+
+   :helper
+   {:role                :helper
+    :required            [{:criterion :supports-text
+                           :match     :true}]
+    :strong-preferences  [{:criterion :input-cost
+                           :prefer    :lower}
+                          {:criterion :output-cost
+                           :prefer    :lower}]
+    :weak-preferences    []}
+
+   :auto-session-name
+   {:role                :auto-session-name
+    :required            [{:criterion :supports-text
+                           :match     :true}]
+    :strong-preferences  [{:criterion :input-cost
+                           :prefer    :lower}
+                          {:criterion :output-cost
+                           :prefer    :lower}]
+    :weak-preferences    [{:criterion :same-provider-as-session
+                           :prefer    :context-match}]}})
+
+(defn role-defaults
+  "Return role defaults for `role`, or nil when unknown."
+  [role]
+  (get role-defaults-map role))
 
 (defn catalog-view
   "Return the merged resolver-facing catalog view.
@@ -66,3 +103,58 @@
                      (= id (:id candidate)))
             candidate))
         (:candidates catalog)))
+
+(defn normalize-request
+  "Normalize a model-selection request.
+
+   Request shape:
+   {:mode :explicit | :inherit-session | :resolve
+    :role keyword?
+    :required [criterion*]
+    :strong-preferences [criterion*]
+    :weak-preferences [criterion*]
+    :context map?
+    :model {:provider kw|string :id string}?}
+
+   v1 responsibilities:
+   - provide default mode/role
+   - normalize missing vectors/maps
+   - normalize explicit model provider to keyword
+   - merge role defaults underneath caller-supplied fields
+
+   This does not yet implement multi-layer policy composition."
+  [request]
+  (let [mode          (or (:mode request) :resolve)
+        role          (or (:role request) default-role)
+        role-default* (role-defaults role)
+        model         (when-let [m (:model request)]
+                        (cond-> {:provider (:provider m)
+                                 :id       (:id m)}
+                          (string? (:provider m))
+                          (update :provider keyword)))
+        normalized    (cond-> {}
+                        (contains? request :required)
+                        (assoc :required (vec (or (:required request) [])))
+
+                        (contains? request :strong-preferences)
+                        (assoc :strong-preferences
+                               (vec (or (:strong-preferences request) [])))
+
+                        (contains? request :weak-preferences)
+                        (assoc :weak-preferences
+                               (vec (or (:weak-preferences request) [])))
+
+                        (contains? request :context)
+                        (assoc :context (or (:context request) {}))
+
+                        (contains? request :model)
+                        (assoc :model model))]
+    (merge {:mode                mode
+            :role                role
+            :required            []
+            :strong-preferences  []
+            :weak-preferences    []
+            :context             {}
+            :model               nil}
+           role-default*
+           normalized)))

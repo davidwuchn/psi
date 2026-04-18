@@ -2,8 +2,8 @@
 - [x] Rewrite the design around catalog / request / resolver / trace
 - [x] Inventory current model-registry metadata and identify initial factual vs estimated attributes
 - [x] Define the merged catalog view consumed by the resolver
-- [ ] Define request modes: explicit, inherit-session, resolve
-- [ ] Define initial roles and their default constraint/preference bundles
+- [x] Define request modes: explicit, inherit-session, resolve
+- [x] Define initial roles and their default constraint/preference bundles
 - [ ] Define policy layering and effective-request merge semantics
 - [ ] Define preference criterion identity and ordering semantics
 - [ ] Implement resolver filtering for reference viability + required constraints

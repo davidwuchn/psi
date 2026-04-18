@@ -81,3 +81,27 @@
 - Important v1 choice:
   - the catalog view remains a projection layer only
   - it does not yet implement request composition, filtering, ranking, or trace logic
+
+2026-04-17 — Step 3: request modes and initial roles
+- Extended `psi.ai.model-selection` with initial request/role surfaces.
+- Added initial role defaults for:
+  - `:interactive`
+  - `:helper`
+  - `:auto-session-name`
+- Added `role-defaults` lookup so caller intent can be expressed in terms of reusable role bundles instead of inline heuristics.
+- Added `normalize-request` with initial request-shape responsibilities:
+  - default `:mode` to `:resolve`
+  - default `:role` to `:interactive`
+  - normalize missing required/strong/weak/context fields
+  - normalize explicit model provider strings to keywords
+  - merge role defaults beneath caller-provided fields
+- v1 merge semantics are intentionally simple at this stage:
+  - role defaults seed the request
+  - caller-provided `:required`, `:strong-preferences`, `:weak-preferences`, and `:context` replace seeded values fieldwise
+  - richer multi-layer policy composition remains a later step
+- Added tests proving:
+  - known role bundles are queryable
+  - unknown roles return nil
+  - request normalization supplies canonical defaults
+  - role defaults are injected into normalized requests
+  - explicit-model requests normalize provider identity canonically
