@@ -22,7 +22,8 @@
       :message-count (count msgs)
       :messages msgs
       :tool-calls {}
-      :tool-order []})))
+      :tool-order []})
+    (emit/emit-context-updated! emit! ctx state sid)))
 
 (defn maybe-match-selector-session
   [selector-items arg]

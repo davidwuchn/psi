@@ -115,7 +115,10 @@
    (fn [_ctx {:keys [session-id name]}]
      {:root-state-update (session/session-update session-id #(assoc % :session-name name))
       :effects [{:effect/type :persist/journal-append-session-info-entry
-                 :name name}]
+                 :name name}
+                {:effect/type :projection/context-changed
+                 :session-id session-id
+                 :reason :session/set-session-name}]
       :return {:session-name name}}))
 
   (register-core-handler!

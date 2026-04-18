@@ -96,20 +96,23 @@
                                                       [(persist/message-entry {:role "assistant" :content [{:type :text :text "root"}]})])
           _                   (session/new-session-in! ctx sid1 {})
           state               (atom {:transport {:ready? true :pending {}}
-                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}}})
+                                     :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "command-result" "context/updated"}}})
           handler             (support/make-handler ctx state)
           input               (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                    "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree " sid1 "\"}}\n")
           {:keys [out-lines]} (support/run-loop input handler state)
           frames              (support/parse-frames out-lines)
           events              (filter #(= :event (:kind %)) frames)
-          event-topics        (set (map :event events))]
+          event-topics        (set (map :event events))
+          context-evts        (filter #(= "context/updated" (:event %)) events)]
       (is (contains? event-topics "session/resumed"))
       (is (contains? event-topics "session/rehydrated"))
       (is (= sid1 (get-in (some #(when (= "session/resumed" (:event %)) %) events)
                           [:data :session-id])))
       (is (vector? (get-in (some #(when (= "session/rehydrated" (:event %)) %) events)
-                           [:data :messages])))))
+                           [:data :messages])))
+      (is (= 1 (count context-evts)))
+      (is (= sid1 (get-in (first context-evts) [:data :active-session-id])))))
 
   (testing "command /tree emits frontend selector payload with backend-owned order"
     (let [cwd                 (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-picker-" (java.util.UUID/randomUUID))

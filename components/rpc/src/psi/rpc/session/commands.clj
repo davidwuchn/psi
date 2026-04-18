@@ -77,6 +77,6 @@
 
       :else
       (command-results/emit-text-command-result! emit! (str "[not a command] " text)))
-    (emit/emit-session-snapshots! emit! ctx state session-id {:context? true})
+    (emit/emit-session-snapshots! emit! ctx state session-id)
     (response-frame (:id request) "command" true {:accepted true
                                                    :handled true})))
