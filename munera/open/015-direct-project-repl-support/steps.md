@@ -1,0 +1,4 @@
+- [ ] Define the canonical direct project REPL capability and scope boundaries
+- [ ] Decide the underlying REPL transport/mechanism (built-in REPL, network REPL, or nREPL)
+- [ ] Define project/worktree targeting and lifecycle semantics
+- [ ] Add tests and docs for the chosen project REPL interaction model

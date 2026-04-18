@@ -13,6 +13,7 @@ Open tasks in suggested execution order:
 9. `munera/open/012-psi-tool-session-targeting-introspection/`
 10. `munera/open/013-work-on-command-noop-regression/`
 11. `munera/open/014-psi-tool-code-reload/`
+12. `munera/open/015-direct-project-repl-support/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.
