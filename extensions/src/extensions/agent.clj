@@ -672,17 +672,17 @@
       ;; If the last role is user, emit an assistant bridge first.
       (when (= "user" last-role)
         (try
-          (mutate-fn 'psi.extension/send-message
+          (mutate-fn 'psi.extension/append-message
                      {:role "assistant"
                       :content "(agent context bridge)"})
           (catch Exception _ nil)))
       (try
-        (mutate-fn 'psi.extension/send-message
+        (mutate-fn 'psi.extension/append-message
                    {:role "user"
                     :content user-content})
         (catch Exception _ nil))
       (try
-        (mutate-fn 'psi.extension/send-message
+        (mutate-fn 'psi.extension/append-message
                    {:role "assistant"
                     :content asst-content})
         (catch Exception _ nil)))))
