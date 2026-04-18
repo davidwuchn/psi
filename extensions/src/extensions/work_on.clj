@@ -9,7 +9,7 @@
          :create-session-fn nil
          :switch-session-fn nil
          :set-worktree-path-fn nil
-         :send-message-fn nil
+         :notify-fn nil
          :path nil
          :default-branch nil
          :default-branch-source nil}))
@@ -141,10 +141,9 @@
 
 (defn- emit-visible-message!
   [text]
-  (if-let [f (:send-message-fn @state)]
+  (if-let [f (:notify-fn @state)]
     (try
-      (f {:role "assistant"
-          :content (str text)})
+      (f (str text) {:role "assistant"})
       (catch Exception _ nil))
     (print-line text)))
 
@@ -486,26 +485,28 @@
 (defn- handle-work-done-command
   [_args]
   (let [result (work-done!)]
-    (if (:ok? result)
-      (print-line (str "Fast-forwarded `" (:branch result)
-                       "` into `" (:into-branch result) "`"
-                       (when (:auto-rebased? result)
-                         " after automatic rebase")
-                       (if-let [cleanup-error (:cleanup-error result)]
-                         (str ", but cleanup incomplete: " cleanup-error)
-                         ", removed worktree, kept session transcript")))
-      (print-line (:error result)))))
+    (emit-visible-message!
+     (if (:ok? result)
+       (str "Fast-forwarded `" (:branch result)
+            "` into `" (:into-branch result) "`"
+            (when (:auto-rebased? result)
+              " after automatic rebase")
+            (if-let [cleanup-error (:cleanup-error result)]
+              (str ", but cleanup incomplete: " cleanup-error)
+              ", removed worktree, kept session transcript"))
+       (:error result)))))
 
 (defn- handle-work-rebase-command
   [_args]
   (let [result (work-rebase!)]
-    (if (:ok? result)
-      (print-line (str "Rebased `" (:branch result) "` onto `" (:onto result) "`"))
-      (print-line (:error result)))))
+    (emit-visible-message!
+     (if (:ok? result)
+       (str "Rebased `" (:branch result) "` onto `" (:onto result) "`")
+       (:error result)))))
 
 (defn- handle-work-status-command
   [_args]
-  (print-line (work-status-text)))
+  (emit-visible-message! (work-status-text)))
 
 (defn init
   [api]
@@ -515,8 +516,7 @@
          :create-session-fn (:create-session api)
          :switch-session-fn (:switch-session api)
          :set-worktree-path-fn (:set-worktree-path api)
-         :send-message-fn (fn [msg]
-                            ((:mutate api) 'psi.extension/send-message msg))
+         :notify-fn (:notify api)
          :path (:path api))
   ((:on api) "session_switch"
              (fn [_]
