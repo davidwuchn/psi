@@ -325,3 +325,60 @@
           (future-cancel loop-future)
           (try (.close in-writer) (catch Exception _ nil))
           (try (.close in-reader) (catch Exception _ nil)))))))
+
+(deftest rpc-event-driven-ui-projection-streams-status-and-dialog-without-prompt-test
+  (testing "after subscribe, ui status and dialog updates stream from event-driven projection delivery without a prompt request"
+    (let [[ctx session-id] (support/create-session-context)
+          state            (atom {:transport {:ready? true :pending {}}
+                                  :connection {:subscribed-topics #{}}})
+          handler          (support/make-handler ctx state)
+          in-reader        (java.io.PipedReader.)
+          in-writer        (java.io.PipedWriter. in-reader)
+          out-writer       (java.io.StringWriter.)
+          err-writer       (java.io.StringWriter.)
+          write-line!      (fn [line]
+                             (.write in-writer (str line "\n"))
+                             (.flush in-writer))
+          loop-future      (future
+                             (rpc.transport/run-stdio-loop! {:in              in-reader
+                                                             :out             out-writer
+                                                             :err             err-writer
+                                                             :state           state
+                                                             :request-handler handler}))]
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/status-updated\" \"ui/dialog-requested\"]}}")
+        (Thread/sleep 100)
+        (dispatch/dispatch! ctx :session/ui-set-status
+                            {:session-id session-id
+                             :extension-id "ext.demo"
+                             :text "Live status"}
+                            {:origin :test})
+        (dispatch/dispatch! ctx :session/ui-request-dialog
+                            {:session-id session-id
+                             :kind :confirm
+                             :ext-id "ext.demo"
+                             :title "Live dialog"
+                             :message "Proceed?"}
+                            {:origin :test})
+        (Thread/sleep 180)
+        (.close in-writer)
+        (deref loop-future 500 nil)
+        (let [frames       (support/parse-frames (->> (str/split-lines (str out-writer))
+                                                      (remove str/blank?)
+                                                      vec))
+              status-evts  (filter #(= "ui/status-updated" (:event %)) frames)
+              dialog-evts  (filter #(= "ui/dialog-requested" (:event %)) frames)
+              latest-status (last status-evts)
+              latest-dialog (last dialog-evts)]
+          (is (seq status-evts))
+          (is (seq dialog-evts))
+          (is (= "ext.demo" (get-in latest-status [:data :statuses 0 :extension-id])))
+          (is (= "Live status" (get-in latest-status [:data :statuses 0 :text])))
+          (is (= "confirm" (get-in latest-dialog [:data :kind])))
+          (is (= "Live dialog" (get-in latest-dialog [:data :title])))
+          (is (= "Proceed?" (get-in latest-dialog [:data :message]))))
+        (finally
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil)))))))
