@@ -53,3 +53,31 @@
   - initial resolver work should use only queryable metadata that already exists
   - locality and richer policy dimensions should not be invented implicitly from provider names or URLs
   - auth/config availability can participate in reference viability, but not as hidden ranking behavior
+
+2026-04-17 — Step 2: merged catalog view
+- Added initial shared namespace: `components/ai/src/psi/ai/model_selection.clj`.
+- Introduced `catalog-view` as the first resolver-facing catalog surface over `psi.ai.model-registry`.
+- v1 catalog-view shape now normalizes each candidate into:
+  - identity:
+    - `:provider`
+    - `:id`
+    - `:name`
+    - `:api`
+    - `:base-url`
+  - `:facts`
+    - text / image / reasoning support
+    - context window
+    - max tokens
+  - `:estimates`
+    - raw cost fields
+  - `:reference`
+    - `:configured?` derived from provider auth/config presence
+- Added `find-candidate` helper for provider/id lookup against the normalized catalog.
+- Added focused AI tests proving:
+  - built-in candidates project into the normalized catalog view
+  - custom models also project into the normalized catalog view
+  - provider auth/config participates in explicit reference metadata
+  - catalog ordering is deterministic by `provider/id`
+- Important v1 choice:
+  - the catalog view remains a projection layer only
+  - it does not yet implement request composition, filtering, ranking, or trace logic
