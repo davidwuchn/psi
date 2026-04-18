@@ -23,6 +23,11 @@ A meta model for psi.
 - psi has a capability graph that is queryable via EQL
 - psi runtime owns process-scoped managed services on ctx for long-lived subprocesses and similar runtime resources
 - managed services are keyed by logical identity and reused within ctx rather than extension-local hidden state
+- runtime-owned interactive projections use semantic invalidation effects rather than polling as their primary delivery mechanism
+- session/runtime mutations may emit projection invalidations such as `:projection/context-changed` and `:projection/ui-changed`
+- projection invalidations are runtime effects, not source-of-truth state
+- app-runtime owns canonical public projection models derived from canonical state
+- RPC owns per-connection projection fanout and recomputes public payloads at delivery time using canonical state plus connection-local focus
 
 - psi has a model catalog of built-in and user-defined AI models
 - built-in models are compiled into the AI component (anthropic, openai)

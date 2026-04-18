@@ -52,6 +52,15 @@ Adapters should differ only in:
 - local interaction mechanics
 - transport/protocol concerns
 
+### Projection delivery rule
+
+For runtime-owned interactive projections, canonical state changes first and public payloads are derived later:
+- session/runtime handlers mutate canonical state
+- handlers emit semantic invalidations such as `:projection/context-changed` and `:projection/ui-changed`
+- `app-runtime` remains the owner of canonical public projection models
+- RPC delivers those projections to subscribed clients by recomputing payloads from current canonical state plus connection-local focus
+- runtime-owned context/session-tree and shared UI updates are event-driven rather than polling-driven
+
 ### Ownership target
 
 #### `app-runtime` owns
@@ -74,6 +83,7 @@ Adapters should differ only in:
 - adaptation of `app-runtime` models onto the RPC protocol
 - explicit `session-id` routing whenever the operation can reasonably carry it
 - RPC-local focus pointer only as transport-scoped adapter fallback state
+- subscriber-aware fanout of runtime-owned projection invalidations (`:projection/context-changed`, `:projection/ui-changed`) with per-connection payload recomputation
 
 RPC should not be the long-term home for selector semantics, footer semantics,
 or session navigation domain logic.

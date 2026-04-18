@@ -74,14 +74,6 @@ Project-local extension/config examples in this repo include:
 For architecture overview, components, EQL introspection guidance, and roadmap, see:
 - [`doc/architecture.md`](doc/architecture.md)
 
-Current adapter-convergence direction:
-- `app-runtime` owns shared selector, footer, session-summary, navigation, context snapshot, and transcript rehydration semantics
-- CLI/TUI/RPC/extension-run-fn/startup-default prompt submission now routes through the shared prompt lifecycle (`prompt-in!` or equivalent dispatch-visible submit → prepare → execute-and-record → continue/finish)
-- intentionally isolated workflow/ephemeral runtimes may remain owned by their isolated workflow runtimes rather than being forced through the shared session lifecycle
-- RPC adapts those shared models to the wire protocol
-- RPC handshake is transport-focused; initial `session/updated` / `footer/updated` / `context/updated` event snapshots come through subscribed event paths, with `context/updated` carrying both the snapshot and canonical session-tree widget projection
-- explicit `session-id` routing is preferred over adapter-focus inference whenever an operation can carry it
-
 ## Graph discovery
 
 For the session-root graph discovery surface (`:psi.graph/*`), canonical discovery
