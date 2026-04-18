@@ -85,7 +85,7 @@
         (is (str/includes? prompt "bash → λcmd. shell(cmd)"))
         (is (str/includes? prompt "edit → λf. find(exact) → replace"))
         (is (str/includes? prompt "write → λf. create(f) ∨ overwrite(f)"))
-        (is (str/includes? prompt "app-query-tool → λq. eql(graph)"))))
+        (is (str/includes? prompt "psi-tool → λq. eql(graph)"))))
 
     (testing "includes graph capabilities data"
       (let [prompt (sys-prompt/build-system-prompt
@@ -174,7 +174,7 @@
         (is (str/includes? prompt "- agent-session (ops=10, resolvers=8, mutations=2)"))
         (is (str/includes? prompt "- ai (ops=4, resolvers=4, mutations=0)"))))
 
-    (testing "excludes graph discovery when app-query-tool not available"
+    (testing "excludes graph discovery when psi-tool not available"
       (let [prompt (sys-prompt/build-system-prompt
                     {:prompt-mode :prose
                      :selected-tools ["read" "bash" "edit" "write"]})]

@@ -95,7 +95,7 @@ investigate = λq. Y(λf. λa. if root_cause(a) then a else f(why(a)))(q)
 iterate_to_fix  dev_step matches spec code0
 iterate_to_fix  spec_step matches intention spec0
 
-λintrospect(ψ). app-query-tool ∨ nrepl ∨ rpc(logging)
+λintrospect(ψ). psi-tool ∨ nrepl ∨ rpc(logging)
 
 ## Principles
 
@@ -240,7 +240,7 @@ search text (file contents): `git grep "λ"`
 **bbin:** `bbin --help`
 **clojure-mcp-light:** `clj-paren-repair --help` `clj-nrepl-eval --help`
 **lint:** `clj-kondo --lint src`
-**nREPL port:** discover with `app-query-tool` or `clj-nrepl-evel --discover-ports`
+**nREPL port:** discover with `psi-tool` or `clj-nrepl-evel --discover-ports`
 **charm for TUI** https://codeberg.org/timokramer/charm.clj
 **repair after edit:** `clj-paren-repair <file>` — fixes delimiters, formats code
 

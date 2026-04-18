@@ -30,7 +30,7 @@
                      :lambda "λf. find(exact) → replace"}
    "write"          {:prose  "Create or overwrite files"
                      :lambda "λf. create(f) ∨ overwrite(f)"}
-   "app-query-tool" {:prose  "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."
+   "psi-tool"       {:prose  "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."
                      :lambda "λq. eql(graph) → {session state tools extensions …}"}})
 
 ;;; Lambda mode constants
@@ -248,10 +248,10 @@
                "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
                "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
                "- Canonical root discovery:\n"
-               "  - app-query-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
-               "  - app-query-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
+               "  - psi-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
+               "  - psi-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
                "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
-               "- Example: app-query-tool(query: \"[:psi.graph/resolver-syms]\")"))
+               "- Example: psi-tool(query: \"[:psi.graph/resolver-syms]\")"))
 
         graph-capabilities-section
         (when (and has-app-query? (seq loaded-caps))
@@ -311,9 +311,10 @@
    (let [resolved-cwd     (or cwd (System/getProperty "user.dir"))
          resolved-instant (or session-instant (java.time.Instant/now))
          mode           (or prompt-mode :lambda)
-         tool-names     (or selected-tools ["read" "bash" "edit" "write" "app-query-tool"])
+         tool-names     (or selected-tools ["read" "bash" "edit" "write" "psi-tool"])
          has-read?      (some #(= "read" %) tool-names)
-         has-app-query? (some #(= "app-query-tool" %) tool-names)
+         has-app-query? (or (some #(= "psi-tool" %) tool-names)
+                            (some #(= "app-query-tool" %) tool-names))
          loaded-skills   (or skills [])
          loaded-ctx      (or context-files [])
          loaded-caps     (or graph-capabilities [])
