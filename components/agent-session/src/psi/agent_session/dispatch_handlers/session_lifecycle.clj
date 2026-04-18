@@ -72,6 +72,9 @@
                                                                 :developer-prompt-source developer-prompt-source
                                                                 :preloaded-messages     preloaded-messages
                                                                 :cache-breakpoints      cache-breakpoints})
+        :effects [{:effect/type :projection/context-changed
+                   :session-id child-session-id
+                   :reason :session/create-child}]
         :return child-session-id})))
 
   (dispatch/register-handler!

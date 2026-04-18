@@ -15,9 +15,12 @@
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.mutations :as mutations]
    [psi.rpc :as rpc]
+   [psi.rpc.session.projections :as rpc.projections]
    [psi.rpc.events :as rpc.events]
    [psi.agent-session.runtime :as runtime]
+   [psi.query.core :as query]
    [psi.agent-session.tools :as tools]
    [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.memory.core :as memory]
@@ -322,6 +325,40 @@
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
+
+(deftest rpc-create-child-session-emits-context-updated-without-tree-test
+  (testing "child session creation emits context/updated to subscribed clients without manual refresh"
+    (let [[ctx session-id] (support/create-session-context {:persist? false})
+          qctx             (query/create-query-context)
+          mutate           (fn [op params]
+                             (get (query/query-in qctx
+                                                  {:psi/agent-session-ctx ctx}
+                                                  [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                                                              (not (contains? params :session-id))
+                                                              (assoc :session-id session-id)))])
+                                  op))
+          state            (atom {:transport {:ready? true :pending {}}
+                                  :connection {:focus-session-id session-id
+                                               :subscribed-topics #{"context/updated"}
+                                               :event-seq 0}
+                                  :workers {}})
+          emitted          (atom [])
+          emit-frame!      (fn [frame] (swap! emitted conj frame))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx mutations/all-mutations true)
+      (rpc.projections/ensure-projection-listener! ctx emit-frame! state)
+      (try
+        (let [child-id (:psi.agent-session/session-id
+                        (mutate 'psi.extension/create-child-session
+                                {:session-name "child"
+                                 :tool-defs []
+                                 :thinking-level :off}))
+              context-evt (some #(when (= "context/updated" (:event %)) %) @emitted)]
+          (is (some? context-evt))
+          (is (= session-id (get-in context-evt [:data :active-session-id])))
+          (is (some #(= child-id (:id %)) (get-in context-evt [:data :sessions]))))
+        (finally
+          (rpc.projections/unregister-projection-listener! ctx state))))))
 
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
