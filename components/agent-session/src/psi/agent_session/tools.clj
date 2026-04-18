@@ -5,6 +5,7 @@
    Errors throw ex-info so the executor can catch and report them."
   (:require
    [babashka.process :as proc]
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.walk :as walk]
@@ -62,11 +63,23 @@
 (def psi-tool
   {:name        "psi-tool"
    :label       "Psi Tool"
-   :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]. Optional `entity` seeds root attributes for explicit targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}."
+   :description (str "Execute a live psi runtime operation. Canonical requests use `action` with one of: "
+                     "`query`, `eval`, or `reload-code`. `query` executes an EQL query against the live session graph; "
+                     "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
+                     "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope. "
+                     "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
+                     "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
-                 :properties {:query  {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}
-                              :entity {:type "string" :description "Optional EDN root entity map to seed the query, e.g. \"{:psi.agent-session/session-id \\\"sid\\\"}\" for explicit session targeting."}}
-                 :required   ["query"]}})
+                 :properties {:action        {:type "string" :enum ["query" "eval" "reload-code"]
+                                              :description "Canonical psi-tool operation discriminator."}
+                              :query         {:type "string" :description "For `action: \"query\"`: EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}
+                              :entity        {:type "string" :description "For `action: \"query\"`: optional EDN root entity map to seed the query, e.g. \"{:psi.agent-session/session-id \\\"sid\\\"}\" for explicit session targeting."}
+                              :ns            {:type "string" :description "For `action: \"eval\"`: already loaded namespace string in which to evaluate `form`."}
+                              :form          {:type "string" :description "For `action: \"eval\"`: Clojure form string to read with *read-eval* disabled and evaluate in the named namespace."}
+                              :namespaces    {:type "array" :items {:type "string"}
+                                              :description "For `action: \"reload-code\"` namespace mode: ordered vector of already loaded namespace names to reload."}
+                              :worktree-path {:type "string" :description "For `action: \"reload-code\"` worktree mode: explicit absolute target worktree path. When absent, invoking session worktree may be used."}}
+                 :required   []}})
 
 (def all-tool-schemas
   [read-tool bash-tool edit-tool write-tool psi-tool])
@@ -590,6 +603,116 @@
        :else x))
    result))
 
+(defn- parse-edn-string
+  [s]
+  (binding [*read-eval* false]
+    (edn/read-string s)))
+
+(defn- psi-tool-action
+  [{:strs [action query]}]
+  (cond
+    (some? action) action
+    (some? query)  "query"
+    :else          nil))
+
+(def ^:private psi-tool-supported-actions
+  ["query" "eval" "reload-code"])
+
+(defn- validate-psi-tool-request
+  [{:strs [query entity ns form namespaces worktree-path] :as args}]
+  (let [effective-action (psi-tool-action args)]
+    (cond
+      (nil? effective-action)
+      (throw (ex-info "psi-tool action is required unless using legacy query-only compatibility input"
+                      {:phase             :validate
+                       :supported-actions psi-tool-supported-actions}))
+
+      (not (some #{effective-action} psi-tool-supported-actions))
+      (throw (ex-info (str "Unknown psi-tool action: " effective-action)
+                      {:phase             :validate
+                       :action            effective-action
+                       :supported-actions psi-tool-supported-actions}))
+
+      (= effective-action "query")
+      (do
+        (when-not (string? query)
+          (throw (ex-info "psi-tool query action requires `query`"
+                          {:phase  :validate
+                           :action effective-action})))
+        {:action effective-action
+         :query  query
+         :entity entity})
+
+      (= effective-action "eval")
+      (do
+        (when-not (string? ns)
+          (throw (ex-info "psi-tool eval action requires `ns`"
+                          {:phase  :validate
+                           :action effective-action})))
+        (when-not (string? form)
+          (throw (ex-info "psi-tool eval action requires `form`"
+                          {:phase  :validate
+                           :action effective-action})))
+        {:action effective-action
+         :ns     ns
+         :form   form})
+
+      (= effective-action "reload-code")
+      (do
+        (when (and (some? namespaces) (some? worktree-path))
+          (throw (ex-info "psi-tool reload-code accepts exactly one targeting mode"
+                          {:phase  :validate
+                           :action effective-action})))
+        {:action        effective-action
+         :namespaces    namespaces
+         :worktree-path worktree-path}))))
+
+(defn- format-psi-tool-error
+  [prefix e]
+  {:content  (str prefix (or (ex-message e) (str e)))
+   :is-error true})
+
+(defn- execute-psi-tool-query
+  [query-fn {:keys [query entity]}]
+  (let [q          (parse-edn-string query)
+        entity-map (when (some? entity)
+                     (parse-edn-string entity))]
+    (when-not (vector? q)
+      (throw (ex-info "Query must be an EDN vector" {:input query})))
+    (when (some? entity-map)
+      (when-not (map? entity-map)
+        (throw (ex-info "Entity must be an EDN map" {:input entity-map}))))
+    (if (some? entity-map)
+      (try
+        (query-fn q entity-map)
+        (catch clojure.lang.ArityException _
+          (throw (ex-info "psi-tool query-fn does not support explicit entity seeding"
+                          {:entity entity-map}))))
+      (query-fn q))))
+
+(defn- serialize-psi-tool-output
+  [{:keys [overrides tool-call-id]} output narrowing-hint]
+  (let [policy     (tool-output/effective-policy (or overrides {}) "psi-tool")
+        truncation (tool-output/head-truncate output policy)
+        truncated? (:truncated truncation)
+        spill-path (when truncated?
+                     (tool-output/persist-truncated-output!
+                      "psi-tool"
+                      (or tool-call-id (str (java.util.UUID/randomUUID)))
+                      output))]
+    (if truncated?
+      {:content  (str "Output truncated ("
+                      (:total-lines truncation) " lines / "
+                      (:total-bytes truncation) " bytes). Full output: " spill-path
+                      ". " narrowing-hint "\n\n"
+                      (:content truncation))
+       :is-error false
+       :details  {:truncation       truncation
+                  :full-output-path spill-path}}
+      {:content  (:content truncation)
+       :is-error false
+       :details  nil})))
+
 (defn make-psi-tool
   "Create a psi-tool with an :execute fn that closes over `query-fn`.
    `query-fn` should be one of:
@@ -601,57 +724,38 @@
    - :tool-call-id identifier for temp artifact naming when output is truncated"
   ([query-fn]
    (make-psi-tool query-fn nil))
-  ([query-fn {:keys [overrides tool-call-id]}]
+  ([query-fn opts]
    (assoc
     psi-tool
     :execute
-    (fn [{:strs [query entity]}]
+    (fn [args]
       (try
-        (let [q           (binding [*read-eval* false]
-                            (read-string query))
-              entity-map  (when (some? entity)
-                            (binding [*read-eval* false]
-                              (read-string entity)))]
-          (when-not (vector? q)
-            (throw (ex-info "Query must be an EDN vector" {:input query})))
-          (when (some? entity-map)
-            (when-not (map? entity-map)
-              (throw (ex-info "Entity must be an EDN map" {:input entity-map}))))
-          (let [result (if (some? entity-map)
-                         (try
-                           (query-fn q entity-map)
-                           (catch clojure.lang.ArityException _
-                             (throw (ex-info "psi-tool query-fn does not support explicit entity seeding"
-                                             {:entity entity-map}))))
-                         (query-fn q))
-                safe-result (sanitize-psi-tool-result result)
-                output      (pr-str safe-result)
-                policy      (tool-output/effective-policy (or overrides {}) "psi-tool")
-                truncation  (tool-output/head-truncate output policy)
-                truncated?  (:truncated truncation)
-                spill-path  (when truncated?
-                              (tool-output/persist-truncated-output!
-                               "psi-tool"
-                               (or tool-call-id (str (java.util.UUID/randomUUID)))
-                               output))]
-            (if truncated?
-              {:content  (str "Output truncated ("
-                              (:total-lines truncation) " lines / "
-                              (:total-bytes truncation) " bytes). Full output: " spill-path
-                              ". Use a narrower query to reduce output size.\n\n"
-                              (:content truncation))
-               :is-error false
-               :details  {:truncation       truncation
-                          :full-output-path spill-path}}
-              {:content  (:content truncation)
-               :is-error false
-               :details  nil})))
+        (let [{:keys [action] :as request} (validate-psi-tool-request args)]
+          (case action
+            "query"
+            (let [result      (execute-psi-tool-query query-fn request)
+                  safe-result (sanitize-psi-tool-result result)
+                  output      (pr-str safe-result)]
+              (serialize-psi-tool-output opts output "Use a narrower query to reduce output size."))
+
+            "eval"
+            (throw (ex-info "psi-tool eval action is not implemented yet"
+                            {:phase :execute
+                             :action action}))
+
+            "reload-code"
+            (throw (ex-info "psi-tool reload-code action is not implemented yet"
+                            {:phase :execute
+                             :action action}))))
         (catch StackOverflowError _
           {:content  "EQL query error: result contains recursive data that overflowed printer stack"
            :is-error true})
         (catch Exception e
-          {:content  (str "EQL query error: " (or (ex-message e) (str e)))
-           :is-error true}))))))
+          (let [action (psi-tool-action args)]
+            (case action
+              "eval" (format-psi-tool-error "Eval error: " e)
+              "reload-code" (format-psi-tool-error "Reload error: " e)
+              (format-psi-tool-error "EQL query error: " e)))))))))
 
 (def all-tools
   "Built-in tool definitions including execution fns.

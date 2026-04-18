@@ -1,2 +1,19 @@
-No implementation notes yet.
-Task created to capture the problem before choosing an approach.
+- 2026-04-18 — Slice 1 landed.
+- `psi-tool` now advertises the canonical action-based contract in its tool schema: `query`, `eval`, `reload-code`.
+- Added a single request validator/dispatcher:
+  - missing action + missing legacy query => validation error
+  - unknown action => validation error listing supported actions
+  - legacy `{query ...}` => compatibility alias to `action: "query"`
+  - action-specific validation currently covers `query`, `eval`, and initial `reload-code` mode exclusivity
+- Query execution/truncation was factored into helpers without changing query result semantics.
+- `eval` and `reload-code` currently fail explicitly as not implemented yet, with action-specific error prefixes.
+- Focused proof added in `tools_test.clj` for:
+  - legacy query aliasing
+  - canonical action-based query
+  - missing action
+  - unknown action
+  - missing eval args
+  - invalid reload dual-targeting request
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.tools-test` ✅
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅

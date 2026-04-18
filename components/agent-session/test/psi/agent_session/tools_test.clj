@@ -5,7 +5,6 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
-   [psi.agent-session.session-state :as ss]
    [psi.agent-session.tools :as tools]))
 (defn- create-session-context
   ([]
@@ -37,6 +36,15 @@
           tool     (tools/make-psi-tool query-fn)
           result   ((:execute tool) {"query" "[:foo/bar]"})]
       (is (false? (:is-error result)))
+      (is (= {:foo/bar 42} (read-string (:content result))))))
+
+  (testing "canonical action-based query is equivalent"
+    (let [query-fn (fn [q]
+                     (is (= [:foo/bar] q))
+                     {:foo/bar 42})
+          tool     (tools/make-psi-tool query-fn)
+          result   ((:execute tool) {"action" "query" "query" "[:foo/bar]"})]
+      (is (false? (:is-error result)))
       (is (= {:foo/bar 42} (read-string (:content result)))))))
 
 (deftest make-psi-tool-nested-query-test
@@ -48,6 +56,35 @@
                     {"query" "[{:psi.agent-session/stats [:total-messages]}]"})]
       (is (false? (:is-error result)))
       (is (string? (:content result))))))
+
+(deftest make-psi-tool-validation-test
+  (let [tool (tools/make-psi-tool (fn [_q] {}))]
+    (testing "missing action and query returns explicit validation error"
+      (let [result ((:execute tool) {})]
+        (is (true? (:is-error result)))
+        (is (re-find #"action is required" (:content result)))))
+
+    (testing "unknown action returns explicit validation error"
+      (let [result ((:execute tool) {"action" "wat"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"Unknown psi-tool action" (:content result)))))
+
+    (testing "eval requires ns"
+      (let [result ((:execute tool) {"action" "eval" "form" "(+ 1 2)"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"requires `ns`" (:content result)))))
+
+    (testing "eval requires form"
+      (let [result ((:execute tool) {"action" "eval" "ns" "clojure.core"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"requires `form`" (:content result)))))
+
+    (testing "reload-code rejects simultaneous targeting modes"
+      (let [result ((:execute tool) {"action" "reload-code"
+                                     "namespaces" ["psi.agent-session.tools"]
+                                     "worktree-path" "/tmp"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"exactly one targeting mode" (:content result)))))))
 
 (deftest make-psi-tool-invalid-edn-test
   (testing "invalid EDN returns error"

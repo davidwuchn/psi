@@ -1,9 +1,9 @@
-- [ ] Slice 1 — action-dispatched psi-tool contract + validation
-  - [ ] Update psi-tool schema/description to expose canonical `action`-based usage
-  - [ ] Add a single psi-tool action validator/dispatcher
-  - [ ] Preserve legacy query-only input as compatibility alias to `action: "query"`
-  - [ ] Return explicit structured validation errors for unknown/missing/invalid action inputs
-  - [ ] Add tests for action validation, legacy query aliasing, unknown action, and invalid action-specific argument combinations
+- [x] Slice 1 — action-dispatched psi-tool contract + validation
+  - [x] Update psi-tool schema/description to expose canonical `action`-based usage
+  - [x] Add a single psi-tool action validator/dispatcher
+  - [x] Preserve legacy query-only input as compatibility alias to `action: "query"`
+  - [x] Return explicit structured validation errors for unknown/missing/invalid action inputs
+  - [x] Add tests for action validation, legacy query aliasing, unknown action, and invalid action-specific argument combinations
 
 - [ ] Slice 2 — canonical query mode + compatibility proof
   - [ ] Route `action: "query"` through existing query execution
