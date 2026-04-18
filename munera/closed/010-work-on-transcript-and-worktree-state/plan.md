@@ -9,7 +9,7 @@ Approach:
 Likely steps:
 1. add/extend extension API support for explicit session worktree-path mutation if needed
 2. update `extensions.work-on/work-on!` flow so the originating session records the resulting worktree-path when appropriate
-3. emit assistant-visible outcome text through `psi.extension/send-message` rather than relying only on `println`
+3. emit assistant-visible outcome text through the canonical extension transcript output path rather than relying only on `println` (implemented later as explicit `psi.extension/notify`; this plan originally referenced the older `psi.extension/send-message` surface)
 4. preserve existing create/switch behavior while making transcript and state coherent
 5. add tests covering assistant message emission and worktree-path updates
 

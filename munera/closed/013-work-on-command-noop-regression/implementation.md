@@ -1,6 +1,6 @@
 Diagnosis and fix summary
 
-This task initially captured `/work-on` as a possible no-op regression. Focused reproduction showed the command itself was not failing: the extension created/switched the worktree/session and emitted the intended visible assistant message through `psi.extension/send-message`.
+This task initially captured `/work-on` as a possible no-op regression. Focused reproduction showed the command itself was not failing: the extension created/switched the worktree/session and emitted the intended visible assistant message through the extension transcript output path (now canonically `psi.extension/notify`; at the time this flowed through the older `psi.extension/send-message` compatibility surface).
 
 Actual failure boundary
 
