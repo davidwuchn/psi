@@ -91,6 +91,18 @@ Bootstrapped on 2026-04-02.
   - made `context/updated` carry both the canonical context snapshot and the canonical backend-projected session-tree widget payload
   - removed the handshake bootstrap `context/updated` event path so handshake is transport-only again
   - removed obsolete handshake/tree-label compatibility branches that were superseded by the converged projections
+  - converged capability-graph derivation on `psi.graph.analysis`; `psi.introspection.graph` is now a compatibility wrapper
+  - started thinning the RPC command/frontend-action seam by moving picker selection side-effects into `psi.rpc.session.command-pickers`
+@@
+ ## Suggested next step
+ - Next active threads are now:
+   1. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
+   2. **Auto session name**: add helper model selection using the new model-selection-hierarchy thread
+   3. **Model selection hierarchy**: task-class helper/background model resolution
+   4. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
+   5. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
++- Additional current follow-on from recent Gordian/RPC work:
++  6. **RPC edge thinning**: continue reducing duplication between `psi.rpc.session.commands` and `psi.rpc.session.frontend_actions`, likely by centralizing more command-result/error/session-snapshot orchestration without reshaping navigation contracts
 
 ## Explicit routing direction
 - Strong current direction: explicit session routing over inferred focus.

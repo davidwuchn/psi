@@ -29,7 +29,12 @@ Completed follow-on slices:
 - OpenAI migration completed; `psi.ai.providers.openai.common` has been deleted
 - background-job façade retirement completed; `psi.app-runtime.background-jobs` has been deleted
 - graph derivation convergence completed; active capability-graph consumers now use `psi.graph.analysis`, and `psi.introspection.graph` is now a compatibility wrapper
-- RPC action/result thinning follow-on started: picker selection side-effects now live in `psi.rpc.session.command-pickers` instead of being split across `command-pickers` and `frontend-actions`
+- RPC action/result thinning slice landed: picker selection side-effects now live in `psi.rpc.session.command-pickers` instead of being split across `command-pickers` and `frontend-actions`
+
+New near-term slice:
+- continue thinning the RPC edge around `psi.rpc.session.commands` ↔ `psi.rpc.session.frontend-actions`
+  - likely next target: centralize remaining command-result/error/session-snapshot emission decisions so command submission and frontend-action submission share less sibling-local orchestration logic
+  - keep navigation handling stable and avoid broad RPC router reshaping
 
 Deeper investigation queue from latest Gordian namespace analysis:
 
