@@ -1,4 +1,29 @@
-- [ ] Define the canonical direct project REPL capability and scope boundaries
-- [ ] Decide the underlying REPL transport/mechanism (built-in REPL, network REPL, or nREPL)
-- [ ] Define project/worktree targeting and lifecycle semantics
-- [ ] Add tests and docs for the chosen project REPL interaction model
+- [ ] Define the canonical project nREPL config and validation surface
+  - [ ] Started mode uses a command vector of strings
+  - [ ] Attach mode uses explicit port and optional host
+  - [ ] `.nrepl-port` discovery/parsing rules are explicit
+  - [ ] Worktree targeting and precedence are explicit
+- [ ] Add the runtime-owned managed project nREPL service skeleton
+  - [ ] Registry keyed by canonical absolute `worktree-path`
+  - [ ] Single-instance-per-worktree rule enforced
+  - [ ] Explicit restart/replace path for conflicts
+- [ ] Implement psi-started acquisition
+  - [ ] Launch configured command vector in target worktree
+  - [ ] Read `.nrepl-port` from launch directory
+  - [ ] Wait for readiness and establish managed client session
+- [ ] Implement attach acquisition
+  - [ ] Connect via explicit port/optional host or worktree-local `.nrepl-port`
+  - [ ] Bind attached endpoint explicitly to target worktree in psi state
+  - [ ] Establish managed client session
+- [ ] Project canonical project nREPL state into `:state*`
+  - [ ] Lifecycle/acquisition/endpoint metadata
+  - [ ] Session-mode and active-session metadata
+  - [ ] Recent startup/attach/eval summaries
+- [ ] Add canonical EQL/query visibility for project nREPL state
+- [ ] Implement eval on the managed single nREPL session
+  - [ ] Single-flight eval per worktree instance
+  - [ ] Structured success/error/unavailable result reporting
+  - [ ] Transcript-visible output plus queryable summaries
+- [ ] Implement interrupt for the active eval on the managed session
+- [ ] Add canonical command/tool/UI integration for start/attach/status/stop/restart/eval/interrupt
+- [ ] Add focused tests and docs for started mode, attach mode, eval, interrupt, and observability
