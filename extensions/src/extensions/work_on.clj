@@ -507,7 +507,7 @@
                (refresh-default-branch-cache!)
                nil))
   ((:register-command api) "work-on"
-                           {:description "Create a sibling git worktree + branch and continue there"
+                           {:description "Create a layout-derived git worktree + branch and continue there"
                             :handler handle-work-on-command})
   ((:register-command api) "work-done"
                            {:description "Finish current worktree onto the default branch and clean up"

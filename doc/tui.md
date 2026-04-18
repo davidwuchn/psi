@@ -65,8 +65,9 @@ The selector UI is frontend-native, but candidate lists and command semantics ar
 ### Worktree commands
 
 - `/worktree` shows git worktree context for the current session worktree.
-- `/work-on <description>` creates a sibling git worktree + branch and moves you into
-  a distinct new context session bound to that worktree.
+- `/work-on <description>` creates a git worktree + branch at a path derived from the
+  current/main worktree layout and moves you into a distinct new context session bound to
+  that worktree.
 - `/work-done` completes the current linked worktree onto the default branch.
 - It uses the cached default branch for the context.
 - If the current branch is not yet fast-forwardable onto the default branch, `/work-done`
@@ -80,7 +81,8 @@ The selector UI is frontend-native, but candidate lists and command semantics ar
 - `/work-status` shows the active linked worktree overview.
 
 Operational notes:
-- Worktree paths are sibling directories of the main worktree.
+- Worktree placement is derived from the relationship between the current worktree path
+  and the main worktree path.
 - `/work-on` uses a mechanical slug from the description.
 - `/work-done` caches the default branch on init/session switch.
 - Tool operations in a worktree session run with that session's `worktree-path`/`worktree_path` as cwd.
