@@ -533,7 +533,7 @@
         (is (= 20 (count terminal)))))))
 
 ;; ---------------------------------------------------------------------------
-;; Regression: send-message triggers workflow-job terminal detection
+;; Regression: explicit extension notification triggers workflow-job terminal detection
 ;; ---------------------------------------------------------------------------
 
 (def ^:private instant-done-chart
@@ -547,10 +547,10 @@
                                                            :data {:workflow/result "ok"}}])})))
                     (ele/final {:id :done})))
 
-(deftest send-message-triggers-workflow-job-terminal-detection-test
-  (testing "send-message mutation marks workflow-backed background jobs terminal"
+(deftest notify-triggers-workflow-job-terminal-detection-test
+  (testing "notify mutation marks workflow-backed background jobs terminal"
     (let [[ctx session-id] (test-support/make-session-ctx {})
-          ext-path  "/test/send-message-regression.clj"
+          ext-path  "/test/notify-regression.clj"
           wf-id     "wf-sm-1"
           thread-id session-id
           reg       (:workflow-registry ctx)
@@ -590,14 +590,14 @@
                                                   :workflow-id       wf-id})))}
                           {:origin :core})
       (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-sm-1")))
-          "job should start as running before send-message is called")
-      ;; Invoke send-message via the real Pathom mutation surface — this exercises the fix
-      (mutate 'psi.extension/send-message
+          "job should start as running before notify is called")
+      ;; Invoke notify via the real Pathom mutation surface — this exercises the fix
+      (mutate 'psi.extension/notify
               {:role "assistant" :content "chain result" :custom-type "chain-result"})
       ;; The job should now be terminal (completed) — the fix under test
       (let [job (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-sm-1")]
         (is (bj/terminal-status? (:status job))
-            "background job should be terminal after send-message")
+            "background job should be terminal after notify")
         (is (= :completed (:status job))))
       (wf/shutdown-in! reg))))
 
@@ -616,10 +616,10 @@
                                (ele/transition {:event :done.invoke.finish :target :done}))
                     (ele/final {:id :done})))
 
-(deftest send-message-terminal-detection-handles-workflow-completion-race-test
-  (testing "send-message eventually marks job terminal when workflow completes just after message"
+(deftest notify-terminal-detection-handles-workflow-completion-race-test
+  (testing "notify eventually marks job terminal when workflow completes just after message"
     (let [[ctx session-id] (test-support/make-session-ctx {})
-          ext-path  "/test/send-message-race.clj"
+          ext-path  "/test/notify-race.clj"
           wf-id     "wf-sm-race"
           thread-id session-id
           reg       (:workflow-registry ctx)
@@ -648,8 +648,8 @@
                                                   :workflow-ext-path ext-path
                                                   :workflow-id       wf-id})))}
                           {:origin :core})
-      ;; Fire send-message before workflow reaches :done.
-      (mutate 'psi.extension/send-message
+      ;; Fire notify before workflow reaches :done.
+      (mutate 'psi.extension/notify
               {:role "assistant" :content "chain result" :custom-type "chain-result"})
       ;; Poll for eventual terminal transition (covers race between message inject and wf completion).
       (loop [i 0]
