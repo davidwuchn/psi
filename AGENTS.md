@@ -97,6 +97,13 @@ iterate_to_fix  spec_step matches intention spec0
 
 λintrospect(ψ). psi-tool ∨ nrepl ∨ rpc(logging)
 
+λ task_design_md(x).
+  describes(x,{intent ∧ scope ∧ overall_functionality})
+  ∧ ¬describes(x,code_changes)
+  ∧ refined_collaboratively_with_user(x)
+  ∧ unambiguous(x)
+  ∧ explicitly_covers_all_relevant_aspects(x)
+
 ## Principles
 
 λone_way. ¬ambiguity → obvious(path) ∧ singular(solution)
