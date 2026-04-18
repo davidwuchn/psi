@@ -30,8 +30,8 @@
                      :lambda "λf. find(exact) → replace"}
    "write"          {:prose  "Create or overwrite files"
                      :lambda "λf. create(f) ∨ overwrite(f)"}
-   "psi-tool"       {:prose  "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."
-                     :lambda "λq. eql(graph) → {session state tools extensions …}"}})
+   "psi-tool"       {:prose  "Execute live psi runtime operations: action-based graph query, in-process eval, and explicit code reload."
+                     :lambda "λaction. runtime(query ∨ eval ∨ reload-code) → {graph ∨ value ∨ reload-report}"}})
 
 ;;; Lambda mode constants
 
@@ -248,13 +248,22 @@
                "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
                "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
                "- Canonical root discovery:\n"
-               "  - psi-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
-               "  - psi-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
+               "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
+               "  - psi-tool(action: \"query\", query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
                "- Canonical explicit session targeting:\n"
-               "  - psi-tool(query: \"[:psi.agent-session/session-name :psi.agent-session/model-id]\", entity: \"{:psi.agent-session/session-id \\\"sid\\\"}\")\n"
+               "  - psi-tool(action: \"query\", query: \"[:psi.agent-session/session-name :psi.agent-session/model-id]\", entity: \"{:psi.agent-session/session-id \\\"sid\\\"}\")\n"
                "  - Session-scoped attrs require :psi.agent-session/session-id; missing targeting should fail rather than silently using another session.\n"
+               "- Eval:\n"
+               "  - psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\")\n"
+               "  - Eval is namespace-scoped and requires an already loaded namespace.\n"
+               "- Reload code:\n"
+               "  - namespace mode: psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])\n"
+               "  - worktree mode (session-derived): psi-tool(action: \"reload-code\")\n"
+               "  - worktree mode (explicit): psi-tool(action: \"reload-code\", worktree-path: \"/abs/path/to/worktree\")\n"
+               "  - Reload reports code-reload and graph-refresh separately.\n"
                "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
-               "- Example: psi-tool(query: \"[:psi.graph/resolver-syms]\")"))
+               "- Legacy compatibility: query-only psi-tool(query: \"...\") remains accepted during migration, but canonical docs use action-based requests.\n"
+               "- Example: psi-tool(action: \"query\", query: \"[:psi.graph/resolver-syms]\")"))
 
         graph-capabilities-section
         (when (and has-app-query? (seq loaded-caps))

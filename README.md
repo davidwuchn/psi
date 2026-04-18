@@ -49,7 +49,14 @@ For TUI login flow, in-session commands, and runtime behavior, see:
 
 ### Built-in Tools
 
-`read` `bash` `edit` `write`
+`read` `bash` `edit` `write` `psi-tool`
+
+`psi-tool` is the live runtime introspection/modification tool with canonical action-based requests:
+- `query` — EQL graph reads
+- `eval` — in-process namespace-scoped Clojure eval
+- `reload-code` — explicit namespace/worktree code reload with distinct reload and graph-refresh reporting
+
+See [`doc/psi-project-config.md`](doc/psi-project-config.md) for examples and reload targeting rules.
 
 ### Extension API
 

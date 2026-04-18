@@ -47,8 +47,8 @@
   - [ ] Ensure truncated eval/reload output preserves required visible metadata
   - [ ] Add tests for telemetry capture and truncation-visible metadata preservation
 
-- [ ] Slice 8 — docs + proof
-  - [ ] Update tool-facing docs/examples to canonical action-based psi-tool contract
-  - [ ] Document namespace-mode reload vs worktree-mode reload
-  - [ ] Document eval as namespace-scoped only
-  - [ ] Add/align proof tests for compatibility aliasing, reload scope, refresh behavior, and docs examples
+- [x] Slice 8 — docs + proof
+  - [x] Update tool-facing docs/examples to canonical action-based psi-tool contract
+  - [x] Document namespace-mode reload vs worktree-mode reload
+  - [x] Document eval as namespace-scoped only
+  - [x] Add/align proof tests for compatibility aliasing, reload scope, refresh behavior, and docs examples

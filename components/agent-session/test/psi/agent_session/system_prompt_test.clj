@@ -85,7 +85,7 @@
         (is (str/includes? prompt "bash → λcmd. shell(cmd)"))
         (is (str/includes? prompt "edit → λf. find(exact) → replace"))
         (is (str/includes? prompt "write → λf. create(f) ∨ overwrite(f)"))
-        (is (str/includes? prompt "psi-tool → λq. eql(graph)"))))
+        (is (str/includes? prompt "psi-tool → λaction. runtime(query ∨ eval ∨ reload-code) → {graph ∨ value ∨ reload-report}"))))
 
     (testing "includes graph capabilities data"
       (let [prompt (sys-prompt/build-system-prompt
@@ -155,6 +155,7 @@
         (is (str/includes? prompt "You are ψ (Psi)"))
         (is (str/includes? prompt "Available tools:"))
         (is (str/includes? prompt "read: Read file contents"))
+        (is (str/includes? prompt "psi-tool: Execute live psi runtime operations: action-based graph query, in-process eval, and explicit code reload."))
         (is (str/includes? prompt "Guidelines:"))
         (is (str/includes? prompt "Capability graph (EQL discovery):"))
         (is (not (str/includes? prompt "λ engage(nucleus).")))))
@@ -173,6 +174,14 @@
         (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
         (is (str/includes? prompt "- agent-session (ops=10, resolvers=8, mutations=2)"))
         (is (str/includes? prompt "- ai (ops=4, resolvers=4, mutations=0)"))))
+
+    (testing "includes action-based psi-tool examples in prose graph guidance"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:prompt-mode :prose})]
+        (is (str/includes? prompt "psi-tool(action: \"query\", query: \"[:psi.graph/root-seeds]\")"))
+        (is (str/includes? prompt "psi-tool(action: \"eval\", ns: \"clojure.core\", form: \"(+ 1 2)\")"))
+        (is (str/includes? prompt "psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])") )
+        (is (str/includes? prompt "Legacy compatibility: query-only psi-tool(query: \"...\") remains accepted during migration"))))
 
     (testing "excludes graph discovery when psi-tool not available"
       (let [prompt (sys-prompt/build-system-prompt

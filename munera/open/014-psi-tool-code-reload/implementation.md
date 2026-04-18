@@ -102,3 +102,19 @@
 - Verification:
   - `clojure -M:test --focus psi.agent-session.tools-test` ✅
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/src/psi/agent_session/tool_plan.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅
+
+- 2026-04-18 — Slice 8 landed.
+- Updated user-facing docs and prompt-facing guidance to reflect the canonical action-based `psi-tool` contract.
+- Updated:
+  - `README.md`
+  - `doc/psi-project-config.md`
+  - `components/agent-session/src/psi/agent_session/system_prompt.clj`
+- Prompt-facing examples now cover:
+  - action-based query
+  - eval in a loaded namespace
+  - reload-code namespace mode
+  - reload-code worktree mode via session worktree
+  - reload-code worktree mode via explicit worktree-path
+- Added/updated proof in `system_prompt_test.clj` so prompt docs now assert the new lambda/prose descriptions and action-based examples.
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.system-prompt-test --focus psi.agent-session.tools-test` ✅
