@@ -108,14 +108,17 @@
                   (dispatch/dispatch! ctx :session/update-background-jobs-state {:update-fn (constantly state')} {:origin :core}))))))))))
 
 (defn maybe-emit-background-job-terminal-messages!
-  "Emit terminal job messages via the ctx-provided send-extension-message-fn."
+  "Emit terminal job messages via the explicit ctx-provided notify callback,
+   falling back to the legacy send-extension-message callback during migration."
   [ctx session-id]
-  (let [store    (ss/get-state-value-in ctx (ss/state-path :background-jobs))
-        send-msg (:send-extension-message-fn ctx)]
-    (when (and store session-id send-msg)
+  (let [store      (ss/get-state-value-in ctx (ss/state-path :background-jobs))
+        notify-msg (:notify-extension-fn ctx)
+        send-msg   (:send-extension-message-fn ctx)]
+    (when (and store session-id (or notify-msg send-msg))
       (doseq [job (bg-jobs/pending-terminal-jobs-in store session-id)]
         (let [claim* (atom nil)]
-          (dispatch/dispatch! ctx :session/update-background-jobs-state
+          (dispatch/dispatch! ctx
+                              :session/update-background-jobs-state
                               {:update-fn (fn [store]
                                             (let [result (bg-jobs/claim-terminal-message-emission
                                                           store
@@ -159,9 +162,13 @@
                                        spill-path)
                                   payload-edn)]
                 (try
-                  (send-msg ctx session-id "assistant" content "background-job-terminal")
+                  (if notify-msg
+                    (notify-msg ctx session-id "assistant" content "background-job-terminal")
+                    (send-msg ctx session-id "assistant" content "background-job-terminal"))
                   (catch clojure.lang.ArityException _
-                    (send-msg ctx "assistant" content "background-job-terminal")))))))))))
+                    (if notify-msg
+                      (notify-msg ctx "assistant" content "background-job-terminal")
+                      (send-msg ctx "assistant" content "background-job-terminal"))))))))))))
 
 (defn- maybe-refresh-background-job-ui!
   [ctx session-id]

@@ -125,6 +125,32 @@
                        :runtime-tool-executor-fn     tool-plan/default-execute-runtime-tool-in!
                        :execute-tool-runtime-fn      #'tool-plan/execute-tool-runtime-in!
                        :persist?                     false
+                       :notify-extension-fn         (fn
+                                                       ([ctx role content custom-type]
+                                                        (let [msg {:role      role
+                                                                   :content   [{:type :text :text (str content)}]
+                                                                   :timestamp (java.time.Instant/now)}
+                                                              msg (cond-> msg
+                                                                    custom-type (assoc :custom-type custom-type)
+                                                                    (not custom-type) (assoc :custom-type "extension-notification"))
+                                                              session-id (some-> (ss/list-context-sessions-in ctx) first :session-id)]
+                                                          (dispatch/dispatch! ctx
+                                                                              :session/notify-extension
+                                                                              {:session-id session-id :message msg}
+                                                                              {:origin :core})
+                                                          msg))
+                                                       ([ctx session-id role content custom-type]
+                                                        (let [msg {:role      role
+                                                                   :content   [{:type :text :text (str content)}]
+                                                                   :timestamp (java.time.Instant/now)}
+                                                              msg (cond-> msg
+                                                                    custom-type (assoc :custom-type custom-type)
+                                                                    (not custom-type) (assoc :custom-type "extension-notification"))]
+                                                          (dispatch/dispatch! ctx
+                                                                              :session/notify-extension
+                                                                              {:session-id session-id :message msg}
+                                                                              {:origin :core})
+                                                          msg)))
                        :send-extension-message-fn    (fn
                                                        ([ctx role content custom-type]
                                                         (let [msg {:role      role
