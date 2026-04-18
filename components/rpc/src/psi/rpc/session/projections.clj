@@ -8,10 +8,12 @@
 (declare unregister-projection-listener!)
 
 (defn emit-context-updated!
-  [ctx emit-frame! state session-id]
-  (events/emit-event! emit-frame! state
-                      {:event "context/updated"
-                       :data  (events/context-updated-payload ctx state session-id)}))
+  ([ctx emit-frame! state session-id]
+   (emit-context-updated! ctx emit-frame! state nil session-id))
+  ([ctx emit-frame! state active-session-id session-id]
+   (events/emit-event! emit-frame! state
+                       {:event "context/updated"
+                        :data  (events/context-updated-payload ctx state active-session-id session-id)})))
 
 (defn emit-ui-snapshot!
   [ctx emit-frame! state]
@@ -22,10 +24,12 @@
   (case (:projection/type change)
     :context-changed
     (let [sid (or (:session-id change)
-                  (rpc.state/focus-session-id state)
-                  (some-> (ss/list-context-sessions-in ctx) first :session-id))]
+                  (some-> (ss/list-context-sessions-in ctx) first :session-id))
+          active-session-id (or (:active-session-id change)
+                                (rpc.state/focus-session-id state)
+                                sid)]
       (when sid
-        (emit-context-updated! ctx emit-frame! state sid)))
+        (emit-context-updated! ctx emit-frame! state active-session-id sid)))
 
     :ui-changed
     (emit-ui-snapshot! ctx emit-frame! state)

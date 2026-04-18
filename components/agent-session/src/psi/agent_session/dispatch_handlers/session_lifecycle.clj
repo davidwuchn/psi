@@ -27,6 +27,7 @@
         :effects [{:effect/type :runtime/agent-reset}
                   {:effect/type :projection/context-changed
                    :session-id new-session-id
+                   :active-session-id new-session-id
                    :reason :session/new-initialize}]})))
 
   (dispatch/register-handler!
@@ -48,6 +49,7 @@
                            :level       thinking-level}
                           {:effect/type :projection/context-changed
                            :session-id session-id
+                           :active-session-id session-id
                            :reason :session/resume-loaded}]
                    model    (conj {:effect/type :runtime/agent-set-model :model model})
                    messages (conj {:effect/type :runtime/agent-replace-messages :messages messages}))})))
@@ -63,6 +65,7 @@
         :return-key        (ss/session-data-path new-session-id)
         :effects (cond-> [{:effect/type :projection/context-changed
                            :session-id new-session-id
+                           :active-session-id new-session-id
                            :reason :session/fork-initialize}]
                    messages (conj {:effect/type :runtime/agent-replace-messages :messages messages}))})))
 

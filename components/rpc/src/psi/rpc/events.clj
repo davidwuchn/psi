@@ -149,11 +149,13 @@
    :content-lines (:widget/content-lines widget)})
 
 (defn context-updated-payload
-  [ctx state session-id]
-  (let [snapshot (app-context/context-snapshot ctx (focus-session-id state) session-id)
-        widget   (context-summary/context-widget snapshot)]
-    (cond-> snapshot
-      true (assoc :session-tree-widget (widget->rpc-widget widget)))))
+  ([ctx state session-id]
+   (context-updated-payload ctx state (focus-session-id state) session-id))
+  ([ctx state active-session-id session-id]
+   (let [snapshot (app-context/context-snapshot ctx active-session-id session-id)
+         widget   (context-summary/context-widget snapshot)]
+     (cond-> snapshot
+       true (assoc :session-tree-widget (widget->rpc-widget widget))))))
 
 (def footer-query footer/footer-query)
 

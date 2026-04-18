@@ -131,7 +131,8 @@
    [:projection/context-changed
     [:map [:effect/type [:= :projection/context-changed]]
      [:reason {:optional true} [:maybe :keyword]]
-     [:session-id {:optional true} [:maybe :string]]]]
+     [:session-id {:optional true} [:maybe :string]]
+     [:active-session-id {:optional true} [:maybe :string]]]]
    [:projection/ui-changed
     [:map [:effect/type [:= :projection/ui-changed]]
      [:reason {:optional true} [:maybe :keyword]]
