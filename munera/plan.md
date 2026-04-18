@@ -11,6 +11,7 @@ Open tasks in suggested execution order:
 7. `munera/open/007-auto-session-name-extension/`
 8. `munera/open/011-event-driven-context-updates-and-remove-ui-polling/`
 9. `munera/open/012-psi-tool-session-targeting-introspection/`
+10. `munera/open/013-work-on-command-noop-regression/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.

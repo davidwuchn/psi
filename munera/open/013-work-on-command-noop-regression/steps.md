@@ -1,0 +1,4 @@
+- [ ] Reproduce the current `/work-on` no-op behavior with focused evidence
+- [ ] Identify the failing boundary in command registration, execution, or result delivery
+- [ ] Restore a visible success/error contract for `/work-on`
+- [ ] Add regression coverage for the observed silent-no-op behavior
