@@ -520,6 +520,7 @@
      (fn [request emit-frame! state]
        (try
          (let [op         (:op request)
+               _          (ensure-projection-listener! ctx emit-frame! state)
                session-id (when (contains? targetable-rpc-ops op)
                             (request-session-id ctx request state))]
            (dispatch-rpc-op {:ctx ctx

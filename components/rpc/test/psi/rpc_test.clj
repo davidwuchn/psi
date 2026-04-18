@@ -261,7 +261,8 @@
           frames      (support/parse-frames out-lines)
           fork-resp   (some #(when (and (= :response (:kind %)) (= "fork" (:op %))) %) frames)
           rehyd-evt   (some #(when (= "session/rehydrated" (:event %)) %) frames)
-          context-evt (some #(when (= "context/updated" (:event %)) %) frames)
+          context-evts (filter #(= "context/updated" (:event %)) frames)
+          context-evt (first context-evts)
           new-sid     (get-in fork-resp [:data :session-id])]
       (is (some? fork-resp) "fork must return a response")
       (is (string? new-sid) "fork must return a new session-id")
@@ -269,6 +270,7 @@
       (is (= [{:role "user" :content "hi"}
               {:role "assistant" :content [{:type :text :text "reply"}]}]
              (get-in rehyd-evt [:data :messages])))
+      (is (= 1 (count context-evts)) "fork must emit one context/updated")
       (is (some? context-evt) "fork must emit context/updated")
       (is (= new-sid (get-in context-evt [:data :active-session-id]))
           "context/updated active-session-id must be the forked session")
@@ -317,8 +319,10 @@
           {:keys [out-lines]} (support/run-loop input handler state)
           frames    (support/parse-frames out-lines)
           new-resp  (some #(when (and (= :response (:kind %)) (= "new_session" (:op %))) %) frames)
-          context-evt  (some #(when (= "context/updated" (:event %)) %) frames)
+          context-evts (filter #(= "context/updated" (:event %)) frames)
+          context-evt  (first context-evts)
           new-sid   (get-in new-resp [:data :session-id])]
+      (is (= 1 (count context-evts)) "new_session must emit one context/updated")
       (is (some? context-evt) "new_session must emit context/updated")
       (is (= new-sid (get-in context-evt [:data :active-session-id])))
       (is (vector? (get-in context-evt [:data :sessions])))
