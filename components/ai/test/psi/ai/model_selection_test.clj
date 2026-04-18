@@ -310,3 +310,43 @@
         (is (= ["claude-sonnet-4-6" "gpt-5"]
                (mapv :id (:ranked ranked))))
         (is (true? (:ambiguous? ranked)))))))
+
+(deftest resolve-selection-test
+  (registry/init! {:user-models-path (write-temp-models! no-auth-provider-config)})
+  (let [catalog (sut/catalog-view)]
+    (testing "ok outcome returns the selected candidate and ambiguity flag"
+      (let [result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :explicit
+                               :model {:provider :anthropic :id "claude-sonnet-4-6"}}})]
+        (is (= :ok (:outcome result)))
+        (is (= "claude-sonnet-4-6" (get-in result [:candidate :id])))
+        (is (false? (:ambiguous? result)))))
+
+    (testing "explicit missing reference yields no-winner/reference-not-found"
+      (let [result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :explicit
+                               :model {:provider :openai :id "does-not-exist"}}})]
+        (is (= :no-winner (:outcome result)))
+        (is (= :reference-not-found (:reason result)))
+        (is (empty? (get-in result [:filtering :pool])))))
+
+    (testing "required filtering failure yields no-winner/required-constraints-unsatisfied"
+      (let [result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :explicit
+                               :model {:provider :public :id "public-model"}
+                               :required [{:criterion :configured? :match :true}]}})]
+        (is (= :no-winner (:outcome result)))
+        (is (= :required-constraints-unsatisfied (:reason result)))
+        (is (empty? (get-in result [:filtering :survivors])))))
+
+    (testing "fully tied top candidates surface ambiguity on ok outcomes"
+      (let [result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :resolve
+                               :strong-preferences []
+                               :weak-preferences []}})]
+        (is (= :ok (:outcome result)))
+        (is (boolean? (:ambiguous? result)))))))

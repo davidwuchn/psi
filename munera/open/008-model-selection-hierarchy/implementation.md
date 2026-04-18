@@ -185,3 +185,22 @@
   - strong preferences dominate weak ones
   - weak context-derived affinity can break otherwise equal strong preference results
   - canonical tie-break stays deterministic and marks ambiguity when preferences fully tie
+
+2026-04-17 — Step 7: ambiguity and no-winner outcomes
+- Extended `psi.ai.model-selection` with `resolve-selection` as the first full selection entrypoint.
+- `resolve-selection` now runs:
+  1. effective-request composition
+  2. stage-1 filtering
+  3. stage-2 ranking
+- Added explicit resolver outcomes for v1:
+  - `{:outcome :ok ...}`
+  - `{:outcome :no-winner :reason :reference-not-found ...}`
+  - `{:outcome :no-winner :reason :required-constraints-unsatisfied ...}`
+- Explicit/inherit-session requests with an empty candidate pool now fail as `:reference-not-found`.
+- Requests whose pool exists but whose survivors are empty now fail as `:required-constraints-unsatisfied`.
+- Successful outcomes now surface `:ambiguous?` directly when the winner was chosen only after a canonical tie-break.
+- Added tests proving:
+  - `:ok` outcomes return a selected candidate and ambiguity flag
+  - missing explicit references return `:no-winner / :reference-not-found`
+  - required-filter failures return `:no-winner / :required-constraints-unsatisfied`
+  - ambiguity remains surfaced on successful outcomes

@@ -467,3 +467,58 @@
                           (zero? (tier-comparison request (first ranked) (second ranked) weak))))]
     {:ranked     ranked
      :ambiguous? (boolean ambiguous?)}))
+
+(defn resolve-selection
+  "Resolve model selection through composition, filtering, and ranking.
+
+   Input shape matches `compose-effective-request`.
+
+   Returns one of three outcomes:
+   {:outcome :ok
+    :candidate candidate
+    :ambiguous? boolean
+    :effective-request request
+    :filtering filtering-result
+    :ranking ranking-result}
+
+   {:outcome :no-winner
+    :reason keyword
+    :effective-request request
+    :filtering filtering-result
+    :ranking {:ranked [] :ambiguous? false}}
+
+   v1 no-winner reasons:
+   - `:reference-not-found` for explicit/inherit requests with an empty pool
+   - `:required-constraints-unsatisfied` when filtering leaves zero survivors"
+  [{:keys [catalog system user project request]
+    :or   {catalog (catalog-view)}}]
+  (let [effective-request (compose-effective-request {:system system
+                                                      :user user
+                                                      :project project
+                                                      :request request})
+        filtering         (filter-candidates catalog effective-request)
+        ranking           (rank-candidates effective-request (:survivors filtering))
+        mode              (:mode effective-request)]
+    (cond
+      (and (empty? (:pool filtering))
+           (contains? #{:explicit :inherit-session} mode))
+      {:outcome           :no-winner
+       :reason            :reference-not-found
+       :effective-request effective-request
+       :filtering         filtering
+       :ranking           ranking}
+
+      (empty? (:survivors filtering))
+      {:outcome           :no-winner
+       :reason            :required-constraints-unsatisfied
+       :effective-request effective-request
+       :filtering         filtering
+       :ranking           ranking}
+
+      :else
+      {:outcome           :ok
+       :candidate         (first (:ranked ranking))
+       :ambiguous?        (:ambiguous? ranking)
+       :effective-request effective-request
+       :filtering         filtering
+       :ranking           ranking})))
