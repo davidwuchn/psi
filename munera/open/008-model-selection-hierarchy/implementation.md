@@ -1,1 +1,19 @@
-Initialized from the prior active planning tracker on 2026-04-17.
+2026-04-17
+- Moved the original standalone design note into this munera task, then consolidated it back into `design.md`.
+- Reworked the design substantially away from task-class/fallback-chain framing and toward four explicit layers:
+  - catalog
+  - request
+  - resolver
+  - trace
+- Replaced `task class` with `role` as the main request-default abstraction.
+- Tightened the design around:
+  - factual vs estimated catalog attributes
+  - request modes (`:explicit`, `:inherit-session`, `:resolve`)
+  - required / strong / weak constraint hierarchy
+  - explicit policy vs request vs effective-request distinction
+  - deterministic ranking with ambiguity surfaced in the trace
+  - strict no-silent-fallback behavior when required constraints are unsatisfied
+- Current implementation-relevant orientation remains:
+  - `extensions/src/extensions/auto_session_name.clj` currently creates a helper child session with no explicit model selection beyond inherited runtime/session defaults
+  - `components/ai/src/psi/ai/model_registry.clj` is still the natural starting point for catalog construction
+  - current runtime paths still resolve explicit concrete models directly in app-runtime / rpc / commands; no shared resolver exists yet

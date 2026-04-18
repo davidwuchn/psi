@@ -1,5 +1,15 @@
-- [ ] Define task-class-based model selection requests
-- [ ] Implement hard capability filtering
-- [ ] Implement soft preference ranking
-- [ ] Expose explainable selection outcomes
-- [ ] Wire auto-session-name helper execution to the selector
+- [x] Move the standalone model-selection hierarchy design note into the munera task and consolidate the task-local design
+- [x] Rewrite the design around catalog / request / resolver / trace
+- [ ] Inventory current model-registry metadata and identify initial factual vs estimated attributes
+- [ ] Define the merged catalog view consumed by the resolver
+- [ ] Define request modes: explicit, inherit-session, resolve
+- [ ] Define initial roles and their default constraint/preference bundles
+- [ ] Define policy layering and effective-request merge semantics
+- [ ] Define preference criterion identity and ordering semantics
+- [ ] Implement resolver filtering for reference viability + required constraints
+- [ ] Implement resolver ranking for strong/weak preference tiers with canonical tie-breaks
+- [ ] Implement ambiguity and no-winner outcomes
+- [ ] Implement core result + full trace payloads
+- [ ] Adopt the resolver in an initial caller (likely auto-session-name)
+- [ ] Add focused unit/integration tests for catalog/request/resolver/trace behavior
+- [ ] Sync docs/config surfaces if public behavior changes
