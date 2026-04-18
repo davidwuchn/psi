@@ -17,3 +17,39 @@
   - `extensions/src/extensions/auto_session_name.clj` currently creates a helper child session with no explicit model selection beyond inherited runtime/session defaults
   - `components/ai/src/psi/ai/model_registry.clj` is still the natural starting point for catalog construction
   - current runtime paths still resolve explicit concrete models directly in app-runtime / rpc / commands; no shared resolver exists yet
+
+2026-04-17 — Step 1: catalog inventory
+- Audited current runtime model metadata across:
+  - `components/ai/src/psi/ai/models.clj`
+  - `components/ai/src/psi/ai/user_models.clj`
+  - `components/ai/src/psi/ai/model_registry.clj`
+- Current merged catalog identity is already stable on `[provider id]`.
+- Current built-in + custom catalog metadata naturally splits into:
+  - factual / hard-filter friendly:
+    - `:provider`
+    - `:id`
+    - `:name`
+    - `:api`
+    - `:base-url`
+    - `:supports-text`
+    - `:supports-images`
+    - `:supports-reasoning`
+    - `:context-window`
+    - `:max-tokens`
+  - estimated / ranking-friendly:
+    - `:input-cost`
+    - `:output-cost`
+    - `:cache-read-cost`
+    - `:cache-write-cost`
+  - reference-viability adjacent data available outside the model entry:
+    - provider auth config via `model-registry/get-auth`
+- Gaps relative to the task design are now explicit:
+  - no first-class locality metadata (`:local` vs `:cloud`)
+  - no first-class tool-use or structured-output capability metadata
+  - no role-quality estimates
+  - no estimate provenance / freshness fields
+  - no provider policy metadata (approval, jurisdiction, privacy labels)
+- Implementation consequence for v1:
+  - initial resolver work should use only queryable metadata that already exists
+  - locality and richer policy dimensions should not be invented implicitly from provider names or URLs
+  - auth/config availability can participate in reference viability, but not as hidden ranking behavior

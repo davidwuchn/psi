@@ -1,6 +1,6 @@
 - [x] Move the standalone model-selection hierarchy design note into the munera task and consolidate the task-local design
 - [x] Rewrite the design around catalog / request / resolver / trace
-- [ ] Inventory current model-registry metadata and identify initial factual vs estimated attributes
+- [x] Inventory current model-registry metadata and identify initial factual vs estimated attributes
 - [ ] Define the merged catalog view consumed by the resolver
 - [ ] Define request modes: explicit, inherit-session, resolve
 - [ ] Define initial roles and their default constraint/preference bundles
