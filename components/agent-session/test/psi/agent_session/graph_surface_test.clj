@@ -89,7 +89,9 @@
     :psi.graph/nodes
     :psi.graph/edges
     :psi.graph/capabilities
-    :psi.graph/domain-coverage})
+    :psi.graph/domain-coverage
+    :psi.graph/resolver-index
+    :psi.graph/attr-index})
 
 (defn- assert-canonical-graph-root-attrs
   [root-attrs]
@@ -296,6 +298,58 @@
       (is (not (contains? root-attrs :psi.history/git-learning-commits)))
       (is (not (contains? root-attrs :psi.introspection/query-graph-summary)))
       (is (not (contains? root-attrs :psi.introspection/engine-system-state))))))
+
+(deftest graph-bridge-resolver-index-test
+  (testing "resolver-index is queryable and has expected shape"
+    (let [result (q [:psi.graph/resolver-index])
+          index  (:psi.graph/resolver-index result)]
+      (is (vector? index))
+      (is (seq index))
+      (doseq [entry index]
+        (is (symbol? (:psi.resolver/sym entry)))
+        (is (vector? (:psi.resolver/input entry)))
+        (is (vector? (:psi.resolver/output entry))))
+
+      (testing "sorted by sym"
+        (let [syms (map (comp str :psi.resolver/sym) index)]
+          (is (= syms (sort syms)))))
+
+      (testing "agent-session-identity entry has context-sessions join in output"
+        (let [entry (first (filter #(= 'psi.agent-session.resolvers.session/agent-session-identity
+                                       (:psi.resolver/sym %))
+                                   index))
+              joins (filter map? (:psi.resolver/output entry))]
+          (is entry)
+          (is (some #(contains? % :psi.agent-session/context-sessions) joins))
+          (is (some #(some #{:psi.session-info/id}
+                           (get % :psi.agent-session/context-sessions []))
+                    joins)))))))
+
+(deftest graph-bridge-attr-index-test
+  (testing "attr-index is queryable and has expected shape"
+    (let [result (q [:psi.graph/attr-index])
+          index  (:psi.graph/attr-index result)]
+      (is (map? index))
+      (is (seq index))
+
+      (testing "all keys are psi.* keywords"
+        (is (every? #(clojure.string/starts-with? (namespace %) "psi.") (keys index))))
+
+      (testing "each entry has produced-by and reachable-via"
+        (doseq [[_ v] index]
+          (is (vector? (:psi.attr/produced-by v)))
+          (is (map? (:psi.attr/reachable-via v)))))
+
+      (testing "psi.session-info/id is reachable via context-sessions join"
+        (let [entry (get index :psi.session-info/id)]
+          (is entry)
+          (is (contains? (:psi.attr/reachable-via entry)
+                         :psi.agent-session/context-sessions))))
+
+      (testing "flat attrs have empty reachable-via"
+        (let [entry (get index :psi.agent-session/session-name)]
+          (is entry)
+          (is (empty? (:psi.attr/reachable-via entry))))))))
 
 (deftest worktree-attr-discovery-and-query-contract-test
   (testing "worktree attrs are queryable from session root"

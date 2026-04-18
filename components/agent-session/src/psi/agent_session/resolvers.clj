@@ -73,7 +73,9 @@
                  :psi.graph/capabilities
                  :psi.graph/domain-coverage
                  :psi.graph/root-seeds
-                 :psi.graph/root-queryable-attrs]}
+                 :psi.graph/root-queryable-attrs
+                 :psi.graph/resolver-index
+                 :psi.graph/attr-index]}
   (let [_                    agent-session-ctx
         op-meta              (operation-metadata)
         cgraph               (graph/derive-capability-graph op-meta)
@@ -89,7 +91,9 @@
                                 :psi.agent-session/session-id
                                 :psi/memory-ctx
                                 :psi/recursion-ctx
-                                :psi/engine-ctx})]
+                                :psi/engine-ctx})
+        resolver-index       (graph/derive-resolver-index (:resolver-ops op-meta))
+        attr-index           (graph/derive-attr-index resolver-index)]
     {:psi.graph/resolver-count       (count resolver-syms)
      :psi.graph/mutation-count       (count mutation-syms)
      :psi.graph/resolver-syms        resolver-syms
@@ -104,7 +108,9 @@
                                       :psi/memory-ctx
                                       :psi/recursion-ctx
                                       :psi/engine-ctx]
-     :psi.graph/root-queryable-attrs root-queryable-attrs}))
+     :psi.graph/root-queryable-attrs root-queryable-attrs
+     :psi.graph/resolver-index       resolver-index
+     :psi.graph/attr-index           attr-index}))
 
 ;; ── All resolvers ───────────────────────────────────────
 
