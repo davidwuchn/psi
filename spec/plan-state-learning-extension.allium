@@ -1,7 +1,7 @@
 -- allium: 2
 
 -- plan-state-learning-extension.allium
--- Post-commit automation extension for munera/STATE/LEARNING synchronization.
+-- Post-commit automation extension for munera + mementum working-memory synchronization.
 
 use "./extension-system.allium" as ext
 use "./session-core.allium" as core
@@ -32,8 +32,7 @@ value PlanStateLearningRun {
 config {
     psl_enabled: Boolean = true
     psl_marker: String = "[psi:psl-auto]"
-    psl_phase1_files: Set<String> = {"munera/plan.md", "STATE.md"}
-    psl_phase2_files: Set<String> = {"LEARNING.md"}
+    psl_sync_files: Set<String> = {"munera/plan.md", "mementum/state.md"}
 }
 
 rule GitCommitCreatedExtensionEventEmitted {
@@ -90,25 +89,22 @@ rule PlanStateLearningCreatesAgentTurn {
     ensures: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 }
 
-rule PlanStateLearningAgentExecutesPhase1 {
+rule PlanStateLearningAgentExecutesMuneraMementumSync {
     when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 
     ensures: UpdateFile("munera/plan.md")
-    ensures: UpdateFile("STATE.md")
+    ensures: UpdateFile("mementum/state.md")
     ensures: GitCommitIfChanged(
-        files: config.psl_phase1_files,
+        files: config.psl_sync_files,
         message_contains: {"Δ", config.psl_marker}
     )
 }
 
-rule PlanStateLearningAgentExecutesPhase2 {
+rule PlanStateLearningDoesNotWriteGatedMementumArtifacts {
     when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 
-    ensures: UpdateFile("LEARNING.md")
-    ensures: GitCommitIfChanged(
-        files: config.psl_phase2_files,
-        message_contains: {"λ", config.psl_marker}
-    )
+    ensures: not UpdateFileMatching("mementum/memories/*")
+    ensures: not UpdateFileMatching("mementum/knowledge/*")
 }
 
 rule PlanStateLearningMessagesVisibleInTranscript {
@@ -117,7 +113,7 @@ rule PlanStateLearningMessagesVisibleInTranscript {
     ensures: ext/CustomMessageSent(SessionForWorktree(payload.worktree_path), Message{
         role: "assistant",
         customType: "plan-state-learning",
-        content: "munera/STATE/LEARNING update considered",
+        content: "munera/mementum sync considered",
         display: visible
     })
 }
@@ -164,7 +160,7 @@ rule PlanStateLearningDoesNotCommitUnrelatedFiles {
     when: PlanStateLearningRunStarted(run)
     requires: run.skipped = false
 
-    ensures: GitAddUsesExplicitPaths(config.psl_phase1_files + config.psl_phase2_files)
+    ensures: GitAddUsesExplicitPaths(config.psl_sync_files)
     ensures: not GitAddAllUsed()
 }
 
@@ -175,5 +171,5 @@ rule PlanStateLearningNoOpWhenNoFileChanges {
     ensures: GitCommitOnlyIfStagedDiffExists()
 }
 
-open question "Should psl_enabled default to false for conservative rollout, or true for always-on memory hygiene?"
-open question "Should generated PLAN/STATE/LEARNING edits be template-driven only, or allow model-generated summaries per commit?"
+open question "Should psl_enabled default to false for conservative rollout, or true for always-on munera/mementum hygiene?"
+open question "Should generated munera/mementum-state edits be template-driven only, or allow model-generated summaries per commit?"

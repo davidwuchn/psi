@@ -51,7 +51,7 @@
                                            :psl/result nil})]
         (is (= {:top-line "… PSL running for feedbee"
                 :detail-line "commit: docs(agent-session): λ clarify canonical tool history guidance"
-                :action-line "updating PLAN/STATE/LEARNING"}
+                :action-line "updating munera/mementum state"}
                (:psl/display public)))
         (is (= :running (:psl/phase public)))
         (is (= "feedbeef" (:psl/source-sha public)))))))
@@ -72,11 +72,10 @@
                                               :psi.extension.workflow/input {:source-sha "feedbeef"}
                                               :psi.extension.workflow/data {:psl/display {:top-line "… PSL running for feedbee"
                                                                                           :detail-line "commit: test commit"
-                                                                                          :action-line "updating PLAN/STATE/LEARNING"}}
+                                                                                          :action-line "updating munera/mementum state"}}
                                               :psi.extension.workflow/result nil
                                               :psi.extension.workflow/elapsed-ms 0
                                               :psi.extension.workflow/started-at nil}})
-      ;; Force widget refresh after injecting workflow
       (#'sut/refresh-widget!)
       (let [lines (get-in @state [:widgets "psl" :lines])
             text  (clojure.string/join "\n" (map #(if (map? %) (:text %) (str %)) lines))]
@@ -103,7 +102,7 @@
                                                                             :psl/phase :running
                                                                             :psl/display {:top-line "… PSL running for feedbee"
                                                                                           :detail-line "commit: docs(agent-session): λ clarify canonical tool history guidance"
-                                                                                          :action-line "updating PLAN/STATE/LEARNING"}}
+                                                                                          :action-line "updating munera/mementum state"}}
                                               :psi.extension.workflow/result nil
                                               :psi.extension.workflow/elapsed-ms 0
                                               :psi.extension.workflow/started-at nil}})
@@ -111,7 +110,7 @@
             out     (with-out-str (handler ""))]
         (is (re-find #"PSL running for feedbee" out))
         (is (re-find #"commit: docs\(agent-session\): λ clarify canonical tool history guidance" out))
-        (is (re-find #"updating PLAN/STATE/LEARNING" out)))))
+        (is (re-find #"updating munera/mementum state" out)))))
 
   (testing "/psl prints empty-state message when no runs exist"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
@@ -129,7 +128,7 @@
       (with-redefs [sut/bash! (fn [_ cmd]
                                 (swap! calls conj cmd)
                                 (if (= cmd "git log -1 --pretty=format:%H%n%s")
-                                  (git-log-response "abc1234" "◈ Δ Auto-update PLAN/STATE [psi:psl-auto]")
+                                  (git-log-response "abc1234" "◈ Δ Auto-update munera/mementum state [psi:psl-auto]")
                                   {:psi.extension.tool/content "" :psi.extension.tool/is-error false}))
                     sut/send-message! (fn [mutate-fn text]
                                         (mutate-fn 'psi.extension/send-message
@@ -163,7 +162,8 @@
       (set-psl-state! {:mutate-fn mutate-fn :query-fn (fn [_] {})})
       (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})
             step   (first (:steps @captured))
-            args   (:args step)]
+            args   (:args step)
+            task   (get args "task")]
         (is (= :done (:status result)))
         (is (true? (:accepted? result)))
         (is (= :agent (:delivery result)))
@@ -171,6 +171,9 @@
         (is (= "create" (get args "action")))
         (is (= "sync" (get args "mode")))
         (is (= true (get args "fork_session")))
+        (is (str/includes? task "Update munera/plan.md"))
+        (is (str/includes? task "Update mementum/state.md"))
+        (is (str/includes? task "do not create or edit mementum/memories/* or mementum/knowledge/*"))
         (is (some #(re-find #"PSL agent run completed" (str %)) @sent)))))
 
   (testing "psl job emits failure message when agent plan fails"

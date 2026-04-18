@@ -256,7 +256,7 @@
   "Re-register the extension run-fn with an emit-frame!-aware implementation.
 
    The default run-fn registered in main.clj has no progress-queue, so
-   extension-initiated agent runs (e.g. PSL) produce no streaming events
+   extension-initiated agent runs (e.g. PSL munera/mementum sync) produce no streaming events
    visible to the RPC client. This version creates a progress-queue, polls
    it in a background loop, and routes events to emit-frame! — giving the
    PSL response the same streaming visibility as a normal user prompt.

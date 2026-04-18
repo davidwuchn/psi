@@ -1,5 +1,5 @@
 (ns extensions.plan-state-learning
-  "Automate munera/STATE/LEARNING maintenance after non-PSL commits.
+  "Automate munera + mementum working-memory maintenance after non-PSL commits.
 
    Trigger:
    - extension event: git_commit_created
@@ -8,7 +8,8 @@
    - skip when latest commit subject contains [psi:psl-auto]
    - create a PSL workflow that runs after the current agent turn completes
    - workflow job: sends one user-style prompt turn to the agent with source commit context
-   - agent updates munera/plan.md, STATE.md, LEARNING.md and commits changes
+   - agent updates munera/plan.md and mementum/state.md and commits changes
+   - agent may suggest mementum memory/knowledge candidates, but does not auto-write them
    - emit visible transcript messages via psi.extension/send-message
 
    Ordering:
@@ -132,7 +133,7 @@
                       (str "commit: " (squish subject)))
         action-line (case phase
                       :idle "waiting for session idle"
-                      :running "updating munera/STATE/LEARNING"
+                      :running "updating munera/mementum state"
                       :done (when-not (:accepted? result)
                               "inspect PSL agent result")
                       :error "inspect PSL error"
@@ -191,16 +192,18 @@
      "PSL follow-up for commit " source7 "\n"
      "\n"
      "Task:\n"
-     "1) Update munera/plan.md and STATE.md\n"
-     "2) Commit those changes\n"
-     "3) Update LEARNING.md\n"
-     "4) Commit LEARNING.md\n"
+     "1) Update munera/plan.md to reflect current open work and ordering\n"
+     "2) Update mementum/state.md to reflect current orientation and active work\n"
+     "3) Commit those changes together if meaningful changes were made\n"
+     "4) If the commit suggests durable memory or knowledge, mention candidate mementum follow-ups in your final response, but do not create or edit mementum/memories/* or mementum/knowledge/*\n"
      "\n"
      "Constraints:\n"
-     "- Commit message title must summarise the learning or plan/state change and finish with [psi:psl-auto].\n"
+     "- Commit message title must summarise the munera/mementum update and finish with [psi:psl-auto].\n"
      "- Do not use git add -A or git add .\n"
-     "- Only stage explicit target files for each commit.\n"
-     "- If a phase has no meaningful changes, skip that commit and explain why in your final response.\n"
+     "- Only stage explicit target files for the sync commit.\n"
+     "- Do not edit STATE.md or LEARNING.md; use mementum/state.md instead.\n"
+     "- Do not create or edit mementum/memories/* or mementum/knowledge/* without explicit approval; suggest candidates only.\n"
+     "- If there are no meaningful changes, skip the commit and explain why in your final response.\n"
      "- do not comment on your compliance with these constraints\n")))
 
 ;; ---------------------------------------------------------------------------
@@ -313,7 +316,7 @@
   (let [mutate-fn (:mutate-fn @state)]
     (mutate-fn 'psi.extension.workflow/register-type
                {:type            workflow-type
-                :description     "PSL: update PLAN/STATE/LEARNING after a commit"
+                :description     "PSL: update munera/plan.md and mementum/state.md after a commit"
                 :chart           psl-chart
                 :start-event     :psl/start
                 :initial-data-fn (fn [input]
@@ -377,7 +380,7 @@
     (register-workflow-type!)
     (mutate-fn 'psi.extension/register-command
                {:name "psl"
-                :opts {:description "List active PSL workflows"
+                :opts {:description "List active PSL munera/mementum sync workflows"
                        :handler     (fn [_args]
                                       (list-psl-runs!))}})
     (mutate-fn 'psi.extension/register-handler

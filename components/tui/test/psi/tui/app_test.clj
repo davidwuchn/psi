@@ -286,10 +286,10 @@
     (let [state (assoc (init-state)
                        :messages [{:role :assistant
                                    :custom-type "plan-state-learning"
-                                   :text "PSL phase1 committed PLAN/STATE at abc1234."}])
+                                   :text "PSL committed munera/mementum sync at abc1234."}])
           out   (app/view state)]
       (is (str/includes? out "Plan/State/Learning"))
-      (is (str/includes? out "PSL phase1 committed")))))
+      (is (str/includes? out "PSL committed munera/mementum sync")))))
 
 ;;;; Text input word wrap
 

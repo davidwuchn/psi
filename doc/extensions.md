@@ -197,13 +197,14 @@ The example project config in this repo defines these bb tasks:
 
 ### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
 
-Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
+Purpose: automate munera + mementum working-memory follow-up after non-PSL commits.
 
 - Trigger: `git_commit_created` event
 - Behavior:
   - skips self-commits with marker `[psi:psl-auto]`
   - creates PSL workflow
-  - runs agent to update/commit `munera/plan.md`, `STATE.md`, `LEARNING.md`
+  - runs agent to update/commit `munera/plan.md` and `mementum/state.md`
+  - may suggest memory/knowledge follow-ups, but does not auto-write gated mementum artifacts
 - Workflow public data:
   - exposes `:psl/display` using the shared workflow display-map convention
   - `/psl` lists active PSL workflows by rendering that public display through `extensions.workflow-display/text-lines`
