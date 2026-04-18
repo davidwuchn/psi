@@ -11,7 +11,6 @@ Open tasks in suggested execution order:
 7. `munera/open/007-auto-session-name-extension/`
 8. `munera/open/008-model-selection-hierarchy/`
 9. `munera/open/009-rename-app-query-tool-to-psi-tool/`
-10. `munera/open/010-work-on-transcript-and-worktree-state/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.
