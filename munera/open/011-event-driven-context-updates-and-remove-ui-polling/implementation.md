@@ -87,3 +87,60 @@
   - `:projection/context-changed`
   - `:projection/ui-changed`
 - Revisit generalization only if later non-projection tasks present the same structure strongly enough to justify a wider runtime event substrate.
+
+2026-04-18 — implementation slices landed
+- Added canonical projection invalidation effect schemas:
+  - `:projection/context-changed`
+  - `:projection/ui-changed`
+- Added ctx-owned projection listener registry + callbacks in `psi.agent-session.context`.
+- Added projection invalidation effect execution in `psi.agent-session.dispatch-effects`.
+- Added RPC subscriber-aware projection delivery helper namespace:
+  - `components/rpc/src/psi/rpc/session/projections.clj`
+- Added RPC-local tracking for:
+  - projection listener id
+  - projection listener stop fn
+- Projection listeners are now registered/unregistered based on projection-topic subscriptions, not all subscriptions.
+- Transport shutdown now unregisters the projection listener cleanly.
+
+2026-04-18 — context projection convergence landed
+- `:session/create-child` now emits `:projection/context-changed`.
+- Other lifecycle membership transitions now emit `:projection/context-changed`:
+  - `:session/new-initialize`
+  - `:session/resume-loaded`
+  - `:session/fork-initialize`
+- Context invalidation effects now carry `:active-session-id` when the logical action changes the active session, preserving correct navigation semantics.
+- `:session/set-session-name` now emits `:projection/context-changed` so tree/context labels refresh canonically after rename.
+
+2026-04-18 — UI projection convergence landed
+- Runtime-owned UI handlers now emit `:projection/ui-changed`, including:
+  - widget set/clear
+  - widget spec set/clear
+  - status set/clear
+  - tool/message renderer registration
+  - tools-expanded toggle
+  - notification enqueue
+  - dialog request/resolve/cancel
+  - expired/overflow dismissal
+- RPC UI polling via `maybe-start-ui-watch-loop!` was removed.
+- Shared UI public events now come from the projection listener boundary using current canonical UI snapshot emission.
+
+2026-04-18 — ad hoc emit convergence landed
+- Navigation no longer emits direct ad hoc `context/updated`; subscribed clients now receive it through canonical projection invalidation fanout.
+- Generic command-path context refresh via `emit-session-snapshots! ... {:context? true}` was removed.
+- `/tree` and `/resume` now emit `context/updated` only when RPC-local focus changes via rehydration, which is the remaining necessary non-runtime context case because focus is connection-local.
+- `emit-session-snapshots!` is now simplified to session/footer-only emission.
+
+2026-04-18 — proofs now in tests
+- child-session creation emits `context/updated` without `/tree`
+- new/fork emit exactly one `context/updated`
+- projection listener unregisters when projection topics are removed while unrelated subscriptions remain
+- out-of-band child-session creation streams `context/updated` after subscribe without any follow-up request
+- out-of-band UI widget updates stream after subscribe without any follow-up request
+- out-of-band UI notification updates stream after subscribe without any follow-up request
+- out-of-band UI status updates stream after subscribe without any follow-up request
+- out-of-band UI dialog requests stream after subscribe without any follow-up request
+- `/tree <session-id>` still emits exactly one `context/updated` when focus changes by command-driven rehydration
+
+2026-04-18 — remaining doc work
+- task-local steps/implementation were updated to reflect landed slices
+- broader project docs still need a concise statement of the canonical event-driven projection delivery contract

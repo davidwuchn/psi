@@ -3,19 +3,19 @@
 - [x] Identify the concrete in-scope context membership producers in dispatch handlers (`:session/new-initialize`, `:session/resume-loaded`, `:session/fork-initialize`, `:session/create-child`)
 - [x] Establish that canonical context/session-tree visibility is derived from session state via `ss/list-context-sessions-in`, so the bug is stale projection delivery rather than failed state mutation
 - [x] Establish that RPC currently has no shared connection registry/fanout boundary and therefore needs a ctx-owned projection listener bridge
-- [ ] Define canonical projection-change effect schema, including replay semantics
-- [ ] Add ctx-owned projection listener registry + callbacks in `psi.agent-session.context`
-- [ ] Add RPC-side per-connection projection listener registration/unregistration and store listener identity in RPC-local state
-- [ ] Add failing RPC test proving child-session creation emits fresh `context/updated` without `/tree`
-- [ ] Add failing test for at least one out-of-band runtime path that currently depends on polling or incidental refresh
-- [ ] Implement `:projection/context-changed` effect execution via the new runtime projection publisher bridge
-- [ ] Implement context-change effect production from `:session/create-child`
-- [ ] Implement context-change effect production from other in-scope context membership transitions (new/resume/fork/close-or-equivalent)
-- [ ] Route `context/updated` emission through the canonical RPC projection listener boundary
-- [ ] Implement a current-state UI projection emission helper for RPC that does not depend on polling diffs
-- [ ] Implement `:projection/ui-changed` effect production for runtime-owned shared UI projection mutations
-- [ ] Route shared UI public event emission through the canonical projection listener boundary
-- [ ] Remove RPC `maybe-start-ui-watch-loop!` polling for shared UI projection delivery
-- [ ] Converge or remove old ad hoc explicit emit paths (`emit-session-snapshots!`, `emit-navigation-result!`, subscribe bootstrap overlap) to avoid duplicate steady-state events
-- [ ] Add/adjust tests for ordering, no-duplicate-emission behavior, shutdown/unregister cleanup, and adapter-visible payload stability
+- [x] Define canonical projection-change effect schema, including replay semantics
+- [x] Add ctx-owned projection listener registry + callbacks in `psi.agent-session.context`
+- [x] Add RPC-side per-connection projection listener registration/unregistration and store listener identity in RPC-local state
+- [x] Add failing RPC test proving child-session creation emits fresh `context/updated` without `/tree`
+- [x] Add failing test for at least one out-of-band runtime path that currently depends on polling or incidental refresh
+- [x] Implement `:projection/context-changed` effect execution via the new runtime projection publisher bridge
+- [x] Implement context-change effect production from `:session/create-child`
+- [x] Implement context-change effect production from other in-scope context membership transitions (new/resume/fork/close-or-equivalent)
+- [x] Route `context/updated` emission through the canonical RPC projection listener boundary
+- [x] Implement a current-state UI projection emission helper for RPC that does not depend on polling diffs
+- [x] Implement `:projection/ui-changed` effect production for runtime-owned shared UI projection mutations
+- [x] Route shared UI public event emission through the canonical projection listener boundary
+- [x] Remove RPC `maybe-start-ui-watch-loop!` polling for shared UI projection delivery
+- [x] Converge or remove old ad hoc explicit emit paths (`emit-session-snapshots!`, `emit-navigation-result!`, subscribe bootstrap overlap) to avoid duplicate steady-state events
+- [x] Add/adjust tests for ordering, no-duplicate-emission behavior, shutdown/unregister cleanup, and adapter-visible payload stability
 - [ ] Update docs to describe the canonical event-driven projection delivery contract
