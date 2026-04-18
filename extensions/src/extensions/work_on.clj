@@ -125,13 +125,14 @@
   [text]
   (println (str text)))
 
-(defn- send-visible-message!
+(defn- emit-visible-message!
   [text]
-  (when-let [f (:send-message-fn @state)]
+  (if-let [f (:send-message-fn @state)]
     (try
       (f {:role "assistant"
           :content (str text)})
-      (catch Exception _ nil))))
+      (catch Exception _ nil))
+    (print-line text)))
 
 (defn- set-current-session-worktree-path!
   [session-id worktree-path]
@@ -464,8 +465,7 @@
                   (str "Working in `" (:worktree-path result)
                        "` on branch `" (:branch-name result) "`")
                   (:error result))]
-    (print-line message)
-    (send-visible-message! message)))
+    (emit-visible-message! message)))
 
 (defn- handle-work-done-command
   [_args]

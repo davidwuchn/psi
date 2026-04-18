@@ -79,7 +79,7 @@
         (is (nil? (handler {:reason :new})))))))
 
 (deftest work-on-command-happy-path-test
-  (testing "/work-on creates worktree, updates session worktree-path, and emits visible summary"
+  (testing "/work-on creates worktree, updates session worktree-path, and emits one visible summary via transcript"
     (let [created-session (atom nil)
           mutate-calls    (atom [])
           printed         (atom nil)
@@ -147,8 +147,7 @@
                   :content "Working in `/repo/fix-footer-not-displayed` on branch `fix-footer-not-displayed`"
                   :ext-path "/test/work_on.clj"}
                  (second (last @mutate-calls))))
-          (is (re-find #"Working in `/repo/fix-footer-not-displayed` on branch `fix-footer-not-displayed`"
-                       @printed)))))))
+          (is (nil? @printed)))))))
 
 (deftest work-on-command-reuses-existing-worktree-test
   (testing "/work-on creates a worktree from an existing branch when the slug branch already exists"
@@ -196,10 +195,9 @@
                  :base_ref nil
                  :create-branch false}]
                @create-calls))
-        (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
-                     @printed)))))
+        (is (nil? @printed)))))
 
-  (testing "/work-on reuses an existing worktree, updates worktree-path, switches session, and emits visible summary"
+  (testing "/work-on reuses an existing worktree, updates worktree-path, switches session, and emits one visible summary"
     (let [printed      (atom nil)
           switched     (atom [])
           mutate-calls (atom [])
@@ -250,18 +248,28 @@
                 :content "Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
                 :ext-path "/test/work_on.clj"}
                (second (last @mutate-calls))))
-        (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
-                     @printed))))))
+        (is (nil? @printed))))))
 
 (deftest work-on-command-usage-error-test
-  (testing "/work-on without description prints usage"
-    (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                               {:path "/test/work_on.clj"})
+  (testing "/work-on without description emits usage once via transcript path"
+    (let [mutate-calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :mutate-fn (fn [op params]
+                                             (swap! mutate-calls conj [op params])
+                                             (case op
+                                               psi.extension/send-message {:psi.extension/message params}
+                                               nil))})
           printed (atom nil)]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
         ((get-in @state [:commands "work-on" :handler]) "   ")
-        (is (= "usage: /work-on <description>" @printed))))))
+        (is (nil? @printed))
+        (is (= [['psi.extension/send-message
+                 {:role "assistant"
+                  :content "usage: /work-on <description>"
+                  :ext-path "/test/work_on.clj"}]]
+               @mutate-calls))))))
 
 (deftest work-done-and-rebase-commands-test
   (testing "/work-done fast-forwards onto the cached default branch, switches sessions, and /work-rebase uses git mutations"
