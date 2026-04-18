@@ -109,7 +109,8 @@
 
 (defn maybe-emit-background-job-terminal-messages!
   "Emit terminal job messages via the explicit ctx-provided notify callback,
-   falling back to the legacy send-extension-message callback during migration."
+   falling back to the legacy ambiguous send-extension-message callback only
+   during migration."
   [ctx session-id]
   (let [store      (ss/get-state-value-in ctx (ss/state-path :background-jobs))
         notify-msg (:notify-extension-fn ctx)
