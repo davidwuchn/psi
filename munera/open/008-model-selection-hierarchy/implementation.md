@@ -278,3 +278,11 @@
 - Added focused AI tests proving:
   - custom models project the new metadata into the catalog view
   - resolver filtering can require locality, latency tier, and cost tier without guessing from provider/id
+
+2026-04-17 — Step 13: annotate built-in models with explicit locality/latency/cost metadata
+- Added explicit locality/latency annotations for built-in provider families in `psi.ai.models`.
+  - current built-in providers are annotated as `:locality :cloud`
+  - current built-in latency default is `:low`
+- Added derived built-in `:cost-tier` annotation from input/output cost.
+- Updated the AI model schema in `psi.ai.schemas` so these additional built-in fields remain schema-valid across the core AI runtime.
+- Added/updated tests proving built-in catalog entries now project explicit locality/latency/cost metadata instead of leaving those dimensions undefined.

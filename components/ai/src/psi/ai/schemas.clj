@@ -122,6 +122,15 @@
    [:parameters map?]
    [:cache-control {:optional true} CacheControl]])  ;; JSON schema
 
+(def Locality
+  [:enum :local :cloud])
+
+(def LatencyTier
+  [:enum :low :medium :high])
+
+(def CostTier
+  [:enum :zero :low :medium :high])
+
 (def Model
   [:map {:closed true}
    [:id string?]
@@ -137,7 +146,10 @@
    [:input-cost number?]
    [:output-cost number?]
    [:cache-read-cost number?]
-   [:cache-write-cost number?]])
+   [:cache-write-cost number?]
+   [:locality {:optional true} Locality]
+   [:latency-tier {:optional true} LatencyTier]
+   [:cost-tier {:optional true} CostTier]])
 
 (def Message
   [:map {:closed true}

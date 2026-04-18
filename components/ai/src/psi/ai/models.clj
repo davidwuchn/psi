@@ -485,8 +485,33 @@
     :cache-read-cost 0.25
     :cache-write-cost 0.0}})
 
+(def ^:private provider-defaults
+  {:anthropic {:locality :cloud
+               :latency-tier :low}
+   :openai    {:locality :cloud
+               :latency-tier :low}})
+
+(defn- cost-tier
+  [{:keys [input-cost output-cost]}]
+  (let [input*  (double (or input-cost 0.0))
+        output* (double (or output-cost 0.0))]
+    (cond
+      (and (zero? input*) (zero? output*)) :zero
+      (and (<= input* 1.0) (<= output* 5.0)) :low
+      (and (<= input* 5.0) (<= output* 20.0)) :medium
+      :else :high)))
+
+(defn- annotate-model
+  [model]
+  (let [provider-meta (get provider-defaults (:provider model) {})]
+    (merge provider-meta
+           model
+           {:cost-tier (cost-tier model)})))
+
 (def all-models
-  (merge anthropic-models openai-models))
+  (->> (merge anthropic-models openai-models)
+       (map (fn [[k model]] [k (annotate-model model)]))
+       (into {})))
 
 ;; Model access functions
 
