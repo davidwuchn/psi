@@ -5,6 +5,7 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.extension-runtime :as extension-runtime]
    [psi.agent-session.tools :as tools]))
 (defn- create-session-context
   ([]
@@ -153,6 +154,158 @@
         (is (false? (:is-error result)))
         (is (= "3" (:psi-tool/value parsed)))))))
 
+;;; CWD support tests
+
+(defn- with-temp-dir
+  "Create a temp dir, run f with its path, clean up."
+  [f]
+  (let [tmp (java.io.File/createTempFile "psi-tools-test" "")]
+    (.delete tmp)
+    (.mkdirs tmp)
+    (try
+      (f (.getAbsolutePath tmp))
+      (finally
+        (doseq [file (reverse (file-seq tmp))]
+          (.delete file))))))
+
+(deftest make-psi-tool-reload-code-test
+  (testing "namespace mode rejects empty namespace vectors"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code" "namespaces" []})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :reload-code (:psi-tool/action parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "namespace mode rejects duplicate namespace names"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code"
+                                   "namespaces" ["clojure.string" "clojure.string"]})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :reload-code (:psi-tool/action parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "namespace mode rejects blank namespace names"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code"
+                                   "namespaces" ["clojure.string" ""]})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :reload-code (:psi-tool/action parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "namespace mode rejects unloaded namespaces"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code"
+                                   "namespaces" ["psi.no.such.ns"]})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :reload-code (:psi-tool/action parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "namespace mode reloads exactly requested namespaces in request order"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code"
+                                   "namespaces" ["clojure.string" "clojure.edn"]})
+          parsed (read-string (:content result))]
+      (is (false? (:is-error result)))
+      (is (= :namespaces (:psi-tool/reload-mode parsed)))
+      (is (= ["clojure.string" "clojure.edn"] (:psi-tool/namespaces-requested parsed)))
+      (is (= ["clojure.string" "clojure.edn"] (get-in parsed [:psi-tool/code-reload :namespaces])))
+      (is (= :ok (get-in parsed [:psi-tool/code-reload :status])))
+      (is (= :ok (get-in parsed [:psi-tool/graph-refresh :status])))
+      (is (= :ok (:psi-tool/overall-status parsed)))
+      (is (= "preserved current extension registry without rediscovery"
+             (get-in parsed [:psi-tool/graph-refresh :steps 3 :summary])))))
+
+  (testing "namespace mode stops at first namespace failure and reports successful prefix"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result (with-redefs [clojure.core/require (fn [ns-sym & _]
+                                                      (when (= 'clojure.edn ns-sym)
+                                                        (throw (ex-info "boom" {:ns ns-sym}))))]
+                   ((:execute tool) {"action" "reload-code"
+                                     "namespaces" ["clojure.string" "clojure.edn" "clojure.walk"]}))
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :error (get-in parsed [:psi-tool/code-reload :status])))
+      (is (= ["clojure.string"] (get-in parsed [:psi-tool/code-reload :namespaces])))
+      (is (= :ok (get-in parsed [:psi-tool/graph-refresh :status])))
+      (is (= :error (:psi-tool/overall-status parsed)))))
+
+  (testing "worktree mode uses session worktree-path when explicit target absent"
+    (with-redefs [tools/worktree-reload-candidates (fn [worktree-path]
+                                                       [{:ns-name "clojure.string"
+                                                         :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
+      (let [[ctx session-id] (create-session-context {:persist? false
+                                                      :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+            tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id :cwd (System/getProperty "user.dir")})
+            result           ((:execute tool) {"action" "reload-code"})
+            parsed           (read-string (:content result))]
+        (is (false? (:is-error result)))
+        (is (= :worktree (:psi-tool/reload-mode parsed)))
+        (is (= :session (:psi-tool/worktree-source parsed)))
+        (is (string? (:psi-tool/worktree-path parsed)))
+        (is (= :ok (get-in parsed [:psi-tool/code-reload :status]))))))
+
+  (testing "worktree mode rejects non-absolute explicit worktree-path"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code" "worktree-path" "relative/path"})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "worktree mode rejects non-existent explicit worktree-path"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code" "worktree-path" "/definitely/not/here"})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "worktree mode rejects unreloadable explicit worktree-path"
+    (with-temp-dir
+      (fn [dir]
+        (let [tool   (tools/make-psi-tool (fn [_q] {}))
+              result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
+              parsed (read-string (:content result))]
+          (is (true? (:is-error result)))
+          (is (= :validate (get-in parsed [:psi-tool/error :phase])))))))
+
+  (testing "worktree mode explicit target reports explicit worktree source"
+    (with-redefs [tools/worktree-reload-candidates (fn [worktree-path]
+                                                       [{:ns-name "clojure.string"
+                                                         :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
+      (let [dir    (System/getProperty "user.dir")
+            tool   (tools/make-psi-tool (fn [_q] {}))
+            result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
+            parsed (read-string (:content result))]
+        (is (false? (:is-error result)))
+        (is (= :explicit (:psi-tool/worktree-source parsed)))
+        (is (= dir (:psi-tool/worktree-path parsed))))))
+
+  (testing "worktree mode graph refresh surfaces extension reload errors"
+    (with-redefs [tools/worktree-reload-candidates (fn [worktree-path]
+                                                       [{:ns-name "clojure.string"
+                                                         :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])
+                  extension-runtime/reload-extensions-in!
+                  (fn [& _] {:loaded [] :errors [{:path "/x" :error "broken"}]})]
+      (let [[ctx session-id] (create-session-context {:persist? false
+                                                      :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+            tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id :cwd (System/getProperty "user.dir")})
+            result           ((:execute tool) {"action" "reload-code"})
+            parsed           (read-string (:content result))]
+        (is (true? (:is-error result)))
+        (is (= :error (get-in parsed [:psi-tool/graph-refresh :status])))
+        (is (= :error (:psi-tool/overall-status parsed))))))
+
+  (testing "namespace mode may target loaded project namespaces"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}))
+          result ((:execute tool) {"action" "reload-code"
+                                   "namespaces" ["psi.agent-session.tools"]})
+          parsed (read-string (:content result))]
+      (is (false? (:is-error result)))
+      (is (= ["psi.agent-session.tools"] (get-in parsed [:psi-tool/code-reload :namespaces]))))))
+
 (deftest make-psi-tool-query-fn-throws-test
   (testing "query-fn exception is caught and returned as error"
     (let [tool   (tools/make-psi-tool
@@ -296,20 +449,6 @@
           result ((:execute tool) {"query" "[:foo/bar]" "entity" "[:not-a-map]"})]
       (is (true? (:is-error result)))
       (is (re-find #"Entity must be an EDN map" (:content result))))))
-
-;;; CWD support tests
-
-(defn- with-temp-dir
-  "Create a temp dir, run f with its path, clean up."
-  [f]
-  (let [tmp (java.io.File/createTempFile "psi-tools-test" "")]
-    (.delete tmp)
-    (.mkdirs tmp)
-    (try
-      (f (.getAbsolutePath tmp))
-      (finally
-        (doseq [file (reverse (file-seq tmp))]
-          (.delete file))))))
 
 (deftest execute-read-cwd-test
   (testing "read resolves relative path against cwd"

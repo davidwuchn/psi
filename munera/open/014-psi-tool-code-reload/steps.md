@@ -18,29 +18,29 @@
   - [x] Reuse psi-tool sanitization, truncation, and error shaping for eval results
   - [x] Add tests for eval success, invalid form, unknown ns, and structured failures
 
-- [ ] Slice 4 — reload target resolution
-  - [ ] Add namespace-mode validation: non-empty, distinct, non-blank namespace strings
-  - [ ] Add namespace-mode reload candidate selection in request order
-  - [ ] Add worktree-mode target resolution from explicit path or invoking session worktree
-  - [ ] Add worktree-mode canonical source-path containment candidate selection
-  - [ ] Reject unreloadable or invalid worktree targets explicitly
-  - [ ] Add focused tests for namespace-mode and worktree-mode target selection rules
+- [x] Slice 4 — reload target resolution
+  - [x] Add namespace-mode validation: non-empty, distinct, non-blank namespace strings
+  - [x] Add namespace-mode reload candidate selection in request order
+  - [x] Add worktree-mode target resolution from explicit path or invoking session worktree
+  - [x] Add worktree-mode canonical source-path containment candidate selection
+  - [x] Reject unreloadable or invalid worktree targets explicitly
+  - [x] Add focused tests for namespace-mode and worktree-mode target selection rules
 
-- [ ] Slice 5 — reload execution
-  - [ ] Add deterministic reload execution over resolved candidate set
-  - [ ] Stop on first namespace reload failure
-  - [ ] Report successfully reloaded prefix in `:psi-tool/code-reload :namespaces`
-  - [ ] Preserve explicit best-effort/non-atomic semantics in result shape
-  - [ ] Add tests for success path and partial failure path
+- [x] Slice 5 — reload execution
+  - [x] Add deterministic reload execution over resolved candidate set
+  - [x] Stop on first namespace reload failure
+  - [x] Report successfully reloaded prefix in `:psi-tool/code-reload :namespaces`
+  - [x] Preserve explicit best-effort/non-atomic semantics in result shape
+  - [x] Add tests for success path and partial failure path
 
-- [ ] Slice 6 — post-reload graph/runtime refresh
-  - [ ] Add resolver registration refresh step
-  - [ ] Add mutation registration refresh step
-  - [ ] Add live tool definition refresh step
-  - [ ] Add worktree-mode extension rediscovery/reload step
-  - [ ] Add namespace-mode extension-registry preservation step
-  - [ ] Report ordered refresh step results in `:psi-tool/graph-refresh :steps`
-  - [ ] Add tests proving graph-refresh success/failure is reported distinctly from code reload
+- [x] Slice 6 — post-reload graph/runtime refresh
+  - [x] Add resolver registration refresh step
+  - [x] Add mutation registration refresh step
+  - [x] Add live tool definition refresh step
+  - [x] Add worktree-mode extension rediscovery/reload step
+  - [x] Add namespace-mode extension-registry preservation step
+  - [x] Report ordered refresh step results in `:psi-tool/graph-refresh :steps`
+  - [x] Add tests proving graph-refresh success/failure is reported distinctly from code reload
 
 - [ ] Slice 7 — telemetry + transcript-visible diagnostics
   - [ ] Record canonical action arguments in tool lifecycle telemetry

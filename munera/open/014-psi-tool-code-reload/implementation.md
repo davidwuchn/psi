@@ -53,3 +53,52 @@
 - Verification:
   - `clojure -M:test --focus psi.agent-session.tools-test` ✅
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅
+
+- 2026-04-18 — Slices 4–6 landed together as one coherent reload vertical slice.
+- Added explicit reload target resolution helpers for:
+  - namespace mode: exact ordered requested namespace vector
+  - worktree mode: explicit absolute worktree path or invoking session worktree path
+- Namespace-mode validation now rejects:
+  - non-vector / empty `namespaces`
+  - duplicate namespace names
+  - blank namespace strings
+  - unloaded namespaces
+- Worktree-mode validation now rejects:
+  - non-absolute paths
+  - non-directory paths
+  - unreloadable targets with no in-scope loaded namespaces
+- Worktree candidate selection now uses canonical source-path containment over already loaded namespaces.
+  - Implementation note: namespace source paths first prefer namespace metadata `:file` as a canonical filesystem path, then fall back to resolving that path via classpath resource lookup when needed.
+- Reload execution now:
+  - runs in deterministic order
+  - stops at first failing namespace
+  - reports the successfully reloaded prefix
+  - remains best-effort / non-atomic
+- Reload report now separates:
+  - `:psi-tool/code-reload`
+  - `:psi-tool/graph-refresh`
+  - `:psi-tool/overall-status`
+- Mandatory refresh steps are now reported in order:
+  1. resolver registration refresh
+  2. mutation registration refresh
+  3. live tool definition refresh
+  4. extension step
+     - namespace mode: preserve current registry without rediscovery
+     - worktree mode: reload extensions scoped to the selected worktree
+- `make-psi-tool` now accepts runtime opts needed for reload:
+  - `:ctx`
+  - `:session-id`
+  - `:cwd`
+- `tool_plan/execute-psi-tool-in!` now passes that runtime context through to the synthesized `psi-tool` instance.
+- Added focused proof for:
+  - namespace-mode validation rules
+  - namespace-mode ordered reload success
+  - namespace-mode partial failure with successful prefix reporting
+  - session-derived worktree targeting
+  - explicit worktree targeting
+  - invalid / unreloadable worktree targets
+  - graph-refresh failure surfacing independently from code reload success
+- Tests use targeted `with-redefs` around worktree candidate selection to prove worktree-mode contract independent of ambient classpath/source-path availability in the test runner.
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.tools-test` ✅
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/tools.clj components/agent-session/src/psi/agent_session/tool_plan.clj components/agent-session/test/psi/agent_session/tools_test.clj` ✅

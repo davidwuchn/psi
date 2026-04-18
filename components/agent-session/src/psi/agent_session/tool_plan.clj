@@ -59,7 +59,8 @@
                                                 (merge {:psi/agent-session-ctx ctx}
                                                        entity)
                                                 eql-query)))
-                             {:overrides   (:overrides opts)
+                             {:cwd         (:cwd opts)
+                              :overrides   (:overrides opts)
                               :tool-call-id (:tool-call-id opts)})]
     ((:execute tool) args)))
 
