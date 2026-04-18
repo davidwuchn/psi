@@ -364,6 +364,60 @@
         (finally
           (rpc.projections/unregister-projection-listener! ctx state))))))
 
+(deftest rpc-out-of-band-child-session-create-streams-context-updated-test
+  (testing "after subscribe, out-of-band child session creation streams context/updated without a refresh request"
+    (let [[ctx session-id] (support/create-session-context {:persist? false})
+          qctx             (query/create-query-context)
+          mutate           (fn [op params]
+                             (get (query/query-in qctx
+                                                  {:psi/agent-session-ctx ctx}
+                                                  [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                                                              (not (contains? params :session-id))
+                                                              (assoc :session-id session-id)))])
+                                  op))
+          state            (atom {:transport {:ready? true :pending {}}
+                                  :connection {:subscribed-topics #{}}})
+          handler          (support/make-handler ctx state)
+          in-reader        (java.io.PipedReader.)
+          in-writer        (java.io.PipedWriter. in-reader)
+          out-writer       (java.io.StringWriter.)
+          err-writer       (java.io.StringWriter.)
+          write-line!      (fn [line]
+                             (.write in-writer (str line "\n"))
+                             (.flush in-writer))
+          loop-future      (future
+                             (rpc/run-stdio-loop! {:in              in-reader
+                                                   :out             out-writer
+                                                   :err             err-writer
+                                                   :state           state
+                                                   :request-handler handler}))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx mutations/all-mutations true)
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"context/updated\"]}}")
+        (Thread/sleep 100)
+        (let [child-id (:psi.agent-session/session-id
+                        (mutate 'psi.extension/create-child-session
+                                {:session-name "child"
+                                 :tool-defs []
+                                 :thinking-level :off}))]
+          (Thread/sleep 150)
+          (.close in-writer)
+          (deref loop-future 500 nil)
+          (let [frames        (support/parse-frames (->> (str/split-lines (str out-writer))
+                                                         (remove str/blank?)
+                                                         vec))
+                context-evts (filter #(= "context/updated" (:event %)) frames)
+                latest       (last context-evts)]
+            (is (<= 2 (count context-evts)))
+            (is (= session-id (get-in latest [:data :active-session-id])))
+            (is (some #(= child-id (:id %)) (get-in latest [:data :sessions])))))
+        (finally
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil)))))))
+
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
     (let [[ctx _] (support/create-session-context)

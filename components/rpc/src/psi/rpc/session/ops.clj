@@ -212,6 +212,8 @@
                               (rpc.state/focus-session-id state)
                               (some-> (ss/list-context-sessions-in ctx) first :session-id))]
     (rpc.state/subscribe-topics! state topics*)
+    (when sid
+      (rpc.state/set-focus-session-id! state sid))
     (when (or (empty? (rpc.state/subscribed-topics state))
               (contains? (rpc.state/subscribed-topics state) "assistant/message"))
       (maybe-start-external-event-loop! ctx (:emit-frame! request) state sid))
