@@ -67,9 +67,6 @@
                  :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
                  :required   ["query"]}})
 
-(def app-query-tool
-  psi-tool)
-
 (def all-tool-schemas
   [read-tool bash-tool edit-tool write-tool psi-tool])
 
@@ -633,10 +630,6 @@
               (catch Exception e
                 {:content  (str "EQL query error: " (ex-message e))
                  :is-error true}))))))
-
-(defn make-app-query-tool
-  [& args]
-  (apply make-psi-tool args))
 
 (def all-tools
   "Built-in tool definitions including execution fns.

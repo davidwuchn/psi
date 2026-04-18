@@ -14,14 +14,14 @@
 --   - tools/runtime.allium          (shared limits, process temp store, stats, EQL attrs)
 --   - tools/read.allium             (offset/limit + image/binary + truncation)
 --   - tools/bash.allium             (tail truncation + full-output temp artifact + timeout/abort)
---   - tools/app-query-tool.allium   (query truncation + full-output temp artifact)
+--   - tools/psi-tool.allium         (query truncation + full-output temp artifact)
 --   - tool-output-rendering.allium  (interactive rendering contract)
 --   - tool-output-display.allium    (interactive lifecycle + expansion controls)
 
 use "./tools/runtime.allium" as runtime
 use "./tools/read.allium" as read
 use "./tools/bash.allium" as bash
-use "./tools/app-query-tool.allium" as eql
+use "./tools/psi-tool.allium" as eql
 use "./tool-output-rendering.allium" as render
 use "./tool-output-display.allium" as display
 

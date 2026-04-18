@@ -74,8 +74,7 @@
   (let [tool-def   (find-tool-def ctx session-id tool-name)
         execute-fn (:execute tool-def)]
     (cond
-      (or (= tool-name "psi-tool")
-          (= tool-name "app-query-tool"))
+      (= tool-name "psi-tool")
       (execute-psi-tool-in! ctx session-id args opts)
 
       (fn? execute-fn)

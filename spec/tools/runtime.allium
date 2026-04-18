@@ -7,7 +7,7 @@ use "./read.allium" as read
 use "./bash.allium" as bash
 use "./edit.allium" as edit
 use "./write.allium" as write
-use "./app-query-tool.allium" as eql
+use "./psi-tool.allium" as eql
 use "./tool-naming.allium" as naming
 use "../post-tool-processing.allium" as post_tool
 
