@@ -243,3 +243,10 @@
   - extension unit path passes the resolved helper model into `run-agent-loop-in-session`
   - runtime path also passes the resolved helper model into the helper run mutation
   - existing rename/manual-override/stale-checkpoint behavior remains intact
+
+2026-04-17 — Step 10: extension docs sync
+- Documented the shared model-selection library for extension authors in `doc/extension-api.md`.
+- Added guidance for explicit session-targeted helper usage via `:query-session` / `:mutate-session`.
+- Documented `psi.ai.model-selection/resolve-selection` request/result shapes and extension-facing usage guidance.
+- Updated `doc/extensions.md` to recommend shared model resolution for helper/background workflows instead of caller-local fallback chains.
+- Marked `doc/design-auto-session-name-mvp.md` as historical context now that the implementation has moved beyond the original MVP scope.

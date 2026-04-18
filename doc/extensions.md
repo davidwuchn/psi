@@ -257,6 +257,15 @@ Common extension events emitted by the runtime include:
 
 ### Runtime Surface
 
+For helper/background workflows, prefer explicit session-targeted access when an
+extension is acting on a source session other than the ambient one:
+
+- `(:query-session api) session-id eql-query`
+- `(:mutate-session api) session-id op-sym params`
+
+This is especially important for delayed/scheduled work and helper-session
+patterns.
+
 | Key      | Signature                   | Description                                  |
 |----------|-----------------------------|----------------------------------------------|
 | `:query`       | `(fn [eql-query])`          | Run an EQL query through the session runtime |
@@ -357,6 +366,13 @@ use:
 
 `:create-session` and `:switch-session` are thin extension-facing wrappers over the session lifecycle surface.
 Use them when an extension needs to create a distinct context session (for example, a new worktree-bound session) or move routing to an existing resumable context session by id.
+
+When a helper/background workflow needs model choice, extensions should prefer
+shared resolution via `psi.ai.model-selection/resolve-selection` rather than
+embedding provider/id fallback chains locally. The current `auto-session-name`
+extension is the reference example: it queries the source session model context,
+resolves a helper model by role, and passes the resulting candidate explicitly
+into `psi.extension/run-agent-loop-in-session`.
 
 Example:
 

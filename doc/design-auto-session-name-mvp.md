@@ -29,6 +29,12 @@ cleanly support:
 
 This MVP proves those pieces first.
 
+Update: the current implementation has moved beyond this original MVP. It now
+includes transcript sanitization, helper-session inference, shared-model
+selection through `psi.ai.model-selection`, and source-session rename mutation.
+Treat this document as historical design context rather than a description of
+current behavior.
+
 ## User-visible behavior
 
 When the extension is loaded:

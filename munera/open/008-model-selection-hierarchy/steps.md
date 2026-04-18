@@ -12,4 +12,4 @@
 - [x] Implement core result + full trace payloads
 - [x] Adopt the resolver in an initial caller (likely auto-session-name)
 - [x] Add focused unit/integration tests for catalog/request/resolver/trace behavior
-- [ ] Sync docs/config surfaces if public behavior changes
+- [x] Sync docs/config surfaces if public behavior changes
