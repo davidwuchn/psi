@@ -29,6 +29,11 @@
 
 (defmethod execute-effect! :default [_ctx _effect] nil)
 
+(defn- publish-projection-change!
+  [ctx effect]
+  (when-let [publish-fn (:publish-projection-change-fn ctx)]
+    (publish-fn ctx (dissoc effect :effect/type))))
+
 (defn- effect-session-id
   "Resolve the session-id for an effect.  Effects carry :session-id
    explicitly — the effect interceptor in dispatch.clj injects it from
@@ -200,6 +205,12 @@
 (defmethod execute-effect! :runtime/event-queue-offer [ctx effect]
   (when-let [q (:event-queue ctx)]
     (.offer ^java.util.concurrent.LinkedBlockingQueue q (:event effect))))
+
+(defmethod execute-effect! :projection/context-changed [ctx effect]
+  (publish-projection-change! ctx (assoc effect :projection/type :context-changed)))
+
+(defmethod execute-effect! :projection/ui-changed [ctx effect]
+  (publish-projection-change! ctx (assoc effect :projection/type :ui-changed)))
 
 ;;; System prompt — via ctx callback
 
