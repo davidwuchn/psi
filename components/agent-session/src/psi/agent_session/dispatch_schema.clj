@@ -127,7 +127,15 @@
    [:oauth/logout
     [:map [:effect/type [:= :oauth/logout]]
      [:provider-ids [:vector :keyword]]
-     [:oauth-ctx :any]]]])
+     [:oauth-ctx :any]]]
+   [:projection/context-changed
+    [:map [:effect/type [:= :projection/context-changed]]
+     [:reason {:optional true} [:maybe :keyword]]
+     [:session-id {:optional true} [:maybe :string]]]]
+   [:projection/ui-changed
+    [:map [:effect/type [:= :projection/ui-changed]]
+     [:reason {:optional true} [:maybe :keyword]]
+     [:session-id {:optional true} [:maybe :string]]]]])
 
 (def pure-result-schema
   "Schema for the unified pure handler result shape.
