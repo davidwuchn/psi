@@ -132,27 +132,6 @@
       (reconcile-background-jobs! agent-session-ctx session-id)
       {:psi.extension/message msg})))
 
-(pco/defmutation send-message
-  "Compatibility-only wrapper for the older ambiguous extension message API.
-
-   New code should use `psi.extension/notify` or
-   `psi.extension/append-message` explicitly.
-
-   Migration semantics:
-   - custom-type present    => UI-visible, non-conversation notification
-   - no custom-type present => conversation-visible synthetic message"
-  [_ {:keys [psi/agent-session-ctx session-id role content custom-type]}]
-  {::pco/op-name 'psi.extension/send-message
-   ::pco/params  [:psi/agent-session-ctx :session-id :role :content]
-   ::pco/output  [:psi.extension/message]}
-  (let [msg (ext-rt/send-extension-message-in! agent-session-ctx
-                                               session-id
-                                               (or role "assistant")
-                                               (or content "")
-                                               custom-type)]
-    (reconcile-background-jobs! agent-session-ctx session-id)
-    {:psi.extension/message msg}))
-
 (pco/defmutation schedule-event
   "Schedule a delayed extension event dispatch."
   [_ {:keys [psi/agent-session-ctx session-id delay-ms event-name payload]}]
@@ -182,5 +161,4 @@
    add-extension
    notify
    append-message
-   send-message
    schedule-event])

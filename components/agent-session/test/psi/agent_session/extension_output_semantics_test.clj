@@ -75,24 +75,4 @@
           (is (= 2 (count texts)))
           (is (= #{"hello" "synthetic reply"} (set texts))))))
 
-    (testing "compatibility send-message still preserves the old split semantics during migration"
-      (let [[ctx3 session-id3] (test-support/make-session-ctx {})
-            mutate3!           (mutate-fn ctx3 session-id3)]
-        (agent-core/append-message-in! (ss/agent-ctx-in ctx3 session-id3)
-                                       {:role "user"
-                                        :content [{:type :text :text "hello"}]})
-        ;; Compatibility-only coverage: custom-type still means UI-only, while
-        ;; plain legacy send-message still means synthetic conversation append.
-        (mutate3! 'psi.extension/send-message
-                  {:role "assistant"
-                   :content "status only"
-                   :custom-type "legacy-ui-only"})
-        (mutate3! 'psi.extension/send-message
-                  {:role "assistant"
-                   :content "legacy synthetic reply"})
-        (let [messages (:messages (agent-core/get-data-in (ss/agent-ctx-in ctx3 session-id3)))
-              conv     (#'conversation/agent-messages->ai-conversation "sys" messages [] {})
-              texts    (conversation-texts conv)]
-          (is (= 2 (count texts)))
-          (is (= #{"hello" "legacy synthetic reply"} (set texts)))
-          (is (not (some #{"status only"} texts)))))))
+    )

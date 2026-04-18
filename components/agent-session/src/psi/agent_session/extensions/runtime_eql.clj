@@ -27,8 +27,6 @@
     'psi.extension.tool/chain
     'psi.extension/notify
     'psi.extension/append-message
-    ;; compatibility-only during migration
-    'psi.extension/send-message
     'psi.extension/send-prompt
     'psi.extension/schedule-event})
 

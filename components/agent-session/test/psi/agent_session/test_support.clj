@@ -151,30 +151,6 @@
                                                                               {:session-id session-id :message msg}
                                                                               {:origin :core})
                                                           msg)))
-                       :send-extension-message-fn    (fn
-                                                       ([ctx role content custom-type]
-                                                        (let [msg {:role      role
-                                                                   :content   [{:type :text :text (str content)}]
-                                                                   :timestamp (java.time.Instant/now)}
-                                                              msg (cond-> msg
-                                                                    custom-type (assoc :custom-type custom-type))
-                                                              session-id (some-> (ss/list-context-sessions-in ctx) first :session-id)]
-                                                          (dispatch/dispatch! ctx
-                                                                              :session/send-extension-message
-                                                                              {:session-id session-id :message msg}
-                                                                              {:origin :core})
-                                                          msg))
-                                                       ([ctx session-id role content custom-type]
-                                                        (let [msg {:role      role
-                                                                   :content   [{:type :text :text (str content)}]
-                                                                   :timestamp (java.time.Instant/now)}
-                                                              msg (cond-> msg
-                                                                    custom-type (assoc :custom-type custom-type))]
-                                                          (dispatch/dispatch! ctx
-                                                                              :session/send-extension-message
-                                                                              {:session-id session-id :message msg}
-                                                                              {:origin :core})
-                                                          msg)))
                        :mark-workflow-jobs-terminal-fn bg-rt/maybe-mark-workflow-jobs-terminal!
                        :emit-background-job-terminal-messages-fn bg-rt/maybe-emit-background-job-terminal-messages!
                        :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!

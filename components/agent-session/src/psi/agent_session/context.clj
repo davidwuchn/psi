@@ -149,7 +149,6 @@
    :execute-compaction-fn                          (fn [ctx session-id custom-instructions]
                                                      (compaction-runtime/execute-compaction-in! ctx session-id custom-instructions))
    :notify-extension-fn                            #'ext-rt/notify-extension-in!
-   :send-extension-message-fn                      #'ext-rt/send-extension-message-in!
    :register-resolvers-fn                          (fn [qctx rebuild?] (register-resolvers-in! qctx rebuild?))
    :register-mutations-fn                          (fn [qctx mutations rebuild?] (register-mutations-in! qctx mutations rebuild?))
    :mark-workflow-jobs-terminal-fn                 bg-rt/maybe-mark-workflow-jobs-terminal!

@@ -101,20 +101,6 @@
                         {:origin :core})
     msg))
 
-(defn send-extension-message-in!
-  "Compatibility-only wrapper for the older ambiguous extension message API.
-
-   New code should use notify-extension-in! or append-extension-message-in!
-   explicitly.
-
-   Preserved migration semantics:
-   - custom-type present    => UI-visible, non-conversation notification
-   - no custom-type present => conversation-visible synthetic message"
-  [ctx session-id role content custom-type]
-  (if custom-type
-    (notify-extension-in! ctx session-id role content custom-type)
-    (append-extension-message-in! ctx session-id role content)))
-
 (defn set-extension-run-fn-in!
   "Register the runtime agent-loop runner for extension-initiated prompts.
    `run-fn` is (fn [text source]) — it journals the user message and runs
