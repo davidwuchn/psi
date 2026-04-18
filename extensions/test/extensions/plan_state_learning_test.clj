@@ -130,7 +130,7 @@
                                 (if (= cmd "git log -1 --pretty=format:%H%n%s")
                                   (git-log-response "abc1234" "◈ Δ Auto-update munera/mementum state [psi:psl-auto]")
                                   {:psi.extension.tool/content "" :psi.extension.tool/is-error false}))
-                    sut/send-message! (fn [mutate-fn text]
+                    sut/notify! (fn [mutate-fn text]
                                         (mutate-fn 'psi.extension/notify
                                                    {:role "assistant"
                                                     :content text

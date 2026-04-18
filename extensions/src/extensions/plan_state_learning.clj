@@ -74,7 +74,7 @@
   [mutate-fn command]
   (mutate-fn 'psi.extension.tool/bash {:command command :timeout 30}))
 
-(defn- send-message!
+(defn- notify!
   [mutate-fn text]
   (mutate-fn 'psi.extension/notify
              {:role "assistant"
@@ -232,14 +232,14 @@
                                      (when (seq content)
                                        (str ": " content))))]
           (when (seq status-msg)
-            (send-message! mutate-fn status-msg))
+            (notify! mutate-fn status-msg))
           (refresh-widget-later!)
           {:status          :done
            :accepted?       (not is-error?)
            :delivery        :agent
            :agent-result agent-res}))
       (catch Exception e
-        (send-message! mutate-fn (str "PSL error: " (ex-message e)))
+        (notify! mutate-fn (str "PSL error: " (ex-message e)))
         (refresh-widget-later!)
         {:status :error :error (ex-message e)}))))
 
@@ -347,7 +347,7 @@
     ;; Fast skip check — avoid creating a workflow for self-commits
     (if (str/includes? subject marker)
       (do
-        (send-message! mutate-fn
+        (notify! mutate-fn
                        (str "PSL skipped for " source7 " (self commit marker " marker ")."))
         {:skip? true :reason :self-commit :source-sha source-sha :subject subject})
       ;; Create workflow — the job runs after this agent turn completes (deferred)
@@ -389,7 +389,7 @@
                               (try
                                 (handle-git-head-changed mutate-fn ev)
                                 (catch Exception e
-                                  (send-message! mutate-fn
+                                  (notify! mutate-fn
                                                  (str "PSL error: " (ex-message e)))
                                   {:error (ex-message e)})))})
     (refresh-widget!)))
