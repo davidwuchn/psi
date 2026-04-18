@@ -4,8 +4,8 @@
 - [x] Define the merged catalog view consumed by the resolver
 - [x] Define request modes: explicit, inherit-session, resolve
 - [x] Define initial roles and their default constraint/preference bundles
-- [ ] Define policy layering and effective-request merge semantics
-- [ ] Define preference criterion identity and ordering semantics
+- [x] Define policy layering and effective-request merge semantics
+- [x] Define preference criterion identity and ordering semantics
 - [ ] Implement resolver filtering for reference viability + required constraints
 - [ ] Implement resolver ranking for strong/weak preference tiers with canonical tie-breaks
 - [ ] Implement ambiguity and no-winner outcomes

@@ -105,3 +105,31 @@
   - request normalization supplies canonical defaults
   - role defaults are injected into normalized requests
   - explicit-model requests normalize provider identity canonically
+
+2026-04-17 — Step 4: policy layering and effective-request composition
+- Extended `psi.ai.model-selection` with explicit effective-request composition.
+- Added fixed scope precedence for v1 composition:
+  - `:role-defaults`
+  - `:system`
+  - `:user`
+  - `:project`
+  - `:request`
+- Added `criterion-identity` as the initial stable identity function for preference replacement/dedup.
+  - v1 identity uses `:identity`, else `:criterion`, else `:attribute`
+- Added `compose-effective-request` over four non-caller policy layers plus the caller request.
+- v1 merge behavior now matches the task design at a pragmatic level:
+  - required constraints union in precedence order
+  - strong/weak preference tiers dedupe by criterion identity
+  - higher-precedence duplicate criteria replace lower-precedence criteria in place
+  - context maps merge shallowly with later scopes winning per key
+  - explicit model selection is taken from the highest-precedence scope that supplies it
+- This is intentionally still pre-resolver:
+  - no candidate filtering yet
+  - no ranking yet
+  - no ambiguity/no-winner result logic yet
+- Added tests proving:
+  - role defaults seed the effective request
+  - required constraints union across layers
+  - preference replacement by identity is deterministic
+  - context merges by precedence
+  - explicit model precedence is deterministic

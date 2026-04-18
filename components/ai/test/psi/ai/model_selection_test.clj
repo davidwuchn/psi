@@ -95,6 +95,23 @@
   (testing "unknown roles return nil"
     (is (nil? (sut/role-defaults :does-not-exist)))))
 
+(deftest criterion-identity-test
+  (testing "explicit identity wins"
+    (is (= :cheapness
+           (sut/criterion-identity {:identity :cheapness
+                                    :criterion :input-cost
+                                    :prefer :lower}))))
+
+  (testing "criterion key is used when present"
+    (is (= :input-cost
+           (sut/criterion-identity {:criterion :input-cost
+                                    :prefer :lower}))))
+
+  (testing "attribute is fallback identity"
+    (is (= :provider-family
+           (sut/criterion-identity {:attribute :provider-family
+                                    :prefer :equals-context})))))
+
 (deftest normalize-request-test
   (testing "defaults to resolve/interactive with normalized collections"
     (let [request (sut/normalize-request {})]
@@ -136,4 +153,60 @@
                                                   :id "gpt-5-mini"}})]
       (is (= :explicit (:mode request)))
       (is (= {:provider :openai :id "gpt-5-mini"}
+             (:model request))))))
+
+(deftest compose-effective-request-test
+  (testing "role defaults seed the effective request"
+    (let [request (sut/compose-effective-request {:request {:role :auto-session-name}})]
+      (is (= :resolve (:mode request)))
+      (is (= :auto-session-name (:role request)))
+      (is (= [{:criterion :supports-text :match :true}]
+             (:required request)))
+      (is (= [{:criterion :input-cost :prefer :lower}
+              {:criterion :output-cost :prefer :lower}]
+             (:strong-preferences request)))))
+
+  (testing "required constraints union across policy layers in precedence order"
+    (let [request (sut/compose-effective-request
+                   {:system  {:required [{:criterion :supports-text :match :true}]}
+                    :project {:required [{:criterion :configured? :match :true}]}
+                    :request {:role :interactive
+                              :required [{:criterion :context-window :at-least 64000}]}})]
+      (is (= [{:criterion :supports-text :match :true}
+              {:criterion :configured? :match :true}
+              {:criterion :context-window :at-least 64000}]
+             (:required request)))))
+
+  (testing "preference tiers replace same-identity criteria with higher-precedence instances"
+    (let [request (sut/compose-effective-request
+                   {:system  {:strong-preferences [{:criterion :input-cost :prefer :lower}
+                                                   {:criterion :output-cost :prefer :lower}]}
+                    :project {:strong-preferences [{:criterion :input-cost :prefer :higher}]}
+                    :request {:role :interactive
+                              :strong-preferences [{:criterion :context-window :prefer :higher}]}})]
+      (is (= [{:criterion :input-cost :prefer :higher}
+              {:criterion :output-cost :prefer :lower}
+              {:criterion :context-window :prefer :higher}]
+             (:strong-preferences request)))))
+
+  (testing "context maps merge shallowly by precedence"
+    (let [request (sut/compose-effective-request
+                   {:system  {:context {:session-provider :anthropic
+                                        :region :global}}
+                    :project {:context {:region :eu}}
+                    :request {:role :interactive
+                              :context {:session-model-id "claude-sonnet-4-6"}}})]
+      (is (= {:session-provider :anthropic
+              :region :eu
+              :session-model-id "claude-sonnet-4-6"}
+             (:context request)))))
+
+  (testing "highest-precedence explicit model wins"
+    (let [request (sut/compose-effective-request
+                   {:system  {:model {:provider :anthropic :id "claude-sonnet-4-6"}}
+                    :project {:model {:provider :openai :id "gpt-5-mini"}}
+                    :request {:mode :explicit
+                              :model {:provider "openai" :id "gpt-5"}}})]
+      (is (= :explicit (:mode request)))
+      (is (= {:provider :openai :id "gpt-5"}
              (:model request))))))
