@@ -5,6 +5,21 @@
    [psi.ai.model-registry :as model-registry]
    [psi.extension-test-helpers.nullable-api :as nullable]))
 
+(def local-helper-config
+  {:version   1
+   :providers {"local-helper"
+               {:base-url "http://localhost:11434/v1"
+                :api      :openai-completions
+                :auth     {:auth-header? false}
+                :models   [{:id "fast-free"
+                            :name "Fast Free Local"
+                            :supports-text true
+                            :locality :local
+                            :latency-tier :low
+                            :cost-tier :zero
+                            :input-cost 0.0
+                            :output-cost 0.0}]}}})
+
 (defn- reset-state! []
   (reset! @#'sut/state
           {:turn-counts {}
@@ -151,6 +166,63 @@
                                   (select-keys (:model params) [:provider :id :name]))))
                         first)))
         (is (true? (contains? (:helper-session-ids @@#'sut/state) "child-1")))))))
+
+(deftest checkpoint-handler-prefers-local-helper-when-available-test
+  (testing "extension-owned helper policy picks a qualifying local helper when available"
+    (reset-state!)
+    (let [path (java.io.File/createTempFile "psi-test-local-helper" ".edn")]
+      (try
+        (spit path (pr-str local-helper-config))
+        (model-registry/init! {:user-models-path (.getAbsolutePath path)})
+        (let [calls (atom [])
+              {:keys [api state]} (nullable/create-nullable-extension-api
+                                   {:path "/test/auto_session_name.clj"
+                                    :query-fn (fn [req]
+                                                (cond
+                                                  (= {:session-id "s1"
+                                                      :query [{:psi.agent-session/session-entries
+                                                               [:psi.session-entry/kind
+                                                                :psi.session-entry/data]}]}
+                                                     req)
+                                                  {:psi.agent-session/session-entries
+                                                   [{:psi.session-entry/kind :message
+                                                     :psi.session-entry/data {:message {:role "user"
+                                                                                        :content [{:type :text :text "Fix footer rendering"}]}}}]}
+
+                                                  (= {:session-id "s1"
+                                                      :query [:psi.agent-session/session-name]}
+                                                     req)
+                                                  {:psi.agent-session/session-name "initial"}
+
+                                                  (= {:session-id "s1"
+                                                      :query [:psi.agent-session/model-provider
+                                                              :psi.agent-session/model-id]}
+                                                     req)
+                                                  {:psi.agent-session/model-provider "anthropic"
+                                                   :psi.agent-session/model-id "claude-sonnet-4-6"}
+
+                                                  :else {}))
+                                    :mutate-fn (fn [op params]
+                                                 (swap! calls conj [op params])
+                                                 (case op
+                                                   psi.extension/create-child-session {:psi.agent-session/session-id "child-1"}
+                                                   psi.extension/run-agent-loop-in-session {:psi.agent-session/agent-run-ok? true
+                                                                                            :psi.agent-session/agent-run-text "Fix footer rendering"}
+                                                   psi.extension/set-session-name {:psi.agent-session/session-name (:name params)}
+                                                   {}))})]
+          (sut/init api)
+          (let [handler (first (get-in @state [:handlers "auto_session_name/rename_checkpoint"]))]
+            (is (nil? (handler {:session-id "s1" :turn-count 2})))
+            (is (= {:provider :local-helper
+                    :id "fast-free"
+                    :name "Fast Free Local"}
+                   (some->> @calls
+                            (keep (fn [[op params]]
+                                    (when (= op 'psi.extension/run-agent-loop-in-session)
+                                      (select-keys (:model params) [:provider :id :name]))))
+                            first)))))
+        (finally
+          (.delete path))))))
 
 (deftest checkpoint-handler-invalid-helper-result-does-not-rename-test
   (testing "invalid helper result does not rename and falls back to notification"

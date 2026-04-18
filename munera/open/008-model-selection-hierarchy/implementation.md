@@ -300,3 +300,8 @@
   - so locality does not exclude them
   - among qualifying low-latency, low/zero-cost built-ins, the current winner is still `:openai/gpt-5.3-codex-spark` because no local candidate exists in the tested setup and it wins the cost ordering
 - Updated extension tests to match the refined policy under the current catalog.
+
+2026-04-17 — Step 15: proof that local qualifying helpers win when present
+- Added focused resolver coverage showing a qualifying local helper candidate beats cloud built-ins under the extension's current policy shape.
+- Added focused auto-session-name extension coverage showing that when a qualifying local helper is present in the catalog, the extension passes that local candidate into `run-agent-loop-in-session`.
+- This closes the remaining behavioral proof gap for the local-first helper-policy direction.

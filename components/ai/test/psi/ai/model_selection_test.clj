@@ -33,6 +33,21 @@
                 :api      :openai-completions
                 :models   [{:id "public-model"}]}}})
 
+(def local-helper-provider-config
+  {:version   1
+   :providers {"local-helper"
+               {:base-url "http://localhost:11434/v1"
+                :api      :openai-completions
+                :auth     {:auth-header? false}
+                :models   [{:id "fast-free"
+                            :name "Fast Free Local"
+                            :supports-text true
+                            :locality :local
+                            :latency-tier :low
+                            :cost-tier :zero
+                            :input-cost 0.0
+                            :output-cost 0.0}]}}})
+
 (deftest catalog-view-built-ins-test
   (registry/init! {})
   (let [catalog (:candidates (sut/catalog-view))
@@ -406,3 +421,32 @@
         (is (= :no-winner (:outcome full)))
         (is (= :reference-not-found (:reason full)))
         (is (empty? (get-in full [:filtering :pool])))))))
+
+(deftest local-helper-candidate-wins-under-local-first-low-latency-low-cost-policy-test
+  (let [path (write-temp-models! local-helper-provider-config)]
+    (try
+      (registry/init! {:user-models-path path})
+      (let [catalog (sut/catalog-view)
+            result (sut/resolve-selection
+                    {:catalog catalog
+                     :request {:mode :resolve
+                               :required [{:criterion :supports-text :match :true}
+                                          {:criterion :latency-tier :equals :low}
+                                          {:criterion :cost-tier :one-of [:zero :low]}]
+                               :strong-preferences [{:criterion :locality
+                                                     :prefer :equals
+                                                     :equals :local}
+                                                    {:criterion :input-cost
+                                                     :prefer :lower}
+                                                    {:criterion :output-cost
+                                                     :prefer :lower}]
+                               :weak-preferences [{:criterion :same-provider-as-session
+                                                   :prefer :context-match}]
+                               :context {:session-model {:provider :anthropic
+                                                         :id "claude-sonnet-4-6"}}}})]
+        (is (= :ok (:outcome result)))
+        (is (= :local-helper (:provider (:candidate result))))
+        (is (= "fast-free" (:id (:candidate result))))
+        (is (= :local (get-in result [:candidate :facts :locality]))))
+      (finally
+        (java.io.File/.delete (java.io.File. path))))))
