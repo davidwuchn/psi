@@ -6,6 +6,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.extension-runtime :as extension-runtime]
+   [psi.agent-session.psi_tool :as psi-tool]
    [psi.agent-session.tools :as tools]))
 (defn- create-session-context
   ([]
@@ -234,7 +235,7 @@
       (is (= :error (:psi-tool/overall-status parsed)))))
 
   (testing "worktree mode uses session worktree-path when explicit target absent"
-    (with-redefs [tools/worktree-reload-candidates (fn [worktree-path]
+    (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
                                                        [{:ns-name "clojure.string"
                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
       (let [[ctx session-id] (create-session-context {:persist? false
@@ -272,7 +273,7 @@
           (is (= :validate (get-in parsed [:psi-tool/error :phase])))))))
 
   (testing "worktree mode explicit target reports explicit worktree source"
-    (with-redefs [tools/worktree-reload-candidates (fn [worktree-path]
+    (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
                                                        [{:ns-name "clojure.string"
                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
       (let [dir    (System/getProperty "user.dir")
@@ -284,7 +285,7 @@
         (is (= dir (:psi-tool/worktree-path parsed))))))
 
   (testing "worktree mode graph refresh surfaces extension reload errors"
-    (with-redefs [tools/worktree-reload-candidates (fn [worktree-path]
+    (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
                                                        [{:ns-name "clojure.string"
                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])
                   extension-runtime/reload-extensions-in!
