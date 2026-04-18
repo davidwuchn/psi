@@ -1,7 +1,7 @@
-- [ ] Inventory all `app-query-tool` references across code, prompts, docs, and tests
-- [ ] Identify the canonical tool-definition and registration path
-- [ ] Rename the canonical tool to `psi-tool`
-- [ ] Update runtime invocation/projection surfaces to use `psi-tool`
-- [ ] Update tests to the canonical tool name
+- [x] Inventory all `app-query-tool` references across code, prompts, docs, and tests
+- [x] Identify the canonical tool-definition and registration path
+- [x] Rename the canonical tool to `psi-tool`
+- [x] Update runtime invocation/projection surfaces to use `psi-tool`
+- [x] Update tests to the canonical tool name
 - [ ] Update docs/prompts/instructions to the canonical tool name
 - [ ] Decide whether any temporary compatibility alias is needed and bound it explicitly
