@@ -259,3 +259,22 @@
   - strongly prefer lower input/output cost
   - weakly prefer source-session provider affinity
 - Added focused unit coverage proving the extension constructs its own request explicitly, including the no-source-model case.
+
+2026-04-17 — Step 12: queryable locality/latency/cost metadata for extension-owned policy
+- Extended custom model metadata in `psi.ai.user-models` with optional resolver-facing fields:
+  - `:locality`
+  - `:latency-tier`
+  - `:cost-tier`
+- Added helper-friendly defaults for custom/user models:
+  - `:locality :local`
+  - `:latency-tier :low`
+  - `:cost-tier :zero`
+- Extended the resolver-facing catalog projection to expose:
+  - `:facts/:locality`
+  - `:estimates/:latency-tier`
+  - `:estimates/:cost-tier`
+- Extended required-constraint support with `:one-of`.
+- Extended ranking comparisons so symbolic tiers such as latency/cost can participate in ordered comparison.
+- Added focused AI tests proving:
+  - custom models project the new metadata into the catalog view
+  - resolver filtering can require locality, latency tier, and cost tier without guessing from provider/id

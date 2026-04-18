@@ -88,11 +88,14 @@
                               :supports-images     (boolean (:supports-images model))
                               :supports-reasoning  (boolean (:supports-reasoning model))
                               :context-window      (:context-window model)
-                              :max-tokens          (:max-tokens model)}
+                              :max-tokens          (:max-tokens model)
+                              :locality            (:locality model)}
                   :estimates {:input-cost         (:input-cost model)
                               :output-cost        (:output-cost model)
                               :cache-read-cost    (:cache-read-cost model)
-                              :cache-write-cost   (:cache-write-cost model)}
+                              :cache-write-cost   (:cache-write-cost model)
+                              :latency-tier       (:latency-tier model)
+                              :cost-tier          (:cost-tier model)}
                   :reference {:configured? (boolean (or (nil? auth)
                                                        (:api-key auth)
                                                        (seq (:headers auth))
@@ -283,6 +286,9 @@
       (contains? constraint :equals)
       (= value (:equals constraint))
 
+      (contains? constraint :one-of)
+      (contains? (set (:one-of constraint)) value)
+
       :else
       (boolean value))))
 
@@ -348,29 +354,44 @@
                               {:candidate candidate
                                :reasons   failed})))}))
 
+(def ^:private latency-rank
+  {:low 0 :medium 1 :high 2})
+
+(def ^:private cost-rank
+  {:zero 0 :low 1 :medium 2 :high 3})
+
+(defn- comparable-value
+  [criterion value]
+  (case (or (:criterion criterion) (:attribute criterion))
+    :latency-tier (get latency-rank value value)
+    :cost-tier    (get cost-rank value value)
+    value))
+
 (defn- compare-values
-  [left right prefer]
-  (cond
-    (and (nil? left) (nil? right))
-    0
+  [criterion left right prefer]
+  (let [left*  (comparable-value criterion left)
+        right* (comparable-value criterion right)]
+    (cond
+      (and (nil? left*) (nil? right*))
+      0
 
-    (nil? left)
-    0
+      (nil? left*)
+      0
 
-    (nil? right)
-    0
+      (nil? right*)
+      0
 
-    (= left right)
-    0
+      (= left* right*)
+      0
 
-    (= prefer :lower)
-    (compare left right)
+      (= prefer :lower)
+      (compare left* right*)
 
-    (= prefer :higher)
-    (compare right left)
+      (= prefer :higher)
+      (compare right* left*)
 
-    :else
-    0))
+      :else
+      0)))
 
 (defn- context-value
   [request criterion]
@@ -389,12 +410,14 @@
   (let [prefer (:prefer criterion)]
     (case prefer
       :lower
-      (compare-values (candidate-attribute left criterion)
+      (compare-values criterion
+                      (candidate-attribute left criterion)
                       (candidate-attribute right criterion)
                       :lower)
 
       :higher
-      (compare-values (candidate-attribute left criterion)
+      (compare-values criterion
+                      (candidate-attribute left criterion)
                       (candidate-attribute right criterion)
                       :higher)
 

@@ -13,8 +13,8 @@
 - [x] Adopt the resolver in an initial caller (likely auto-session-name)
 - [x] Add focused unit/integration tests for catalog/request/resolver/trace behavior
 - [x] Sync docs/config surfaces if public behavior changes
-- [ ] Extend catalog metadata so resolver can compare locality and latency without guessing from provider/id
-- [ ] Add queryable cost/latency/locality preference and constraint forms needed for helper-model selection
+- [x] Extend catalog metadata so resolver can compare locality and latency without guessing from provider/id
+- [x] Add queryable cost/latency/locality preference and constraint forms needed for helper-model selection
 - [x] Make `extensions/src/extensions/auto_session_name.clj` define and submit its own explicit resolver request instead of depending on a built-in role
 - [ ] Make the auto-session-name extension request prefer local models first
 - [ ] Make the auto-session-name extension request require low-latency models

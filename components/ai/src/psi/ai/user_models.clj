@@ -26,6 +26,15 @@
    [:auth-header? {:optional true} [:maybe boolean?]]
    [:headers {:optional true} [:maybe [:map-of string? string?]]]])
 
+(def ^:private Locality
+  [:enum :local :cloud])
+
+(def ^:private LatencyTier
+  [:enum :low :medium :high])
+
+(def ^:private CostTier
+  [:enum :zero :low :medium :high])
+
 (def ^:private ModelDef
   [:map {:closed true}
    [:id string?]
@@ -38,7 +47,10 @@
    [:input-cost {:optional true} [:maybe number?]]
    [:output-cost {:optional true} [:maybe number?]]
    [:cache-read-cost {:optional true} [:maybe number?]]
-   [:cache-write-cost {:optional true} [:maybe number?]]])
+   [:cache-write-cost {:optional true} [:maybe number?]]
+   [:locality {:optional true} [:maybe Locality]]
+   [:latency-tier {:optional true} [:maybe LatencyTier]]
+   [:cost-tier {:optional true} [:maybe CostTier]]])
 
 (def ^:private ProviderDef
   [:map {:closed true}
@@ -84,7 +96,10 @@
    :input-cost         0.0
    :output-cost        0.0
    :cache-read-cost    0.0
-   :cache-write-cost   0.0})
+   :cache-write-cost   0.0
+   :locality           :local
+   :latency-tier       :low
+   :cost-tier          :zero})
 
 (defn- expand-model
   "Expand a model definition into a fully-formed model map."

@@ -65,7 +65,12 @@
           (is (= 32768 (get-in candidate [:facts :context-window]))))
 
         (testing "custom provider auth contributes to reference viability"
-          (is (true? (get-in candidate [:reference :configured?])))))
+          (is (true? (get-in candidate [:reference :configured?]))))
+
+        (testing "custom model defaults include local helper-friendly metadata"
+          (is (= :local (get-in candidate [:facts :locality])))
+          (is (= :low (get-in candidate [:estimates :latency-tier])))
+          (is (= :zero (get-in candidate [:estimates :cost-tier])))))
       (finally
         (java.io.File/.delete (java.io.File. path))))))
 
@@ -269,7 +274,22 @@
         (is (= "public-model" (get-in eliminated [:candidate :id])))
         (is (= [{:criterion :configured? :match :true}
                 {:criterion :context-window :at-least 200000}]
-               (:reasons eliminated)))))))
+               (:reasons eliminated)))))
+
+    (testing "required constraints support locality and tier membership"
+      (let [request (sut/compose-effective-request
+                     {:request {:mode :resolve
+                                :required [{:criterion :locality :equals :local}
+                                           {:criterion :latency-tier :equals :low}
+                                           {:criterion :cost-tier :one-of [:zero :low]}]}})
+            result  (sut/filter-candidates catalog request)]
+        (is (seq (:survivors result)))
+        (is (every? #(= :local (get-in % [:facts :locality]))
+                    (:survivors result)))
+        (is (every? #(= :low (get-in % [:estimates :latency-tier]))
+                    (:survivors result)))
+        (is (every? #(contains? #{:zero :low} (get-in % [:estimates :cost-tier]))
+                    (:survivors result)))))))
 
 (deftest rank-candidates-test
   (registry/init! {:user-models-path (write-temp-models! no-auth-provider-config)})
