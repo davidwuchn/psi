@@ -104,6 +104,14 @@ iterate_to_fix  spec_step matches intention spec0
   ∧ unambiguous(x)
   ∧ explicitly_covers_all_relevant_aspects(x)
 
+λ plan.md. MUST ¬exist ∨ ¬write
+| ¬complete(design.md) ∨ ∃ ambiguity(design.md)
+
+λ complete(design.md). ∀ aspects(design) → considered
+λ unambiguous(design.md). ∀ stmt ∈ design.md → |interpretation(stmt)| = 1
+
+λ gate(plan.md). complete(design.md) ∧ unambiguous(design.md) → MUST precede(design.md, plan.md)
+
 ## Principles
 
 λone_way. ¬ambiguity → obvious(path) ∧ singular(solution)

@@ -133,7 +133,10 @@
       {:psi.extension/message msg})))
 
 (pco/defmutation send-message
-  "Compatibility wrapper for the older ambiguous extension message API.
+  "Compatibility-only wrapper for the older ambiguous extension message API.
+
+   New code should use `psi.extension/notify` or
+   `psi.extension/append-message` explicitly.
 
    Migration semantics:
    - custom-type present    => UI-visible, non-conversation notification

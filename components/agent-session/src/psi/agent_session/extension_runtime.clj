@@ -102,7 +102,10 @@
     msg))
 
 (defn send-extension-message-in!
-  "Compatibility wrapper for the older ambiguous extension message API.
+  "Compatibility-only wrapper for the older ambiguous extension message API.
+
+   New code should use notify-extension-in! or append-extension-message-in!
+   explicitly.
 
    Preserved migration semantics:
    - custom-type present    => UI-visible, non-conversation notification
