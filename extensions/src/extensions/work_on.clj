@@ -112,10 +112,24 @@
       (f session-id)
       (catch Exception _ nil))))
 
-(defn- sibling-worktree-path
-  [main-path slug]
-  (let [f (java.io.File. (str main-path))]
-    (str (.getParentFile f) java.io.File/separator slug)))
+(defn- canonical-path
+  [path]
+  (when (seq (str path))
+    (try
+      (.getCanonicalPath (java.io.File. (str path)))
+      (catch Exception _
+        (.getAbsolutePath (java.io.File. (str path)))))))
+
+(defn- target-worktree-path
+  [main-path current-path slug]
+  (let [main-file    (java.io.File. (str main-path))
+        current-file (java.io.File. (str current-path))
+        main*        (canonical-path main-path)
+        current-parent* (some-> current-file .getParentFile .getPath canonical-path)
+        container    (if (= current-parent* main*)
+                       main-file
+                       (.getParentFile main-file))]
+    (str container java.io.File/separator slug)))
 
 (defn- trim-arg
   [s]
@@ -318,7 +332,9 @@
 
           :else
           (let [{:keys [slug branch-name]} (mechanical-slug description*)
-                worktree-path (sibling-worktree-path (:git.worktree/path main-wt) slug)
+                worktree-path (target-worktree-path (:git.worktree/path main-wt)
+                                                    (:git.worktree/path current-wt)
+                                                    slug)
                 create-result (mutate! 'git.worktree/add!
                                        {:input {:path worktree-path
                                                 :branch branch-name

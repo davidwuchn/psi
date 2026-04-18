@@ -57,6 +57,31 @@
     (is (= "work"
            (:slug (sut/mechanical-slug "the and of to"))))))
 
+(deftest target-worktree-path-test
+  (testing "derives sibling-of-main placement when current worktree is not nested under main"
+    (is (= "/repos/project/fix-foo"
+           (#'sut/target-worktree-path "/repos/project/bare-checkout"
+                                       "/repos/project/task-a"
+                                       "fix-foo"))))
+
+  (testing "derives sibling-of-main placement when invoked from the sibling-main checkout itself"
+    (is (= "/repos/project/fix-foo"
+           (#'sut/target-worktree-path "/repos/project/bare-checkout"
+                                       "/repos/project/bare-checkout"
+                                       "fix-foo"))))
+
+  (testing "derives nested placement when current worktree is an immediate child of main checkout"
+    (is (= "/repos/project/fix-foo"
+           (#'sut/target-worktree-path "/repos/project"
+                                       "/repos/project/task-a"
+                                       "fix-foo"))))
+
+  (testing "keeps the defined narrow behavior when invoked from the nested-layout main checkout"
+    (is (= "/repos/fix-foo"
+           (#'sut/target-worktree-path "/repos/project"
+                                       "/repos/project"
+                                       "fix-foo")))))
+
 (deftest init-registers-work-commands-test
   (testing "extension registers /work-* commands"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
@@ -148,6 +173,49 @@
                   :ext-path "/test/work_on.clj"}
                  (second (last @mutate-calls))))
           (is (nil? @printed)))))))
+
+(deftest work-on-command-nested-linked-layout-test
+  (testing "/work-on derives nested target placement when current worktree is directly under the main checkout"
+    (let [mutate-calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (with-session-query
+                                            {:psi.agent-session/session-id "s-task-a"
+                                             :psi.agent-session/worktree-path "/repo/project/task-a"
+                                             :psi.agent-session/system-prompt "prompt"
+                                             :psi.agent-session/host-sessions [{:psi.session-info/id "s-task-a"
+                                                                                :psi.session-info/worktree-path "/repo/project/task-a"
+                                                                                :psi.session-info/name "task-a"}]
+                                             :git.worktree/current {:git.worktree/path "/repo/project/task-a"
+                                                                    :git.worktree/branch-name "task-a"
+                                                                    :git.worktree/current? true}
+                                             :git.worktree/list [{:git.worktree/path "/repo/project"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/project/task-a"
+                                                                  :git.worktree/branch-name "task-a"
+                                                                  :git.worktree/current? true}]})
+                                :mutate-fn (fn [op params]
+                                             (swap! mutate-calls conj [op params])
+                                             (case op
+                                               git.branch/default {:branch "main" :source :fallback}
+                                               git.worktree/add! {:success true
+                                                                  :path "/repo/project/fix-footer-not-displayed"
+                                                                  :branch "fix-footer-not-displayed"
+                                                                  :head "abc123"}
+                                               psi.extension/set-worktree-path {:psi.agent-session/worktree-path (:worktree-path params)}
+                                               psi.extension/send-message {:psi.extension/message params}
+                                               psi.extension/create-session {:psi.agent-session/session-id "s-created"
+                                                                             :psi.agent-session/session-name (:session-name params)
+                                                                             :psi.agent-session/worktree-path (:worktree-path params)}
+                                               nil))})]
+      (sut/init api)
+      ((get-in @state [:commands "work-on" :handler]) "Fix footer not displayed")
+      (is (= "/repo/project/fix-footer-not-displayed"
+             (get-in (second (first @mutate-calls)) [:input :path])))
+      (is (= "/repo/project/fix-footer-not-displayed"
+             (get-in (second (nth @mutate-calls 1)) [:worktree-path])))
+      (is (= "/repo/project/fix-footer-not-displayed"
+             (get-in (second (nth @mutate-calls 2)) [:worktree-path]))))))
 
 (deftest work-on-command-reuses-existing-worktree-test
   (testing "/work-on creates a worktree from an existing branch when the slug branch already exists"
