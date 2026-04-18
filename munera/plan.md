@@ -11,6 +11,7 @@ Open tasks in suggested execution order:
 7. `munera/open/007-auto-session-name-extension/`
 8. `munera/open/014-psi-tool-code-reload/`
 9. `munera/open/015-direct-project-repl-support/`
+10. `munera/open/017-runtime-reload-refresh-convergence/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.

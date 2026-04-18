@@ -1,0 +1,74 @@
+Approach:
+- Treat post-reload runtime convergence as one named runtime refresh pass rather than a configurable unit framework.
+- Make the pass explicit and diagnosable before attempting broader hot-swap ambitions.
+- Build the work in vertical slices so each phase becomes coherent and provable.
+
+Planned slices:
+
+1. Refresh pass scaffold
+- Define the runtime refresh pass entrypoint and structured result shape.
+- Keep the pass fixed-order and full-scope for the first implementation.
+- Make best-effort / non-atomic semantics explicit.
+- Make the first-slice boundary explicit: the pass does not recreate `ctx`.
+
+2. Query graph refresh
+- Add one explicit phase that refreshes:
+  - resolver registrations
+  - mutation registrations
+  - compiled query env
+- Use canonical query registration surfaces as the source of truth.
+- Replace stale executable registrations rather than appending to them.
+- First slice may use clear-and-re-register semantics followed by env rebuild.
+- Prove refreshed query graph behavior after reload-oriented re-registration.
+
+3. Dispatch handler refresh
+- Add one explicit phase for dispatch handler refresh.
+- Use the canonical dispatch handler registration path as the source of truth.
+- Refresh executable handler entries with clear-and-re-register semantics in the first slice.
+- Preserve event-log/trace data by default while refreshing executable handler entries.
+- Prove old handler fn values are replaced.
+
+4. Extension refresh
+- Define the extension refresh boundary inside the pass.
+- Use the canonical extension reload path as the source of truth.
+- Refresh extension runtime wiring explicitly rather than relying on namespace reload alone.
+- Preserve extension-local data/state by default unless the canonical extension reload path explicitly resets an executable registry surface.
+- Keep the extension step explicit and diagnosable.
+
+5. Known hook reinstall
+- Reinstall exactly these first-slice runtime hooks that do not automatically follow var reload:
+  - extension run fn
+  - background-job UI refresh fn
+- Apply session-scoped reinstalls across the live sessions that currently depend on those hooks, not just the active session.
+- Treat other closure-backed ctx-installed hooks as limitations unless later design work brings them into scope explicitly.
+
+6. Limitation reporting
+- Identify long-lived loops/threads that cannot be safely swapped in place.
+- Identify in-flight prompt/background/service work that is not guaranteed to be rebound to refreshed code.
+- Report those boundaries explicitly in the final result using `boundary` / `reason` / `remediation` semantics.
+- Use `:partial` when full in-place convergence cannot honestly be claimed.
+
+7. Consumer integration
+- Expose the refresh pass so consumer tasks such as `014-psi-tool-code-reload` can call it.
+- Keep this task responsible for the runtime refresh mechanics and result semantics.
+
+8. Docs + proof
+- Document the distinction between code reload and runtime refresh.
+- Add focused tests proving convergence for query, dispatch, extensions, known installed hooks, and limitation reporting.
+
+Implementation notes:
+- Prefer one clear refresh pass over a refresh-unit mini-framework.
+- Preserve long-lived data where safe; refresh executable wiring explicitly.
+- Use structured result reporting so partial success is visible.
+
+Risks / decision points:
+- some closures may only be refreshable by reinstalling runtime wiring rather than by any generic mechanism
+- some loop/thread boundaries may require restart rather than hot refresh
+- extension refresh scope may need careful worktree/code-affecting boundaries later
+
+Verification strategy:
+- land refresh-pass scaffold first
+- then query graph refresh
+- then dispatch refresh
+- then extension refresh + known hook reinstall
+- finish with limitation reporting and consumer integration
