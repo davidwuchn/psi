@@ -6,12 +6,12 @@
 
 (deftest custom-type-messages-excluded-from-llm-conversation-test
   (testing "messages with :custom-type are filtered out before LLM call"
-    ;; PSL extension appends assistant-role custom-type messages as transcript markers.
+    ;; PSL extension appends assistant-role notify/custom-type messages as transcript markers.
     ;; These must not reach the LLM — consecutive assistant messages cause Anthropic 400.
     (let [messages
           [{:role "user"    :content [{:type :text :text "hello"}]}
            {:role "assistant" :content [{:type :text :text "hi there"}]}
-           ;; PSL send-message! — assistant role, custom-type marker
+           ;; PSL notify! — assistant role, custom-type marker
            {:role "assistant" :content [{:type :text :text "PSL sync start."}]
             :custom-type "plan-state-learning"}
            {:role "user"    :content [{:type :text :text "PSL follow-up"}]}]

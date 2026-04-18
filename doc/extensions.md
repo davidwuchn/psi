@@ -343,7 +343,9 @@ use:
 
 | Key                  | Signature                                 | Description                          |
 |----------------------|-------------------------------------------|--------------------------------------|
-| `:send-message`      | `(fn [msg opts?])`                        | Send a raw message to the agent      |
+| `:notify`            | `(fn [content opts?])`                    | Emit a UI/transcript-visible message that is excluded from future LLM-visible conversation assembly |
+| `:append-message`    | `(fn [role content])`                     | Append a synthetic conversation-visible message that becomes part of future LLM-visible conversation assembly |
+| `:send-message`      | compatibility-only                        | Legacy ambiguous surface; use `:notify` or `:append-message` instead |
 | `:send-user-message` | `(fn [content opts?])`                    | Send a user message                  |
 | `:append-entry`      | `(fn [custom-type data?])`                | Append a custom journal entry        |
 | `:set-session-name`  | `(fn [name])`                             | Set the session name                 |
