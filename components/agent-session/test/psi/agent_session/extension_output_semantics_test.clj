@@ -81,6 +81,8 @@
         (agent-core/append-message-in! (ss/agent-ctx-in ctx3 session-id3)
                                        {:role "user"
                                         :content [{:type :text :text "hello"}]})
+        ;; Compatibility-only coverage: custom-type still means UI-only, while
+        ;; plain legacy send-message still means synthetic conversation append.
         (mutate3! 'psi.extension/send-message
                   {:role "assistant"
                    :content "status only"
