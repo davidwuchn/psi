@@ -1,0 +1,16 @@
+Implementation notes:
+- Design converged before code changes.
+- Accepted rule is intentionally narrow:
+  - if `Parent(current-worktree-path) = main-checkout-path`, place under `main-checkout-path`
+  - otherwise place under `Parent(main-checkout-path)`
+- Formal surfaces to update first:
+  - `spec/work-on-extension.allium`
+  - `spec/git-worktree-mutations.allium`
+- User/dev-facing wording to update next:
+  - `doc/tui.md`
+  - `extensions/src/extensions/work_on.clj`
+- Test work should include both direct helper coverage and extension behavior coverage for:
+  - sibling-main layout
+  - nested-linked layout from a linked worktree
+  - defined nested-layout invocation from main checkout
+- Explicitly avoid broader layout inference from non-current worktrees or history.

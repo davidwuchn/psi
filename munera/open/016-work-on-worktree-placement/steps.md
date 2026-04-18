@@ -1,0 +1,5 @@
+- [x] Enumerate the supported repository/worktree layouts relevant to `/work-on`
+- [x] Define the canonical placement rule from main checkout path and current worktree path relationships
+- [x] Work through examples for invoking `/work-on` from both known layouts
+- [x] Define unsupported/ambiguous cases and expected error behavior
+- [x] Review the design against existing `/work-on` docs/spec/tests before implementation
