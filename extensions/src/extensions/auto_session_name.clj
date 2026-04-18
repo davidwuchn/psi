@@ -168,14 +168,24 @@
   ((:query-session api) session-id [:psi.agent-session/model-provider
                                     :psi.agent-session/model-id]))
 
+(defn- helper-model-selection-request [model-ctx]
+  {:mode                :resolve
+   :required            [{:criterion :supports-text
+                          :match     :true}]
+   :strong-preferences  [{:criterion :input-cost
+                          :prefer    :lower}
+                         {:criterion :output-cost
+                          :prefer    :lower}]
+   :weak-preferences    [{:criterion :same-provider-as-session
+                          :prefer    :context-match}]
+   :context             {:session-model {:provider (some-> (:psi.agent-session/model-provider model-ctx)
+                                                           keyword)
+                                         :id       (:psi.agent-session/model-id model-ctx)}}})
+
 (defn- select-helper-model [api source-session-id]
   (let [model-ctx (query-session-model-context api source-session-id)
         result    (model-selection/resolve-selection
-                   {:request {:role    :auto-session-name
-                              :mode    :resolve
-                              :context {:session-model {:provider (some-> (:psi.agent-session/model-provider model-ctx)
-                                                                          keyword)
-                                                        :id       (:psi.agent-session/model-id model-ctx)}}}})]
+                   {:request (helper-model-selection-request model-ctx)})]
     (when (= :ok (:outcome result))
       (:candidate result))))
 

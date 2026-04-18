@@ -14,6 +14,37 @@
            :log-fn nil
            :ui nil}))
 
+(deftest helper-model-selection-request-test
+  (testing "extension defines its own explicit resolver request"
+    (is (= {:mode :resolve
+            :required [{:criterion :supports-text
+                        :match :true}]
+            :strong-preferences [{:criterion :input-cost
+                                  :prefer :lower}
+                                 {:criterion :output-cost
+                                  :prefer :lower}]
+            :weak-preferences [{:criterion :same-provider-as-session
+                                :prefer :context-match}]
+            :context {:session-model {:provider :anthropic
+                                      :id "claude-sonnet-4-6"}}}
+           (#'sut/helper-model-selection-request
+            {:psi.agent-session/model-provider "anthropic"
+             :psi.agent-session/model-id "claude-sonnet-4-6"}))))
+
+  (testing "missing source-session model still yields an explicit extension-owned request"
+    (is (= {:mode :resolve
+            :required [{:criterion :supports-text
+                        :match :true}]
+            :strong-preferences [{:criterion :input-cost
+                                  :prefer :lower}
+                                 {:criterion :output-cost
+                                  :prefer :lower}]
+            :weak-preferences [{:criterion :same-provider-as-session
+                                :prefer :context-match}]
+            :context {:session-model {:provider nil
+                                      :id nil}}}
+           (#'sut/helper-model-selection-request {})))))
+
 (deftest init-registers-handlers-and-load-notification-test
   (testing "init registers handlers and emits load notification"
     (reset-state!)

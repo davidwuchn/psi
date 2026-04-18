@@ -250,3 +250,12 @@
 - Documented `psi.ai.model-selection/resolve-selection` request/result shapes and extension-facing usage guidance.
 - Updated `doc/extensions.md` to recommend shared model resolution for helper/background workflows instead of caller-local fallback chains.
 - Marked `doc/design-auto-session-name-mvp.md` as historical context now that the implementation has moved beyond the original MVP scope.
+
+2026-04-17 — Step 11: extension-owned request shape in auto-session-name
+- Removed the extension's dependence on the built-in `:auto-session-name` role for helper model choice.
+- Added `helper-model-selection-request` in `extensions.auto-session-name` so the extension now defines its own explicit resolver request.
+- The current extension-owned request preserves the existing behavior:
+  - require text capability
+  - strongly prefer lower input/output cost
+  - weakly prefer source-session provider affinity
+- Added focused unit coverage proving the extension constructs its own request explicitly, including the no-source-model case.

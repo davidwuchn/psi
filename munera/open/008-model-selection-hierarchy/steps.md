@@ -15,7 +15,7 @@
 - [x] Sync docs/config surfaces if public behavior changes
 - [ ] Extend catalog metadata so resolver can compare locality and latency without guessing from provider/id
 - [ ] Add queryable cost/latency/locality preference and constraint forms needed for helper-model selection
-- [ ] Make `extensions/src/extensions/auto_session_name.clj` define and submit its own explicit resolver request instead of depending on a built-in role
+- [x] Make `extensions/src/extensions/auto_session_name.clj` define and submit its own explicit resolver request instead of depending on a built-in role
 - [ ] Make the auto-session-name extension request prefer local models first
 - [ ] Make the auto-session-name extension request require low-latency models
 - [ ] Make the auto-session-name extension request require low-cost or zero-cost models
