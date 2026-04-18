@@ -203,6 +203,10 @@
   - history resolver `:git.branch/default-branch`
   - direct root attr `:git.branch/default-branch`
 - λ Δ Synced worktree docs/spec/tests to the `/work-done` workflow.
+- λ Δ `/work-on` worktree placement is now derived from the relationship between the main checkout path and the current worktree path.
+  - When the current worktree is an immediate child of the main checkout, `/work-on` places the new worktree inside the main checkout directory.
+  - Otherwise, `/work-on` places the new worktree in the parent directory of the main checkout.
+  - This fixes the nested-linked layout where the main checkout is the project directory and linked worktrees live under it.
 - λ Δ Removed redundant `:psi.agent-session/git-*` worktree/default-branch bridge attrs; runtime consumers now query `:git.worktree/*` and `:git.branch/default-branch` directly from session root.
 - ✓ Verification:
   - `bb clojure:test:extensions --focus extensions.work-on-test`
