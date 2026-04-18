@@ -5,3 +5,4 @@
 - [x] Update tests to the canonical tool name
 - [x] Update docs/prompts/instructions to the canonical tool name
 - [x] Decide whether any temporary compatibility alias is needed and bound it explicitly
+- [x] Remove the temporary compatibility alias and old spec path
