@@ -75,7 +75,7 @@
           (is (= 2 (count texts)))
           (is (= #{"hello" "synthetic reply"} (set texts))))))
 
-    (testing "compatibility send-message preserves the old split semantics"
+    (testing "compatibility send-message still preserves the old split semantics during migration"
       (let [[ctx3 session-id3] (test-support/make-session-ctx {})
             mutate3!           (mutate-fn ctx3 session-id3)]
         (agent-core/append-message-in! (ss/agent-ctx-in ctx3 session-id3)
