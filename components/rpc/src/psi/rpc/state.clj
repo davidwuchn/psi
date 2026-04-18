@@ -4,7 +4,7 @@
    State shape:
    {:transport  {:ready? :negotiated-protocol-version :pending :max-pending-requests :err}
     :connection {:focus-session-id :subscribed-topics :event-seq}
-    :workers    {:inflight-futures :rpc-run-fn-registered? :ui-watch-loop :external-event-loop :projection-listener-id}}")
+    :workers    {:inflight-futures :rpc-run-fn-registered? :external-event-loop :projection-listener-id :projection-listener-stop-fn}}")
 
 (def default-max-pending-requests 64)
 
@@ -24,9 +24,9 @@
          :workers
          {:inflight-futures []
           :rpc-run-fn-registered? false
-          :ui-watch-loop nil
           :external-event-loop nil
-          :projection-listener-id nil}}))
+          :projection-listener-id nil
+          :projection-listener-stop-fn nil}}))
 
 (defn initialize-transport-state!
   [state err]
@@ -52,9 +52,9 @@
                        (fn [workers]
                          (merge {:inflight-futures []
                                  :rpc-run-fn-registered? false
-                                 :ui-watch-loop nil
                                  :external-event-loop nil
-                                 :projection-listener-id nil}
+                                 :projection-listener-id nil
+                                 :projection-listener-stop-fn nil}
                                 (or workers {})))))))
   state)
 
@@ -136,15 +136,6 @@
   (swap! state assoc-in [:workers :rpc-run-fn-registered?] true)
   state)
 
-(defn ui-watch-loop
-  [state]
-  (get-in @state [:workers :ui-watch-loop]))
-
-(defn set-ui-watch-loop!
-  [state x]
-  (swap! state assoc-in [:workers :ui-watch-loop] x)
-  state)
-
 (defn external-event-loop
   [state]
   (get-in @state [:workers :external-event-loop]))
@@ -161,6 +152,15 @@
 (defn set-projection-listener-id!
   [state listener-id]
   (swap! state assoc-in [:workers :projection-listener-id] listener-id)
+  state)
+
+(defn projection-listener-stop-fn
+  [state]
+  (get-in @state [:workers :projection-listener-stop-fn]))
+
+(defn set-projection-listener-stop-fn!
+  [state stop-fn]
+  (swap! state assoc-in [:workers :projection-listener-stop-fn] stop-fn)
   state)
 
 (defn add-inflight-future!
@@ -193,5 +193,9 @@
 
 (defn stop-managed-workers!
   [state]
-  (doseq [k [:ui-watch-loop :external-event-loop]]
+  (when-let [stop-fn (projection-listener-stop-fn state)]
+    (try (stop-fn) (catch Throwable _ nil))
+    (set-projection-listener-stop-fn! state nil)
+    (set-projection-listener-id! state nil))
+  (doseq [k [:external-event-loop]]
     (stop-worker! state k)))

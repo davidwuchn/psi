@@ -149,9 +149,7 @@
           widget-evt  (some #(when (= "ui/widgets-updated" (:event %)) %) frames)]
       (is (some? widget-evt))
       (is (= "w-1" (get-in widget-evt [:data :widgets 0 :widget-id])))
-      (is (= ["hello widget"] (get-in widget-evt [:data :widgets 0 :content])))
-      (when-let [f (get-in state [:workers :ui-watch-loop])]
-        (future-cancel f)))))
+      (is (= ["hello widget"] (get-in widget-evt [:data :widgets 0 :content]))))))
 
 (deftest rpc-ui-snapshot-delegates-to-canonical-extension-ui-projection-test
   (let [snapshot (psi.rpc.events/ui-snapshot
@@ -197,9 +195,7 @@
              (mapv (juxt :extension-id :widget-id)
                    (get-in widget-evt [:data :widgets]))))
       (is (= ["ext-a" "ext-z"]
-             (mapv :extension-id (get-in status-evt [:data :statuses]))))
-      (when-let [f (get-in state [:workers :ui-watch-loop])]
-        (future-cancel f)))))
+             (mapv :extension-id (get-in status-evt [:data :statuses])))))))
 
 (deftest rpc-subscribe-ui-topics-emits-initial-notification-snapshot-test
   (testing "subscribe ui/notification emits current visible notifications immediately"
@@ -223,12 +219,10 @@
       (is (some? notification-evt))
       (is (= "ext.demo" (get-in notification-evt [:data :extension-id])))
       (is (= "hello notification" (get-in notification-evt [:data :message])))
-      (is (= "info" (get-in notification-evt [:data :level])))
-      (when-let [f (get-in state [:workers :ui-watch-loop])]
-        (future-cancel f)))))
+      (is (= "info" (get-in notification-evt [:data :level]))))))
 
-(deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
-  (testing "after subscribe, ui widget updates stream without a prompt request"
+(deftest rpc-event-driven-ui-projection-streams-widget-updates-without-prompt-test
+  (testing "after subscribe, ui widget updates stream from event-driven projection delivery without a prompt request"
     (let [[ctx _]     (support/create-session-context)
           state       (atom {:transport {:ready? true :pending {}}
                              :connection {:subscribed-topics #{}}})
@@ -266,8 +260,6 @@
           (is (= "w-2" (get-in latest [:data :widgets 0 :widget-id])))
           (is (= ["live update"] (get-in latest [:data :widgets 0 :content]))))
         (finally
-          (when-let [f (get-in @state [:workers :ui-watch-loop])]
-            (future-cancel f))
           (future-cancel loop-future)
           (try (.close in-writer) (catch Exception _ nil))
           (try (.close in-reader) (catch Exception _ nil)))))))

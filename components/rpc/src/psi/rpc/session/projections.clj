@@ -5,6 +5,8 @@
    [psi.rpc.events :as events]
    [psi.rpc.state :as rpc.state]))
 
+(declare unregister-projection-listener!)
+
 (defn emit-context-updated!
   [ctx emit-frame! state session-id]
   (events/emit-event! emit-frame! state
@@ -47,6 +49,8 @@
                                                                        :state state}
                                                                       change)))]
         (rpc.state/set-projection-listener-id! state listener-id)
+        (rpc.state/set-projection-listener-stop-fn! state
+                                                   #(unregister-projection-listener! ctx state))
         listener-id))))
 
 (defn unregister-projection-listener!
@@ -55,4 +59,5 @@
     (when-let [unregister-fn (:unregister-projection-listener-fn ctx)]
       (unregister-fn ctx listener-id))
     (rpc.state/set-projection-listener-id! state nil)
+    (rpc.state/set-projection-listener-stop-fn! state nil)
     true))
