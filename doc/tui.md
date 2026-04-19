@@ -68,6 +68,8 @@ The selector UI is frontend-native, but candidate lists and command semantics ar
 - `/work-on <description>` creates a git worktree + branch at a path derived from the
   current/main worktree layout and moves you into a distinct new context session bound to
   that worktree.
+- Worktree extension commands invoked after `/new` operate on the active session that
+  issued the command, rather than a previously loaded session.
 - `/work-done` completes the current linked worktree onto the default branch.
 - It uses the cached default branch for the context.
 - If the current branch is not yet fast-forwardable onto the default branch, `/work-done`

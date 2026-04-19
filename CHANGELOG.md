@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-18
+
+- λ Δ Fixed extension slash-command session targeting after `/new`:
+  - extension command handlers now execute with the active dispatch session bound as the implicit extension session
+  - `make-extension-runtime-fns` now prefers the dynamically active extension session for implicit `:query` / `:mutate` calls while preserving explicit `:query-session` / `:mutate-session` targeting
+  - this fixes cases where extension commands such as `/work-on` appeared to silently do nothing from a fresh `/new` session because they were still operating on the original extension-load session
+- ✓ Verification:
+  - `clojure -M:test --focus psi.agent-session.extension-targeting-runtime-test`
+  - `clojure -M:test --focus extensions.work-on-test`
+
 ## 2026-04-13
 
 - λ Δ Fixed child-session runtime allocation for extension-driven agent execution:

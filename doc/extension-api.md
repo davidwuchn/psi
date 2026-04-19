@@ -70,6 +70,12 @@ ambient runtime session, prefer explicit session-targeted helpers:
 This is the recommended pattern for delayed/background extension work. It keeps
 session routing explicit and avoids relying on implicit adapter focus.
 
+For slash-command handlers invoked through the shared command dispatcher, implicit
+`(:query api)` / `(:mutate api)` calls are now rebound to the active invoking
+session during handler execution. That implicit routing is intended for immediate
+command handling only; cross-session and deferred/background work should still use
+`query-session` / `mutate-session` explicitly.
+
 Example:
 
 ```clojure

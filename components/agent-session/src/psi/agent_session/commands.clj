@@ -28,6 +28,7 @@
    [psi.agent-session.core :as session]
    [psi.app-runtime.background-job-view :as app-bg-view]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.extensions.runtime-fns :as ext-runtime-fns]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.oauth.core :as oauth]
@@ -571,12 +572,20 @@
                          (str/join ", " (map :name logged-in)))})))))
 
 (defn- dispatch-extension-command
-  [ctx trimmed]
+  [ctx session-id trimmed]
   (let [parts    (str/split (subs trimmed 1) #"\s" 2)
         cmd-name (first parts)
         args-str (or (second parts) "")
-        cmd      (ext/get-command-in (:extension-registry ctx) cmd-name)]
-    {:type :extension-cmd :name cmd-name :args args-str :handler (:handler cmd)}))
+        cmd      (ext/get-command-in (:extension-registry ctx) cmd-name)
+        handler   (:handler cmd)]
+    {:type :extension-cmd
+     :name cmd-name
+     :args args-str
+     :handler (when handler
+                (fn [args]
+                  (ext-runtime-fns/with-active-extension-session-id
+                    session-id
+                    #(handler args))))}))
 
 (defn- new-session-result
   [ctx session-id on-new-session!]
@@ -651,7 +660,7 @@
      (when (str/starts-with? trimmed "/")
        (let [cmd-name (first (str/split (subs trimmed 1) #"\s" 2))]
          (when (ext/get-command-in (:extension-registry ctx) cmd-name)
-           (dispatch-extension-command ctx trimmed)))))))
+           (dispatch-extension-command ctx session-id trimmed)))))))
 
 (defn dispatch-in
   "Explicit session-targeted command dispatch over the shared pipeline."

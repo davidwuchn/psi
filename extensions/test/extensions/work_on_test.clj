@@ -2,6 +2,11 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [extensions.work-on :as sut]
+   [psi.agent-session.commands :as commands]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.extensions :as ext]
+   [psi.agent-session.extensions.runtime-fns :as runtime-fns]
+   [psi.agent-session.mutations :as mutations]
    [psi.extension-test-helpers.nullable-api :as nullable]
    [psi.history.git :as git]))
 
@@ -46,6 +51,13 @@
        (filter #(= 'psi.extension/notify (first %)))
        (map (comp :content second))
        vec))
+
+(defn- create-two-session-context []
+  (let [ctx (session/create-context {:persist? false
+                                     :mutations mutations/all-mutations})
+        s1  (session/new-session-in! ctx nil {:session-name "one"})
+        s2  (session/new-session-in! ctx (:session-id s1) {:session-name "two"})]
+    [ctx (:session-id s1) (:session-id s2)]))
 
 (deftest mechanical-slug-test
   (testing "slug is mechanical and limited to four significant words"
@@ -337,6 +349,78 @@
                   :content "usage: /work-on <description>"
                   :ext-path "/test/work_on.clj"}]]
                @mutate-calls))))))
+
+(deftest work-on-command-follows-active-session-after-new-test
+  (testing "/work-on dispatched from a new session mutates that active session, not the extension load session"
+    (let [[ctx s1 s2] (create-two-session-context)
+          reg         (:extension-registry ctx)
+          ext-path    "/ext/test/work_on.clj"
+          mutate-calls (atom [])
+          _           (ext/register-extension-in! reg ext-path)
+          runtime-fns* (assoc (runtime-fns/make-extension-runtime-fns ctx s1 ext-path)
+                              :query-fn
+                              (fn [req]
+                                (let [sid0  (or runtime-fns/*active-extension-session-id* s1)
+                                      sid   (if (and (map? req) (contains? req :query))
+                                              (or (:session-id req) sid0)
+                                              sid0)
+                                      query (if (and (map? req) (contains? req :query))
+                                              (:query req)
+                                              req)]
+                                  (cond
+                                    (= query session-query)
+                                    {:psi.agent-session/session-id sid
+                                     :psi.agent-session/worktree-path (if (= sid s2) "/repo/two" "/repo/one")
+                                     :psi.agent-session/system-prompt "prompt"
+                                     :psi.agent-session/host-sessions []
+                                     :git.worktree/current {:git.worktree/path (if (= sid s2) "/repo/two" "/repo/one")
+                                                            :git.worktree/branch-name "main"
+                                                            :git.worktree/current? true}
+                                     :git.worktree/list [{:git.worktree/path (if (= sid s2) "/repo/two" "/repo/one")
+                                                          :git.worktree/branch-name "main"
+                                                          :git.worktree/current? true}]}
+
+                                    (= query [:git.branch/default-branch])
+                                    {:git.branch/default-branch {:branch "main" :source :fallback}}
+
+                                    :else {})))
+                              :mutate-fn
+                              (fn [op params]
+                                (swap! mutate-calls conj [op params])
+                                (cond
+                                  (= op 'psi.extension/register-command)
+                                  (do
+                                    (ext/register-command-in! reg ext-path (assoc (:opts params) :name (:name params)))
+                                    {:psi.extension/command-names (vec (ext/command-names-in reg))})
+
+                                  (= op 'git.worktree/add!)
+                                  {:success true
+                                   :path (get-in params [:input :path])
+                                   :branch (get-in params [:input :branch])
+                                   :head "abc123"}
+
+                                  (= op 'psi.extension/set-worktree-path)
+                                  {:psi.agent-session/worktree-path (:worktree-path params)}
+
+                                  (= op 'psi.extension/create-session)
+                                  {:psi.agent-session/session-id "s-created"
+                                   :psi.agent-session/session-name (:session-name params)
+                                   :psi.agent-session/worktree-path (:worktree-path params)}
+
+                                  (= op 'psi.extension/notify)
+                                  {:psi.extension/message params}
+
+                                  :else nil))
+                              :notify-fn nil)
+          api         (ext/create-extension-api reg ext-path runtime-fns*)
+          _           (sut/init api)
+          result      (commands/dispatch-in ctx s2 "/work-on active session target" {:supports-session-tree? false})]
+      (is (= :extension-cmd (:type result)))
+      ((:handler result) (:args result))
+      (let [set-worktree-call (some #(when (= 'psi.extension/set-worktree-path (first %)) %) @mutate-calls)]
+        (is (= 'psi.extension/set-worktree-path (first set-worktree-call)))
+        (is (= s2 (get-in set-worktree-call [1 :session-id]))
+            "work-on must update the active session worktree-path after /new")))))
 
 (deftest work-done-and-rebase-commands-test
   (testing "/work-done fast-forwards onto the cached default branch, switches sessions, and /work-rebase emits notifications"
