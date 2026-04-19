@@ -30,8 +30,8 @@
                      :lambda "λf. find(exact) → replace"}
    "write"          {:prose  "Create or overwrite files"
                      :lambda "λf. create(f) ∨ overwrite(f)"}
-   "psi-tool"       {:prose  "Execute live psi runtime operations: action-based graph query, in-process eval, and explicit code reload."
-                     :lambda "λaction. runtime(query ∨ eval ∨ reload-code) → {graph ∨ value ∨ reload-report}"}})
+   "psi-tool"       {:prose  "Execute live psi runtime operations: action-based graph query, in-process eval, explicit code reload, and managed project REPL control."
+                     :lambda "λaction. runtime(query ∨ eval ∨ reload-code ∨ project-repl) → {graph ∨ value ∨ reload-report ∨ project-repl-report}"}})
 
 ;;; Lambda mode constants
 
@@ -245,6 +245,12 @@
        "  - namespace mode: psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])\n"
        "  - worktree mode (session-derived): psi-tool(action: \"reload-code\")\n"
        "  - worktree mode (explicit): psi-tool(action: \"reload-code\", worktree-path: \"/abs/path/to/worktree\")\n"
+       "- Managed project REPL:\n"
+       "  - status: psi-tool(action: \"project-repl\", op: \"status\")\n"
+       "  - start: psi-tool(action: \"project-repl\", op: \"start\")\n"
+       "  - attach: psi-tool(action: \"project-repl\", op: \"attach\", host: \"127.0.0.1\", port: 7888)\n"
+       "  - eval: psi-tool(action: \"project-repl\", op: \"eval\", code: \"(+ 1 2)\")\n"
+       "  - interrupt: psi-tool(action: \"project-repl\", op: \"interrupt\")\n"
        "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window"))
 
 (defn- prose-guidelines [tool-names]

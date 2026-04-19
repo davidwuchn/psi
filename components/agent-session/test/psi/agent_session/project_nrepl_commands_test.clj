@@ -26,26 +26,25 @@
           (is (re-find #"~/.psi/agent/config.edn" (:message result)))
           (is (re-find #"/.psi/project.edn" (:message result)))))))
 
-  (testing "/project-repl eval routes through project nREPL eval helper"
+  (testing "/project-repl eval routes through shared project nREPL ops helper"
     (let [[ctx session-id] (test-support/create-test-session {:persist? false
                                                               :session-defaults {:worktree-path (System/getProperty "user.dir")}})]
-      (with-redefs [psi.agent-session.project-nrepl-eval/eval-instance-in! (fn [_ctx worktree-path code]
-                                                                             {:status :success
-                                                                              :worktree-path worktree-path
-                                                                              :input code
-                                                                              :value "3"})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/eval-op (fn [_ctx _worktree-path _code]
+                                                                  {:status :ok
+                                                                   :value "3"
+                                                                   :out ""
+                                                                   :err ""})]
         (let [result (commands/dispatch-in ctx session-id "/project-repl eval (+ 1 2)" {})]
           (is (= :text (:type result)))
-          (is (re-find #"Project nREPL eval success" (:message result)))
+          (is (re-find #"Project nREPL eval ok" (:message result)))
           (is (re-find #"3" (:message result)))))))
 
   (testing "/project-repl interrupt reports unavailable clearly"
     (let [[ctx session-id] (test-support/create-test-session {:persist? false
                                                               :session-defaults {:worktree-path (System/getProperty "user.dir")}})]
-      (with-redefs [psi.agent-session.project-nrepl-eval/interrupt-instance-in! (fn [_ctx worktree-path]
-                                                                                   {:status :unavailable
-                                                                                    :reason :no-active-eval
-                                                                                    :worktree-path worktree-path})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/interrupt (fn [_ctx _worktree-path]
+                                                                    {:status :unavailable
+                                                                     :reason :no-active-eval})]
         (let [result (commands/dispatch-in ctx session-id "/project-repl interrupt" {})]
           (is (= :text (:type result)))
           (is (re-find #"unavailable" (:message result)))

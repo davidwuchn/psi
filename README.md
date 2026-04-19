@@ -55,6 +55,7 @@ For TUI login flow, in-session commands, and runtime behavior, see:
 - `query` — EQL graph reads
 - `eval` — in-process namespace-scoped Clojure eval
 - `reload-code` — explicit namespace/worktree code reload with distinct reload and graph-refresh reporting
+- `project-repl` — managed project REPL status/start/attach/stop/eval/interrupt operations with structured reports
 
 See [`doc/psi-project-config.md`](doc/psi-project-config.md) for examples and reload targeting rules.
 
