@@ -16,7 +16,7 @@
   - [x] Use canonical extension reload path
   - [x] Preserve extension-local data/state by default
 - [ ] Reinstall known runtime hooks
-  - [ ] Extension run fn
+  - [x] Extension run fn
   - [x] Background-job UI refresh fn
   - [ ] Apply session-scoped reinstalls across dependent live sessions
   - [x] Treat other closure-backed ctx-installed hooks as limitations in the first slice

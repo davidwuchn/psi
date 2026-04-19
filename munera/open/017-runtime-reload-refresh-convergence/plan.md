@@ -37,8 +37,8 @@ Planned slices:
 
 5. Known hook reinstall
 - Reinstall exactly these first-slice runtime hooks that do not automatically follow var reload:
-  - extension run fn
-  - background-job UI refresh fn
+  - extension run fn ✅ best-effort reinstall landed in `8885e7b`
+  - background-job UI refresh fn ✅ landed earlier in scaffold slices
 - Apply session-scoped reinstalls across the live sessions that currently depend on those hooks, not just the active session.
 - Treat other closure-backed ctx-installed hooks as limitations unless later design work brings them into scope explicitly.
 
