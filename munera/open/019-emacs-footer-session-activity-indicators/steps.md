@@ -3,7 +3,11 @@
   - RPC `footer/updated` currently exposes only `:path-line`, `:stats-line`, `:status-line`, `:usage-parts`, `:model-text`
   - Emacs footer rendering in `components/emacs-ui/psi-projection.el` consumes those canonical footer fields directly
   - canonical session activity already exists in shared context/session projections via `:is-streaming`
-- [ ] Decide canonical active vs idle source and representation
+- [x] Decide canonical active vs idle source and representation
+  - source: backend-owned context session list enriched from canonical per-session `:is-streaming`
+  - meaning: `active` ≡ `:is-streaming true`; `idle` ≡ not streaming
+  - representation: a compact backend-computed footer line grouped as `sessions: active … · idle …`
+  - rendering: expose a dedicated canonical `:session-activity-line` footer field so Emacs stays projection-only
 - [ ] Implement footer display change
 - [ ] Add/adjust tests
 - [ ] Verify footer readability with multiple sessions
