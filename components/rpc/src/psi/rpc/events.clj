@@ -162,8 +162,9 @@
 (defn- footer-event-payload
   [model]
   (merge (:footer/lines model)
-         {:usage-parts (get-in model [:footer/usage :parts])
-          :model-text  (get-in model [:footer/model :text])}))
+         {:usage-parts           (get-in model [:footer/usage :parts])
+          :model-text            (get-in model [:footer/model :text])
+          :session-activity-line (get-in model [:footer/session-activity :line])}))
 
 (defn footer-updated-payload
   [ctx session-id]

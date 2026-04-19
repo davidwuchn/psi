@@ -166,10 +166,42 @@
                {:status/extension-id (or (:extension-id status) (:extensionId status))
                 :status/text         (sanitize-status-text (or (:text status) (:message status)))}))))
 
+(defn- footer-session-label
+  [session-map]
+  (or (present-string (:display-name session-map))
+      (present-string (:session-display-name session-map))
+      (present-string (:session-name session-map))
+      (when-let [sid (present-string (:session-id session-map))]
+        (subs sid 0 (min 8 (count sid))))))
+
+(defn- footer-session-activity-line
+  [context-sessions]
+  (let [sessions* (->> (or context-sessions [])
+                       (keep (fn [session-map]
+                               (when-let [label (footer-session-label session-map)]
+                                 {:label label
+                                  :is-streaming (boolean (:is-streaming session-map))}))))
+        active*   (->> sessions*
+                       (filter :is-streaming)
+                       (map :label)
+                       vec)
+        idle*     (->> sessions*
+                       (remove :is-streaming)
+                       (map :label)
+                       vec)
+        parts     (cond-> []
+                    (seq active*)
+                    (conj (str "active " (str/join ", " active*)))
+
+                    (seq idle*)
+                    (conj (str "idle " (str/join ", " idle*))))]
+    (when (> (count sessions*) 1)
+      (str "sessions: " (str/join " · " parts)))))
+
 (defn footer-model-from-data
   ([d]
    (footer-model-from-data d {}))
-  ([d {:keys [worktree-path]}]
+  ([d {:keys [worktree-path context-sessions]}]
    (let [context-fraction  (:psi.agent-session/context-fraction d)
          context-window    (:psi.agent-session/context-window d)
          auto-compact?     (boolean (:psi.agent-session/auto-compaction-enabled d))
@@ -178,6 +210,7 @@
          model-text*       (model-text d)
          path-text*        (path-text d worktree-path)
          statuses*         (status-items (:psi.ui/statuses d))
+         session-activity-line (footer-session-activity-line context-sessions)
          status-line       (->> statuses*
                                 (map :status/text)
                                 (remove str/blank?)
@@ -209,11 +242,22 @@
                      :effective-reasoning-effort (:psi.agent-session/effective-reasoning-effort d)
                      :text                       model-text*}
       :footer/statuses statuses*
-      :footer/lines {:path-line   path-text*
-                     :stats-line  stats-line
-                     :status-line (when (seq status-line) status-line)}})))
+      :footer/session-activity {:line session-activity-line}
+      :footer/lines {:path-line             path-text*
+                     :stats-line            stats-line
+                     :session-activity-line session-activity-line
+                     :status-line           (when (seq status-line) status-line)}})))
+
+(defn- enrich-context-session-runtime-state
+  [ctx session-map]
+  (let [sid (:session-id session-map)
+        sd  (and sid (ss/get-session-data-in ctx sid))]
+    (cond-> session-map
+      (map? sd) (assoc :is-streaming (boolean (:is-streaming sd))))))
 
 (defn footer-model
   [ctx session-id]
   (footer-model-from-data (footer-data ctx session-id)
-                          {:worktree-path (ss/session-worktree-path-in ctx session-id)}))
+                          {:worktree-path  (ss/session-worktree-path-in ctx session-id)
+                           :context-sessions (->> (ss/list-context-sessions-in ctx)
+                                                  (mapv #(enrich-context-session-runtime-state ctx %)))}))

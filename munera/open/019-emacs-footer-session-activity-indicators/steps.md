@@ -8,6 +8,9 @@
   - meaning: `active` ≡ `:is-streaming true`; `idle` ≡ not streaming
   - representation: a compact backend-computed footer line grouped as `sessions: active … · idle …`
   - rendering: expose a dedicated canonical `:session-activity-line` footer field so Emacs stays projection-only
-- [ ] Implement footer display change
+- [x] Implement footer display change
+  - shared footer model now computes `:session-activity-line` from canonical context sessions
+  - RPC `footer/updated` now carries `:session-activity-line`
+  - Emacs footer projection now renders the canonical activity line between stats and status lines
 - [ ] Add/adjust tests
 - [ ] Verify footer readability with multiple sessions

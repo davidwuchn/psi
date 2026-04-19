@@ -23,3 +23,14 @@ Implementation notes.
   - keeps Emacs projection-only
   - avoids mixing session activity with extension statuses
   - remains legible with multiple sessions while still concise
+
+## Step 3 — implement shared footer activity projection
+- `components/app-runtime/src/psi/app_runtime/footer.clj`
+  - added backend footer session label + activity-line helpers
+  - footer model now accepts `:context-sessions`
+  - footer model now exposes `:footer/session-activity {:line ...}` and flattened `:session-activity-line`
+  - runtime footer model enriches context sessions with canonical per-session `:is-streaming`
+- `components/rpc/src/psi/rpc/events.clj`
+  - `footer/updated` now includes `:session-activity-line`
+- `components/emacs-ui/psi-projection.el`
+  - footer projection now renders the canonical session activity line between stats and extension status lines

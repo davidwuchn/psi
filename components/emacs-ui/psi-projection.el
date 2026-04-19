@@ -250,9 +250,10 @@ backend semantic text."
   "Extract deterministic footer projection text from event DATA.
 
 Canonical payload lines are rendered as multi-line text in this order:
-path-line, stats-line, status-line (blank lines omitted)."
+path-line, stats-line, session-activity-line, status-line (blank lines omitted)."
   (let* ((path-line* (psi-emacs--event-data-get data '(:path-line path-line)))
          (stats-line* (psi-emacs--projection-footer-stats-line data))
+         (session-activity-line* (psi-emacs--event-data-get data '(:session-activity-line session-activity-line)))
          (status-line* (psi-emacs--event-data-get data '(:status-line status-line)))
          (path-line (and (stringp path-line*)
                          (not (string-empty-p path-line*))
@@ -264,12 +265,17 @@ path-line, stats-line, status-line (blank lines omitted)."
                           (propertize stats-line*
                                       'face 'psi-emacs-projection-footer-stats-face
                                       'font-lock-face 'psi-emacs-projection-footer-stats-face)))
+         (session-activity-line (and (stringp session-activity-line*)
+                                     (not (string-empty-p session-activity-line*))
+                                     (propertize session-activity-line*
+                                                 'face 'psi-emacs-projection-footer-status-face
+                                                 'font-lock-face 'psi-emacs-projection-footer-status-face)))
          (status-line (and (stringp status-line*)
                            (not (string-empty-p status-line*))
                            (propertize status-line*
                                        'face 'psi-emacs-projection-footer-status-face
                                        'font-lock-face 'psi-emacs-projection-footer-status-face)))
-         (canonical-lines (delq nil (list path-line stats-line status-line))))
+         (canonical-lines (delq nil (list path-line stats-line session-activity-line status-line))))
     (when canonical-lines
       (string-join canonical-lines "\n"))))
 
