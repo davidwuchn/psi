@@ -957,6 +957,22 @@ Failure path appends deterministic assistant-visible feedback, sets
         (:action/session-id . ,id)))
      (t id))))
 
+(defun psi-emacs--tree-slot-runtime-state (slot)
+  "Return canonical runtime-state label for tree SLOT, or nil."
+  (psi-emacs--event-data-get slot '(:runtime-state runtime-state :item/runtime-state item/runtime-state)))
+
+(defun psi-emacs--tree-runtime-suffix (slot item-kind is-active)
+  "Return runtime/current suffix text for tree SLOT."
+  (if (not (equal item-kind "session"))
+      ""
+    (concat
+     (when is-active " ← current")
+     (let ((runtime-state (psi-emacs--tree-slot-runtime-state slot)))
+       (if (and (stringp runtime-state)
+                (not (string-empty-p (string-trim runtime-state))))
+           (concat " [" (string-trim runtime-state) "]")
+         "")))))
+
 (defun psi-emacs--tree-session-candidates (slots active-id)
   "Build completing-read candidates from backend-ordered SLOTS with ACTIVE-ID.
 
@@ -976,14 +992,10 @@ or a canonical action map."
             (is-active (and (equal item-kind "session")
                             (or is-active-raw
                                 (and id active-id (equal id active-id)))))
-            (is-streaming (or (psi-emacs--event-data-get slot '(:item/is-streaming item/is-streaming))
-                              (psi-emacs--event-data-get slot '(:is-streaming is-streaming))))
             (name (or (psi-emacs--event-data-get slot '(:label label))
                       (psi-emacs--tree-slot-label slot item-kind id entry-id)))
             (indent (if (or parent-id (equal item-kind "fork-point")) "  " ""))
-            (suffix (concat
-                     (when (and (equal item-kind "session") is-streaming) " [streaming]")
-                     (when is-active " ← active")))
+            (suffix (psi-emacs--tree-runtime-suffix slot item-kind is-active))
             (label (concat indent name suffix))
             (value (psi-emacs--tree-slot-value slot item-kind id entry-id)))
        (cons label value)))
