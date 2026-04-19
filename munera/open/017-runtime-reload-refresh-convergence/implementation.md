@@ -1,5 +1,4 @@
-No implementation notes yet.
-Task created to separate post-reload runtime refresh convergence from raw code reload.
+Step 1 landed in commit `2051a94` (`⚒ runtime-refresh: add canonical refresh scaffold`).
 
 Initial findings captured in design:
 - surviving runtime data is often not the problem
@@ -14,3 +13,40 @@ Focused diagnosis/repro for `/work-on` after `/new`:
 - `make-extension-runtime-fns` now prefers dynamically bound active extension session id over the original load-time session id for implicit query/mutate calls, while preserving explicit `:query-session` / `:mutate-session` targeting
 - focused test now passes, supporting the fix for silent `/work-on` behavior after `/new`
 - added a concrete `extensions.work-on` regression test proving `/work-on` dispatched from a new session updates the active session's worktree-path rather than the original extension-load session
+
+Implemented so far:
+- added shared runtime refresh entrypoint at `components/agent-session/src/psi/agent_session/runtime_refresh.clj`
+- wired `psi-tool reload-code` to report `:psi-tool/runtime-refresh` using the shared pass
+- added focused tests in:
+  - `components/agent-session/test/psi/agent_session/runtime_refresh_test.clj`
+  - `components/agent-session/test/psi/agent_session/tools_test.clj`
+
+Current first-slice behavior:
+- fixed refresh order is now explicit in the shared pass:
+  1. query graph
+  2. dispatch handlers
+  3. extensions
+  4. runtime hooks
+- structured result shape is now canonical:
+  - `:psi.runtime-refresh/status`
+  - `:psi.runtime-refresh/steps`
+  - `:psi.runtime-refresh/limitations`
+  - `:psi.runtime-refresh/duration-ms`
+- refresh remains best-effort and non-atomic
+- refresh explicitly records that it does not recreate `ctx` or replace `:state*`
+
+Current implementation boundaries:
+- query graph refresh uses runtime `requiring-resolve` to avoid compile-time load cycles while still delegating to canonical registration surfaces
+- dispatch refresh clears and re-registers handlers through the canonical registration path
+- extension refresh delegates to the canonical extension reload path when requested
+- background-job UI refresh hook is reinstalled through the app-runtime installer when available
+- extension run fn is currently treated as a known limitation rather than being recreated automatically
+
+Current honest limitation reporting:
+- if `:extension-run-fn-atom` is populated, runtime refresh reports a limitation entry with:
+  - `:boundary :extension-run-fn`
+  - reason/remediation text explaining likely stale closure capture and the need to re-register from bootstrap/runtime ownership
+
+Notes from landing this slice:
+- a direct compile-time require from `runtime_refresh` into `context` / `dispatch-handlers` caused a load cycle through `psi_tool`; switching refresh internals to `requiring-resolve` removed that cycle
+- `psi-tool` namespace-mode tests without runtime ctx correctly report extension refresh as `"extension registry unchanged (no runtime ctx provided)"`; preservation without rediscovery only applies when a runtime ctx exists and extension refresh is intentionally skipped

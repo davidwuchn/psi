@@ -5,11 +5,11 @@ Approach:
 
 Planned slices:
 
-1. Refresh pass scaffold
-- Define the runtime refresh pass entrypoint and structured result shape.
-- Keep the pass fixed-order and full-scope for the first implementation.
-- Make best-effort / non-atomic semantics explicit.
-- Make the first-slice boundary explicit: the pass does not recreate `ctx`.
+1. Refresh pass scaffold ✅ landed in `2051a94`
+- Defined the runtime refresh pass entrypoint and structured result shape.
+- Kept the pass fixed-order and full-scope for the first implementation.
+- Made best-effort / non-atomic semantics explicit.
+- Made the first-slice boundary explicit: the pass does not recreate `ctx`.
 
 2. Query graph refresh
 - Add one explicit phase that refreshes:
@@ -48,9 +48,9 @@ Planned slices:
 - Report those boundaries explicitly in the final result using `boundary` / `reason` / `remediation` semantics.
 - Use `:partial` when full in-place convergence cannot honestly be claimed.
 
-7. Consumer integration
-- Expose the refresh pass so consumer tasks such as `014-psi-tool-code-reload` can call it.
-- Keep this task responsible for the runtime refresh mechanics and result semantics.
+7. Consumer integration ✅ first slice landed in `2051a94`
+- Exposed the refresh pass so `psi-tool reload-code` now reports shared runtime refresh results.
+- Kept this task responsible for the runtime refresh mechanics and result semantics.
 
 8. Docs + proof
 - Document the distinction between code reload and runtime refresh.

@@ -1,6 +1,6 @@
-- [ ] Define the canonical runtime refresh pass entrypoint and structured result shape
-  - [ ] Fixed-order full pass for the first slice
-  - [ ] First slice does not recreate `ctx`
+- [x] Define the canonical runtime refresh pass entrypoint and structured result shape
+  - [x] Fixed-order full pass for the first slice
+  - [x] First slice does not recreate `ctx`
 - [ ] Implement query graph refresh
   - [ ] Resolver registration refresh
   - [ ] Mutation registration refresh
@@ -24,5 +24,5 @@
   - [ ] Long-lived loop/thread boundaries
   - [ ] In-flight prompt/background/service work when relevant
   - [ ] `boundary` / `reason` / `remediation` result shape
-- [ ] Expose the refresh pass for consumer tasks such as `014-psi-tool-code-reload`
+- [x] Expose the refresh pass for consumer tasks such as `014-psi-tool-code-reload`
 - [ ] Add focused tests and docs for runtime refresh convergence
