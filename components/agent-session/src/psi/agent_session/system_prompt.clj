@@ -245,7 +245,6 @@
        "  - namespace mode: psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])\n"
        "  - worktree mode (session-derived): psi-tool(action: \"reload-code\")\n"
        "  - worktree mode (explicit): psi-tool(action: \"reload-code\", worktree-path: \"/abs/path/to/worktree\")\n"
-       "  - reload-code reports code reload and runtime refresh separately; runtime refresh is fixed-order, best-effort, and may return partial with explicit limitations.\n"
        "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window"))
 
 (defn- prose-guidelines [tool-names]

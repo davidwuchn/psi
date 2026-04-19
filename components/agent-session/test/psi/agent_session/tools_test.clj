@@ -215,10 +215,10 @@
       (is (= ["clojure.string" "clojure.edn"] (:psi-tool/namespaces-requested parsed)))
       (is (= ["clojure.string" "clojure.edn"] (get-in parsed [:psi-tool/code-reload :namespaces])))
       (is (= :ok (get-in parsed [:psi-tool/code-reload :status])))
-      (is (= :ok (get-in parsed [:psi-tool/runtime-refresh :psi.runtime-refresh/status])))
+      (is (= :ok (get-in parsed [:psi-tool/graph-refresh :status])))
       (is (= :ok (:psi-tool/overall-status parsed)))
-      (is (= "extension registry unchanged (no runtime ctx provided)"
-             (get-in parsed [:psi-tool/runtime-refresh :psi.runtime-refresh/steps 2 :summary])))))
+      (is (= "preserved current extension registry without rediscovery"
+             (get-in parsed [:psi-tool/graph-refresh :steps 3 :summary])))))
 
   (testing "namespace mode stops at first namespace failure and reports successful prefix"
     (let [tool   (tools/make-psi-tool (fn [_q] {}))
@@ -231,7 +231,7 @@
       (is (true? (:is-error result)))
       (is (= :error (get-in parsed [:psi-tool/code-reload :status])))
       (is (= ["clojure.string"] (get-in parsed [:psi-tool/code-reload :namespaces])))
-      (is (= :ok (get-in parsed [:psi-tool/runtime-refresh :psi.runtime-refresh/status])))
+      (is (= :ok (get-in parsed [:psi-tool/graph-refresh :status])))
       (is (= :error (:psi-tool/overall-status parsed)))))
 
   (testing "worktree mode uses session worktree-path when explicit target absent"
@@ -296,7 +296,7 @@
             result           ((:execute tool) {"action" "reload-code"})
             parsed           (read-string (:content result))]
         (is (true? (:is-error result)))
-        (is (= :partial (get-in parsed [:psi-tool/runtime-refresh :psi.runtime-refresh/status])))
+        (is (= :error (get-in parsed [:psi-tool/graph-refresh :status])))
         (is (= :error (:psi-tool/overall-status parsed))))))
 
   (testing "namespace mode may target loaded project namespaces"

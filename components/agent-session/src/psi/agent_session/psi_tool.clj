@@ -7,7 +7,6 @@
    [clojure.walk :as walk]
    [psi.agent-core.core :as agent]
    [psi.agent-session.extension-runtime :as extension-runtime]
-   [psi.agent-session.runtime-refresh :as runtime-refresh]
    [psi.agent-session.extensions :as extensions]
    [psi.agent-session.session-state :as session-state]
    [psi.agent-session.tool-output :as tool-output]
@@ -358,20 +357,36 @@
                              :namespace-count (count reloaded)
                              :namespaces      reloaded
                              :summary         (str "reloaded " (count reloaded) " namespaces")}))
-        runtime-refresh (runtime-refresh/refresh-runtime! {:ctx ctx
-                                                           :session-id session-id
-                                                           :worktree-path effective-path
-                                                           :extension-refresh? (not namespace-mode?)})
+        refresh-steps   [(assoc (refresh-query-runtime! ctx) :step :resolver-registration-refresh)
+                         {:step :mutation-registration-refresh
+                          :status :ok
+                          :summary "mutation registrations refreshed with query runtime"}
+                         (assoc (refresh-live-tool-defs! ctx session-id) :step :live-tool-definition-refresh)
+                         (assoc (if namespace-mode?
+                                  (preserve-extension-registry-step)
+                                  (refresh-worktree-extensions! ctx session-id effective-path))
+                                :step :extension-refresh)]
+        refresh-error   (some #(when (= :error (:status %)) %) refresh-steps)
+        graph-refresh   {:status (if refresh-error :error :ok)
+                         :summary (if refresh-error
+                                    "graph/runtime refresh completed with errors"
+                                    "graph/runtime refresh completed")
+                         :steps refresh-steps
+                         :error (when refresh-error
+                                  {:message (:summary refresh-error)
+                                   :class "clojure.lang.ExceptionInfo"
+                                   :phase (:step refresh-error)
+                                   :data (dissoc refresh-error :step :summary :status)})}
         duration-ms     (long (/ (- (System/nanoTime) started-at) 1000000))]
-    (cond-> {:psi-tool/action          :reload-code
-             :psi-tool/reload-mode     reload-mode
-             :psi-tool/code-reload     reload-result
-             :psi-tool/runtime-refresh runtime-refresh
-             :psi-tool/duration-ms     duration-ms
-             :psi-tool/overall-status  (if (and (= :ok (:status reload-result))
-                                                (= :ok (:psi.runtime-refresh/status runtime-refresh)))
-                                         :ok
-                                         :error)}
+    (cond-> {:psi-tool/action         :reload-code
+             :psi-tool/reload-mode    reload-mode
+             :psi-tool/code-reload    reload-result
+             :psi-tool/graph-refresh  graph-refresh
+             :psi-tool/duration-ms    duration-ms
+             :psi-tool/overall-status (if (and (= :ok (:status reload-result))
+                                               (= :ok (:status graph-refresh)))
+                                        :ok
+                                        :error)}
       namespace-mode?
       (assoc :psi-tool/namespaces-requested requested-nses)
 
