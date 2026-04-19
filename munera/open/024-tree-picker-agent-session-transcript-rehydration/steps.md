@@ -1,5 +1,5 @@
-- [ ] Reproduce and characterize the `/tree` picker transcript-loss bug against agent-created sessions
-- [ ] Trace the picker selection path across Emacs, RPC, and app-runtime rehydration surfaces
+- [x] Reproduce and characterize the `/tree` picker transcript-loss bug against agent-created sessions
+- [x] Trace the picker selection path across Emacs, RPC, and app-runtime rehydration surfaces
 - [ ] Identify the concrete root cause/divergence from direct session switching
 - [ ] Implement the minimal fix
 - [ ] Add focused regression proof
