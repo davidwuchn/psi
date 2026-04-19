@@ -7,9 +7,9 @@
   - [x] Registry keyed by canonical absolute `worktree-path`
   - [x] Single-instance-per-worktree rule enforced
   - [x] Explicit restart/replace path for conflicts
-- [ ] Implement psi-started acquisition
-  - [ ] Launch configured command vector in target worktree
-  - [ ] Read `.nrepl-port` from launch directory
+- [x] Implement psi-started acquisition
+  - [x] Launch configured command vector in target worktree
+  - [x] Read `.nrepl-port` from launch directory
   - [ ] Wait for readiness and establish managed client session
 - [ ] Implement attach acquisition
   - [ ] Connect via explicit port/optional host or worktree-local `.nrepl-port`

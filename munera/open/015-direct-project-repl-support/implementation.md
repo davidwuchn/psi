@@ -41,3 +41,22 @@
   - timestamps
 - Wired the registry into both production context creation and agent-session test support.
 - Added focused runtime tests in `project_nrepl_runtime_test.clj` covering create/reuse/conflict/replace/update/remove behavior.
+
+2026-04-18 — Step 3: started-mode launch + endpoint discovery
+
+- Added `components/agent-session/src/psi/agent_session/project_nrepl_started.clj`.
+- Implemented first started-mode acquisition slice:
+  - validate command vector
+  - launch process in the target worktree
+  - poll `.nrepl-port` in that worktree until ready / timeout / process exit
+  - update the managed instance slot to `:ready` with discovered endpoint and runtime process handle
+  - project failures as `:failed` with structured `:last-error`
+- Current started-mode readiness means:
+  - process launched successfully
+  - `.nrepl-port` appeared and parsed successfully
+- It does **not yet** establish the nREPL socket/client session; that remains the next sub-slice needed to finish the design’s full readiness invariant.
+- Added focused tests in `project_nrepl_started_test.clj` covering:
+  - endpoint discovery after delayed `.nrepl-port` creation
+  - early process exit failure
+  - successful started acquisition projection
+  - startup failure projection to failed state
