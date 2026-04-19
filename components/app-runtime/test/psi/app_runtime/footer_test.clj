@@ -95,6 +95,28 @@
       (is (= "sessions: active main · idle helper, notes"
              (get-in model [:footer/lines :session-activity-line]))))))
 
+(deftest footer-model-from-data-orders-parent-before-child-in-session-activity-line-test
+  (testing "footer session activity uses parent-first tree order instead of raw recency order"
+    (let [model (footer/footer-model-from-data
+                 {:psi.agent-session/worktree-path "/repo/project"
+                  :psi.agent-session/context-window 400000
+                  :psi.agent-session/model-provider "openai"
+                  :psi.agent-session/model-id "gpt-5.3-codex"
+                  :psi.agent-session/model-reasoning false
+                  :psi.ui/statuses []}
+                 {:context-sessions [{:session-id "child"
+                                     :parent-session-id "parent"
+                                     :display-name "helper"
+                                     :is-streaming false}
+                                    {:session-id "parent"
+                                     :display-name "main"
+                                     :is-streaming true}
+                                    {:session-id "s3"
+                                     :display-name "notes"
+                                     :is-streaming false}]})]
+      (is (= "sessions: active main · idle helper, notes"
+             (get-in model [:footer/session-activity :line]))))))
+
 (deftest footer-model-from-data-ignores-keyword-sentinels-test
   (testing "keyword sentinel values are treated as absent instead of seqable collections/strings"
     (let [model (footer/footer-model-from-data

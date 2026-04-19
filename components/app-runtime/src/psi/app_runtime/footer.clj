@@ -174,9 +174,55 @@
       (when-let [sid (present-string (:session-id session-map))]
         (subs sid 0 (min 8 (count sid))))))
 
+(defn- order-context-sessions-parent-first
+  [context-sessions]
+  (let [sessions           (vec (or context-sessions []))
+        by-session-id      (into {} (keep (fn [session-map]
+                                            (when-let [sid (:session-id session-map)]
+                                              [sid session-map])))
+                                  sessions)
+        input-order        (into {} (keep-indexed (fn [i session-map]
+                                                    (when-let [sid (:session-id session-map)]
+                                                      [sid i])))
+                                  sessions)
+        children-by-parent (reduce (fn [acc session-map]
+                                     (let [sid               (:session-id session-map)
+                                           parent-session-id (:parent-session-id session-map)
+                                           parent-exists?    (and parent-session-id
+                                                                  (contains? by-session-id parent-session-id))
+                                           parent-key        (if parent-exists?
+                                                               parent-session-id
+                                                               ::root)]
+                                       (if sid
+                                         (update acc parent-key (fnil conj []) session-map)
+                                         acc)))
+                                   {}
+                                   sessions)
+        children-by-parent (update-vals children-by-parent
+                                        (fn [xs]
+                                          (vec (sort-by #(get input-order (:session-id %) Integer/MAX_VALUE)
+                                                        xs))))
+        roots              (let [rs (get children-by-parent ::root [])]
+                             (if (seq rs) rs sessions))
+        emitted            (volatile! #{})]
+    (letfn [(walk [node visited]
+              (let [sid      (:session-id node)
+                    cycle?   (contains? visited sid)
+                    emitted? (contains? @emitted sid)]
+                (if (or cycle? emitted?)
+                  []
+                  (let [visited' (conj visited sid)
+                        _        (vswap! emitted conj sid)
+                        children (get children-by-parent sid [])]
+                    (reduce (fn [acc child]
+                              (into acc (walk child visited')))
+                            [node]
+                            children)))))]
+      (vec (mapcat #(walk % #{}) roots)))))
+
 (defn- footer-session-activity-line
   [context-sessions]
-  (let [sessions* (->> (or context-sessions [])
+  (let [sessions* (->> (order-context-sessions-parent-first context-sessions)
                        (keep (fn [session-map]
                                (when-let [label (footer-session-label session-map)]
                                  {:label label
