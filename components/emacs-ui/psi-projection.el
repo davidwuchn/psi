@@ -203,14 +203,18 @@ from transcript projection rendering."
                                                                   (psi-emacs--propertize-session-line txt runtime-state is-current))))
                                             (when styled-txt
                                               (if command
-                                                  (propertize styled-txt
-                                                              'face 'psi-emacs-projection-widget-face
-                                                              'font-lock-face 'psi-emacs-projection-widget-face
-                                                              'mouse-face 'highlight
-                                                              'help-echo command
-                                                              'follow-link t
-                                                              'keymap psi-emacs--projection-widget-action-keymap
-                                                              'psi-widget-command command)
+                                                  (let ((out (psi-emacs--projection-apply-default-face styled-txt
+                                                                                                      'psi-emacs-projection-widget-face)))
+                                                    (add-text-properties 0 (length out)
+                                                                         '(mouse-face highlight
+                                                                           follow-link t)
+                                                                         out)
+                                                    (add-text-properties 0 (length out)
+                                                                         (list 'help-echo command
+                                                                               'keymap psi-emacs--projection-widget-action-keymap
+                                                                               'psi-widget-command command)
+                                                                         out)
+                                                    out)
                                                 styled-txt))))
                                          ((null line) nil)
                                          (t (format "%s" line))))
