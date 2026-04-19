@@ -1,4 +1,8 @@
-- [ ] Inspect current footer session data/projection path
+- [x] Inspect current footer session data/projection path
+  - footer semantics live in `components/app-runtime/src/psi/app_runtime/footer.clj`
+  - RPC `footer/updated` currently exposes only `:path-line`, `:stats-line`, `:status-line`, `:usage-parts`, `:model-text`
+  - Emacs footer rendering in `components/emacs-ui/psi-projection.el` consumes those canonical footer fields directly
+  - canonical session activity already exists in shared context/session projections via `:is-streaming`
 - [ ] Decide canonical active vs idle source and representation
 - [ ] Implement footer display change
 - [ ] Add/adjust tests
