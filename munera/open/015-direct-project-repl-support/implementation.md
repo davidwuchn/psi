@@ -100,3 +100,22 @@
   - last-error
   - timestamps
 - Added resolver tests in `project_nrepl_resolvers_test.clj` for both root and session-scoped query paths.
+
+2026-04-19 — Step 6: attach-mode acquisition
+
+- Added `components/agent-session/src/psi/agent_session/project_nrepl_attach.clj`.
+- Implemented attach-mode endpoint resolution with the required precedence:
+  1. explicit port (+ optional host)
+  2. worktree-local `.nrepl-port`
+- Host defaults to `127.0.0.1` when omitted.
+- Attach acquisition now:
+  - resolves endpoint deterministically for the target worktree
+  - creates/ensures a managed `:attached` instance bound to that worktree
+  - establishes the same single managed client session used by started mode
+  - projects attach failures into `:failed` state with endpoint + `:last-error`
+- Added `detach-instance-in!` to disconnect and remove attached instances cleanly.
+- Added focused tests in `project_nrepl_attach_test.clj` covering:
+  - explicit endpoint precedence
+  - `.nrepl-port` fallback
+  - successful attach projection
+  - failed attach projection

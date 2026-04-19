@@ -11,10 +11,10 @@
   - [x] Launch configured command vector in target worktree
   - [x] Read `.nrepl-port` from launch directory
   - [x] Wait for readiness and establish managed client session
-- [ ] Implement attach acquisition
-  - [ ] Connect via explicit port/optional host or worktree-local `.nrepl-port`
-  - [ ] Bind attached endpoint explicitly to target worktree in psi state
-  - [ ] Establish managed client session
+- [x] Implement attach acquisition
+  - [x] Connect via explicit port/optional host or worktree-local `.nrepl-port`
+  - [x] Bind attached endpoint explicitly to target worktree in psi state
+  - [x] Establish managed client session
 - [x] Project canonical project nREPL state into `:state*`
   - [x] Lifecycle/acquisition/endpoint metadata
   - [x] Session-mode and active-session metadata
