@@ -78,3 +78,25 @@
   - managed client session established
 - Added focused tests in `project_nrepl_client_test.clj` for connect/disconnect behavior.
 - Updated started-mode tests so the success path includes the client-session establishment step.
+
+2026-04-18 — Step 5: projected query surface
+
+- Added `components/agent-session/src/psi/agent_session/resolvers/project_nrepl.clj`.
+- Project nREPL registry/instance state is now queryable through Pathom.
+- Added root-level attrs:
+  - `:psi.project-nrepl/count`
+  - `:psi.project-nrepl/worktree-paths`
+  - `:psi.project-nrepl/instances`
+- Added session-scoped attr:
+  - `:psi.agent-session/project-nrepl`
+  - resolves the managed instance bound to the invoking session worktree
+- Current projected fields include:
+  - identity/worktree/acquisition mode
+  - transport kind
+  - lifecycle state + readiness
+  - endpoint + command-vector
+  - single-session metadata + active-session-id
+  - eval/interrupt capability flags
+  - last-error
+  - timestamps
+- Added resolver tests in `project_nrepl_resolvers_test.clj` for both root and session-scoped query paths.

@@ -15,11 +15,11 @@
   - [ ] Connect via explicit port/optional host or worktree-local `.nrepl-port`
   - [ ] Bind attached endpoint explicitly to target worktree in psi state
   - [ ] Establish managed client session
-- [ ] Project canonical project nREPL state into `:state*`
-  - [ ] Lifecycle/acquisition/endpoint metadata
-  - [ ] Session-mode and active-session metadata
+- [x] Project canonical project nREPL state into `:state*`
+  - [x] Lifecycle/acquisition/endpoint metadata
+  - [x] Session-mode and active-session metadata
   - [ ] Recent startup/attach/eval summaries
-- [ ] Add canonical EQL/query visibility for project nREPL state
+- [x] Add canonical EQL/query visibility for project nREPL state
 - [ ] Implement eval on the managed single nREPL session
   - [ ] Single-flight eval per worktree instance
   - [ ] Structured success/error/unavailable result reporting
