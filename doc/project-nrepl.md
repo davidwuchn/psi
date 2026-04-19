@@ -45,28 +45,29 @@ Psi supports two acquisition modes.
 
 ### Started mode
 
-Psi launches a configured command vector in the target worktree.
+Psi launches a configured start command vector in the target worktree.
 
 Configuration lives in existing psi config files:
 
 - user: `~/.psi/agent/config.edn`
 - project: `<worktree>/.psi/project.edn`
 
-Shape:
+Canonical shape:
 
 ```clojure
 {:agent-session
  {:project-nrepl
-  {:started {:command-vector ["bb" "nrepl-server"]}}}}
+  {:start-command ["bb" "nrepl-server"]}}}
 ```
 
 Rules:
 
-- `:command-vector` must be a vector of strings
+- `:start-command` must be a non-empty vector of strings
 - first element is the command path/name
 - remaining elements are args in order
 - psi starts the process in the effective target worktree
 - psi discovers the endpoint from `<worktree>/.nrepl-port`
+- the older nested `:started :command-vector` shape is no longer the canonical or supported config surface
 
 ### Attach mode
 

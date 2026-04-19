@@ -10,3 +10,7 @@ Initialized from user request on 2026-04-19.
 - Replaced started-mode config resolution with `resolved-start-command` reading only `:project-nrepl :start-command`.
 - Updated `/project-repl start` missing-config guidance to point only at `:agent-session :project-nrepl :start-command` with the simplified example.
 - Updated focused config/command tests; proof green via `clojure -M:test --focus psi.agent-session.project-nrepl-config-test --focus psi.agent-session.project-nrepl-commands-test`.
+
+2026-04-19 — Docs + proof alignment
+- Updated `doc/project-nrepl.md` started-mode guidance to the canonical `:start-command` shape and made the removal of `:started :command-vector` explicit.
+- Remaining runtime-level `:command-vector` references are intentional internal instance fields rather than user config shape.
