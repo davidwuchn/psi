@@ -4,6 +4,24 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.session-state :as ss]))
 
+(defn phase->runtime-state
+  [phase]
+  (case phase
+    :idle "waiting"
+    :streaming "running"
+    :retrying "retrying"
+    :compacting "compacting"
+    nil))
+
+(defn- session-runtime-state
+  [ctx session-id]
+  (let [phase (ss/sc-phase-in ctx session-id)
+        sd    (ss/get-session-data-in ctx session-id)]
+    (cond
+      (:is-streaming sd)  "running"
+      (:is-compacting sd) "compacting"
+      :else               (phase->runtime-state phase))))
+
 (defn context-snapshot
   "Build a canonical context snapshot for `session-id`.
 
@@ -26,18 +44,19 @@
                            [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at :updated-at])])
         active-id*       (or active-session-id current-id)
         slots            (mapv (fn [m]
-                                 {:id                (:session-id m)
-                                  :item-kind         "session"
-                                  :name              (:session-name m)
-                                  :display-name      (or (:display-name m)
-                                                         (message-text/short-display-text (:session-name m)))
-                                  :worktree-path     (:worktree-path m)
-                                  :is-streaming      (boolean (and (= (:session-id m) current-id)
-                                                                   (:is-streaming sd)))
-                                  :is-active         (= (:session-id m) active-id*)
-                                  :parent-session-id (:parent-session-id m)
-                                  :created-at        (some-> (:created-at m) str)
-                                  :updated-at        (some-> (:updated-at m) str)})
+                                 (let [sid (:session-id m)]
+                                   {:id                sid
+                                    :item-kind         "session"
+                                    :name              (:session-name m)
+                                    :display-name      (or (:display-name m)
+                                                           (message-text/short-display-text (:session-name m)))
+                                    :worktree-path     (:worktree-path m)
+                                    :runtime-state     (session-runtime-state ctx sid)
+                                    :is-streaming      (= "running" (session-runtime-state ctx sid))
+                                    :is-active         (= sid active-id*)
+                                    :parent-session-id (:parent-session-id m)
+                                    :created-at        (some-> (:created-at m) str)
+                                    :updated-at        (some-> (:updated-at m) str)}))
                                sessions*)]
     {:active-session-id active-id*
      :sessions          slots}))

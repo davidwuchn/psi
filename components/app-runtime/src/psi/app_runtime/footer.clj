@@ -3,7 +3,8 @@
   (:require
    [clojure.string :as str]
    [psi.agent-session.core :as session]
-   [psi.agent-session.session-state :as ss]))
+   [psi.agent-session.session-state :as ss]
+   [psi.app-runtime.context :as app-context]))
 
 (def footer-query
   [:psi.agent-session/worktree-path
@@ -220,27 +221,21 @@
                             children)))))]
       (vec (mapcat #(walk % #{}) roots)))))
 
+(def ^:private runtime-state-order ["waiting" "running" "retrying" "compacting"])
+
 (defn- footer-session-activity-line
   [context-sessions]
   (let [sessions* (->> (order-context-sessions-parent-first context-sessions)
                        (keep (fn [session-map]
                                (when-let [label (footer-session-label session-map)]
                                  {:label label
-                                  :is-streaming (boolean (:is-streaming session-map))}))))
-        active*   (->> sessions*
-                       (filter :is-streaming)
-                       (map :label)
-                       vec)
-        idle*     (->> sessions*
-                       (remove :is-streaming)
-                       (map :label)
-                       vec)
-        parts     (cond-> []
-                    (seq active*)
-                    (conj (str "active " (str/join ", " active*)))
-
-                    (seq idle*)
-                    (conj (str "idle " (str/join ", " idle*))))]
+                                  :runtime-state (:runtime-state session-map)}))))
+        grouped   (group-by :runtime-state sessions*)
+        parts     (->> runtime-state-order
+                       (keep (fn [state]
+                               (when-let [xs (seq (get grouped state))]
+                                 (str state " " (str/join ", " (map :label xs))))))
+                       vec)]
     (when (> (count sessions*) 1)
       (str "sessions: " (str/join " · " parts)))))
 
@@ -297,10 +292,9 @@
 
 (defn- enrich-context-session-runtime-state
   [ctx session-map]
-  (let [sid (:session-id session-map)
-        sd  (and sid (ss/get-session-data-in ctx sid))]
+  (let [sid (:session-id session-map)]
     (cond-> session-map
-      (map? sd) (assoc :is-streaming (boolean (:is-streaming sd))))))
+      sid (assoc :runtime-state (app-context/phase->runtime-state (ss/sc-phase-in ctx sid))))))
 
 (defn footer-model
   [ctx session-id]

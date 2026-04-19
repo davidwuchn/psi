@@ -83,16 +83,16 @@
                   :psi.ui/statuses []}
                  {:context-sessions [{:session-id "s1"
                                      :display-name "main"
-                                     :is-streaming true}
+                                     :runtime-state "running"}
                                     {:session-id "s2"
                                      :display-name "helper"
-                                     :is-streaming false}
+                                     :runtime-state "waiting"}
                                     {:session-id "s3"
                                      :session-name "notes"
-                                     :is-streaming false}]})]
-      (is (= "sessions: active main · idle helper, notes"
+                                     :runtime-state "waiting"}]})]
+      (is (= "sessions: waiting helper, notes · running main"
              (get-in model [:footer/session-activity :line])))
-      (is (= "sessions: active main · idle helper, notes"
+      (is (= "sessions: waiting helper, notes · running main"
              (get-in model [:footer/lines :session-activity-line]))))))
 
 (deftest footer-model-from-data-orders-parent-before-child-in-session-activity-line-test
@@ -107,14 +107,30 @@
                  {:context-sessions [{:session-id "child"
                                      :parent-session-id "parent"
                                      :display-name "helper"
-                                     :is-streaming false}
+                                     :runtime-state "waiting"}
                                     {:session-id "parent"
                                      :display-name "main"
-                                     :is-streaming true}
+                                     :runtime-state "running"}
                                     {:session-id "s3"
                                      :display-name "notes"
-                                     :is-streaming false}]})]
-      (is (= "sessions: active main · idle helper, notes"
+                                     :runtime-state "waiting"}]})]
+      (is (= "sessions: waiting helper, notes · running main"
+             (get-in model [:footer/session-activity :line]))))))
+
+(deftest footer-model-from-data-includes-all-canonical-phase-groups-test
+  (testing "footer preserves all sessions across waiting/running/retrying/compacting buckets"
+    (let [model (footer/footer-model-from-data
+                 {:psi.agent-session/worktree-path "/repo/project"
+                  :psi.agent-session/context-window 400000
+                  :psi.agent-session/model-provider "openai"
+                  :psi.agent-session/model-id "gpt-5.3-codex"
+                  :psi.agent-session/model-reasoning false
+                  :psi.ui/statuses []}
+                 {:context-sessions [{:session-id "s1" :display-name "main" :runtime-state "waiting"}
+                                    {:session-id "s2" :display-name "helper" :runtime-state "running"}
+                                    {:session-id "s3" :display-name "summarize" :runtime-state "retrying"}
+                                    {:session-id "s4" :display-name "prune-history" :runtime-state "compacting"}]})]
+      (is (= "sessions: waiting main · running helper · retrying summarize · compacting prune-history"
              (get-in model [:footer/session-activity :line]))))))
 
 (deftest footer-model-from-data-ignores-keyword-sentinels-test

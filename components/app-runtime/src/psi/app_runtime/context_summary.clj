@@ -41,6 +41,14 @@
          (when worktree
            (str " — " worktree)))))
 
+(defn- runtime-state-badge
+  [slot]
+  (when (= "session" (or (:item-kind slot) "session"))
+    (some-> (:runtime-state slot)
+            str/trim
+            not-empty
+            (as-> state (str " [" state "]")))))
+
 (defn session-tree-widget-lines
   [slots active-id]
   (let [slot-ids    (->> slots (map :id) (filter string?) vec)
@@ -50,14 +58,13 @@
                   item-kind    (or (:item-kind slot) "session")
                   entry-id     (:entry-id slot)
                   is-active    (boolean (:is-active slot))
-                  is-streaming (boolean (:is-streaming slot))
                   parent-id    (:parent-session-id slot)
                   indent       (if (or (= item-kind "fork-point")
                                         (and parent-id (contains? slot-id-set parent-id)))
                                  "  " "")
                   base-label   (session-tree-line-label slot)
-                  suffix       (str (when (and (= item-kind "session") is-streaming) " [streaming]")
-                                    (when is-active " ← active"))
+                  suffix       (str (when is-active " ← current")
+                                    (runtime-state-badge slot))
                   text         (str indent base-label suffix)]
               (cond
                 (and (= item-kind "session") is-active)

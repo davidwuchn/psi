@@ -230,7 +230,7 @@
       (is (= #{:active-session-id :sessions :session-tree-widget}
              (set (keys (:data context-evt)))))
       (is (vector? (get-in context-evt [:data :sessions])))
-      (is (every? #(= #{:id :item-kind :name :display-name :worktree-path :is-streaming :is-active :parent-session-id :created-at :updated-at}
+      (is (every? #(= #{:id :item-kind :name :display-name :worktree-path :runtime-state :is-streaming :is-active :parent-session-id :created-at :updated-at}
                       (set (keys %)))
                   (get-in context-evt [:data :sessions])))
       (is (= #{:extension-id :widget-id :placement :content-lines}

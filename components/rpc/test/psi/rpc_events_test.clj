@@ -53,14 +53,13 @@
   (testing "footer payload includes canonical backend session activity text"
     (let [[ctx session-id] (support/create-session-context {:cwd "/repo/project"})
           _               (ss/apply-root-state-update-in! ctx
-                                                          (ss/session-update session-id #(assoc %
-                                                                                                  :session-name "main"
-                                                                                                  :is-streaming true)))
+                                                          (ss/session-update session-id #(assoc % :session-name "main")))
+          _               (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :test})
           child           (session/new-session-in! ctx session-id {:session-name "helper"})
           payload         (rpc.events/footer-updated-payload ctx session-id)]
       (is (= "/repo/project • helper"
              (get-in (rpc.events/footer-updated-payload ctx (:session-id child)) [:path-line])))
-      (is (= "sessions: active main · idle helper"
+      (is (= "sessions: waiting helper · running main"
              (:session-activity-line payload))))))
 
 (deftest footer-updated-payload-prefers-session-display-name-test

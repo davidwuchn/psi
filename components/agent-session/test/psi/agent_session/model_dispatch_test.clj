@@ -167,10 +167,16 @@
           (is (false? (:psi.dispatch-event/statechart-claimed? entry)))
           (is (= :root-state-update (:psi.dispatch-event/pure-result-kind entry)))
           (is (= [{:effect/type :persist/journal-append-session-info-entry
-                   :name "dispatch-visible"}]
+                   :name "dispatch-visible"}
+                  {:effect/type :projection/context-changed
+                   :session-id session-id
+                   :reason :session/set-session-name}]
                  (:psi.dispatch-event/declared-effects entry)))
           (is (= [{:effect/type :persist/journal-append-session-info-entry
-                   :name "dispatch-visible"}]
+                   :name "dispatch-visible"}
+                  {:effect/type :projection/context-changed
+                   :session-id session-id
+                   :reason :session/set-session-name}]
                  (:psi.dispatch-event/applied-effects entry)))
           (is (map? (:psi.dispatch-event/db-summary-before entry)))
           (is (map? (:psi.dispatch-event/db-summary-after entry)))))))
