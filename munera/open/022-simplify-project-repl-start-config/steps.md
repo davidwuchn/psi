@@ -1,4 +1,4 @@
-- [ ] Inspect current project-repl config readers, validation, docs, and tests
+- [x] Inspect current project-repl config readers, validation, docs, and tests
 - [ ] Define canonical `:start-command` shape and validation rules
 - [ ] Switch config resolution and `/project-repl start` to the simplified config
 - [ ] Update user-facing guidance and docs
