@@ -1,8 +1,8 @@
-- [ ] Review current child-session creation prompt assembly path
-- [ ] Design and implement prompt-component controls with default-preserving behavior
-- [ ] Add optional additional system prompt support with deterministic ordering
-- [ ] Wire auto-session-name helper creation to disable standard prompt components and helper capabilities
-- [ ] Truncate sanitized assembled conversation text to trailing 4000 characters
-- [ ] Add or update tests for child-session controls and auto-session-name prompt shaping
-- [ ] Verify empty-input skip/no-op preservation
-- [ ] Record implementation notes/trade-offs
+- [x] Review current child-session creation prompt assembly path
+- [x] Design and implement prompt-component controls with default-preserving behavior
+- [x] Add optional additional system prompt support with deterministic ordering
+- [x] Wire auto-session-name helper creation to disable standard prompt components and helper capabilities
+- [x] Truncate sanitized assembled conversation text to trailing 4000 characters
+- [x] Add or update tests for child-session controls and auto-session-name prompt shaping
+- [x] Verify empty-input skip/no-op preservation
+- [x] Record implementation notes/trade-offs
