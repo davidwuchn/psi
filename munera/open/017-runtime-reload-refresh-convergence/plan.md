@@ -52,8 +52,8 @@ Planned slices:
 - Exposed the refresh pass so `psi-tool reload-code` now reports shared runtime refresh results.
 - Kept this task responsible for the runtime refresh mechanics and result semantics.
 
-8. Docs + proof
-- Document the distinction between code reload and runtime refresh.
+8. Docs + proof ✅ first slice now landed through `a865f4b` + `b167e74`
+- Documented the distinction between code reload and runtime refresh.
 - Focused tests now prove first-slice behavior for dispatch refresh, extension refresh, background-job UI hook reinstall, and structured limitation reporting.
 - Remaining proof work is mainly around sharper query-refresh guarantees and broader limitation classes.
 

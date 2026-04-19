@@ -1,5 +1,6 @@
 Step 1 landed in commit `2051a94` (`⚒ runtime-refresh: add canonical refresh scaffold`).
 Step 3 strengthened proof in commit `a865f4b` (`⚒ runtime-refresh: strengthen scaffold proof`).
+Step 5 documented the code-reload vs runtime-refresh distinction in commit `b167e74` (`⚒ runtime-refresh: document reload vs refresh`).
 
 Initial findings captured in design:
 - surviving runtime data is often not the problem
@@ -21,6 +22,10 @@ Implemented so far:
 - added focused tests in:
   - `components/agent-session/test/psi/agent_session/runtime_refresh_test.clj`
   - `components/agent-session/test/psi/agent_session/tools_test.clj`
+- updated user/runtime-facing docs in:
+  - `README.md`
+  - `doc/psi-project-config.md`
+  - `components/agent-session/src/psi/agent_session/system_prompt.clj`
 
 Current first-slice behavior:
 - fixed refresh order is now explicit in the shared pass:
