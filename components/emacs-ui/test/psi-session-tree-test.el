@@ -94,6 +94,76 @@
                              widgets)))
       (should-not tree-w))))
 
+(ert-deftest psi-session-tree-survives-unrelated-widget-refreshes ()
+  "Unrelated ui/widgets updates must not blank the backend-owned session tree."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "context/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
+                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))])
+                 (:session-tree-widget . ((:placement . "left")
+                                          (:extension-id . "psi-session")
+                                          (:widget-id . "session-tree")
+                                          (:content-lines . [((:text . "main [s1] ← active"))
+                                                             ((:text . "  fork-1 [s2]"))])))))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "ui/widgets-updated")
+       (:data . ((:widgets . [((:placement . "right")
+                               (:extension-id . "ext-a")
+                               (:widget-id . "w-1")
+                               (:text . "Background jobs"))])))))
+    (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
+           (tree-w (seq-find #'psi-emacs--session-tree-widget-p widgets))
+           (ext-w (seq-find (lambda (w)
+                              (equal "ext-a"
+                                     (psi-emacs--event-data-get w '(:extension-id extension-id))))
+                            widgets))
+           (buf (buffer-string)))
+      (should tree-w)
+      (should ext-w)
+      (should (string-match-p "main \\[s1\\] ← active" buf))
+      (should (string-match-p "fork-1 \\[s2\\]" buf))
+      (should (string-match-p "Background jobs" buf)))))
+
+(ert-deftest psi-session-tree-can-still-be-removed-by-context-update ()
+  "A later single-session context update remains authoritative and removes the tree."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "context/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
+                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))])
+                 (:session-tree-widget . ((:placement . "left")
+                                          (:extension-id . "psi-session")
+                                          (:widget-id . "session-tree")
+                                          (:content-lines . [((:text . "main [s1] ← active"))
+                                                             ((:text . "  fork-1 [s2]"))])))))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "ui/widgets-updated")
+       (:data . ((:widgets . [((:placement . "left")
+                               (:extension-id . "ext-a")
+                               (:widget-id . "w-1")
+                               (:text . "Other widget"))])))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "context/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))])
+                 (:session-tree-widget . ((:placement . "left")
+                                          (:extension-id . "psi-session")
+                                          (:widget-id . "session-tree")
+                                          (:content-lines . [((:text . "main [s1] ← active"))])))))))
+    (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
+           (tree-w (seq-find #'psi-emacs--session-tree-widget-p widgets))
+           (buf (buffer-string)))
+      (should-not tree-w)
+      (should-not (string-match-p "fork-1 \[s2\]" buf))
+      (should (string-match-p "Other widget" buf)))))
+
 (ert-deftest psi-session-tree-line-label-prefers-backend-label ()
   "Session tree label rendering prefers backend-provided canonical labels."
   (should (equal "main [s1] — 09:00 / 09:15 — /repo/main"

@@ -1,5 +1,5 @@
-- [ ] Investigate footer session display disappearance path
-- [ ] Identify root cause
-- [ ] Implement minimal fix
-- [ ] Add/adjust tests
-- [ ] Verify stability manually and in tests
+- [x] Investigate footer session display disappearance path
+- [x] Identify root cause
+- [x] Implement minimal fix
+- [x] Add/adjust tests
+- [x] Verify stability manually and in tests

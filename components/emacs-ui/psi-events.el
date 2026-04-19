@@ -145,6 +145,23 @@ falls back to `(session <8-char id prefix>)`."
   "Return the backend-provided canonical label for a session tree SLOT."
   (psi-emacs--event-data-get slot '(:label label)))
 
+(defun psi-emacs--session-tree-widget-p (widget)
+  "Return non-nil when WIDGET is the backend-owned session tree widget."
+  (and (equal (psi-emacs--event-data-get widget '(:extension-id extension-id))
+              "psi-session")
+       (equal (psi-emacs--event-data-get widget '(:widget-id widget-id))
+              "session-tree")))
+
+(defun psi-emacs--projection-widgets-with-session-tree (widgets session-tree-widget)
+  "Return WIDGETS with SESSION-TREE-WIDGET prepended and deduplicated.
+
+This preserves the backend-owned session tree across unrelated widget refreshes
+while keeping `context/updated` authoritative for whether the tree is present."
+  (let ((others (seq-remove #'psi-emacs--session-tree-widget-p (or widgets []))))
+    (if session-tree-widget
+        (cons session-tree-widget others)
+      others)))
+
 (defun psi-emacs--handle-context-updated-event (data)
   "Handle `context/updated` DATA: store snapshot and refresh session tree widget."
   (when psi-emacs--state
@@ -152,22 +169,16 @@ falls back to `(session <8-char id prefix>)`."
            (slots     (append (psi-emacs--event-data-get data '(:sessions sessions)) nil))
            (snapshot  `((:active-session-id . ,active-id) (:sessions . ,slots)))
            (widget    (psi-emacs--event-data-get data '(:session-tree-widget session-tree-widget)))
-           (existing  (psi-emacs-state-projection-widgets psi-emacs--state))
-           (others    (seq-remove
-                       (lambda (w)
-                         (and (equal (psi-emacs--event-data-get w '(:extension-id extension-id))
-                                     "psi-session")
-                              (equal (psi-emacs--event-data-get w '(:widget-id widget-id))
-                                     "session-tree")))
-                       (or existing [])))
            (content-lines (psi-emacs--projection-seq
                            (and (listp widget)
                                 (psi-emacs--event-data-get widget '(:content-lines content-lines)))))
-           (updated   (if (and (listp widget)
-                               (> (length slots) 1)
-                               content-lines)
-                          (cons widget others)
-                        others)))
+           (session-tree-widget (and (listp widget)
+                                     (> (length slots) 1)
+                                     content-lines
+                                     widget))
+           (updated   (psi-emacs--projection-widgets-with-session-tree
+                       (psi-emacs-state-projection-widgets psi-emacs--state)
+                       session-tree-widget)))
       (setf (psi-emacs-state-context-snapshot psi-emacs--state) snapshot)
       (setf (psi-emacs-state-projection-widgets psi-emacs--state) updated)
       (psi-emacs--upsert-projection-block))))
@@ -374,11 +385,14 @@ This disables completion UI sort hooks for ordered backend-owned lists such as
        (psi-emacs--handle-frontend-action-requested data))
       ("ui/widgets-updated"
        (when psi-emacs--state
-         (setf (psi-emacs-state-projection-widgets psi-emacs--state)
-               (psi-emacs--projection-seq
-                (or (psi-emacs--event-data-get data '(:widgets widgets))
-                    (psi-emacs--event-data-get data '(:items items)))))
-         (psi-emacs--upsert-projection-block)))
+         (let* ((widgets (psi-emacs--projection-seq
+                          (or (psi-emacs--event-data-get data '(:widgets widgets))
+                              (psi-emacs--event-data-get data '(:items items)))))
+                (session-tree-widget (seq-find #'psi-emacs--session-tree-widget-p
+                                               (psi-emacs-state-projection-widgets psi-emacs--state))))
+           (setf (psi-emacs-state-projection-widgets psi-emacs--state)
+                 (psi-emacs--projection-widgets-with-session-tree widgets session-tree-widget))
+           (psi-emacs--upsert-projection-block))))
       ("ui/widget-specs-updated"
        (when psi-emacs--state
          (psi-widget-projection-request-specs)))
