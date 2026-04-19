@@ -51,12 +51,30 @@
   - poll `.nrepl-port` in that worktree until ready / timeout / process exit
   - update the managed instance slot to `:ready` with discovered endpoint and runtime process handle
   - project failures as `:failed` with structured `:last-error`
-- Current started-mode readiness means:
-  - process launched successfully
-  - `.nrepl-port` appeared and parsed successfully
-- It does **not yet** establish the nREPL socket/client session; that remains the next sub-slice needed to finish the design’s full readiness invariant.
 - Added focused tests in `project_nrepl_started_test.clj` covering:
   - endpoint discovery after delayed `.nrepl-port` creation
   - early process exit failure
   - successful started acquisition projection
   - startup failure projection to failed state
+
+2026-04-18 — Step 4: started-mode client session establishment
+
+- Added `components/agent-session/src/psi/agent_session/project_nrepl_client.clj`.
+- Started-mode acquisition now continues after `.nrepl-port` discovery to:
+  - connect to the discovered endpoint with `nrepl.core/connect`
+  - build a client with `nrepl.core/client`
+  - open a managed single client session with `nrepl.core/client-session`
+  - extract and project the active nREPL session id
+- Managed instance projection now gains first real capability/session facts:
+  - `:active-session-id`
+  - `:can-eval? true`
+  - `:can-interrupt? true`
+  - runtime handle fields for transport/client/client-session/session-id
+- Disconnect support now closes the client transport before stopping/removing started instances.
+- This completes the first-slice started-mode readiness invariant more faithfully:
+  - launched
+  - endpoint discovered
+  - connected
+  - managed client session established
+- Added focused tests in `project_nrepl_client_test.clj` for connect/disconnect behavior.
+- Updated started-mode tests so the success path includes the client-session establishment step.

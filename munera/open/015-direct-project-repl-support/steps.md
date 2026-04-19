@@ -10,7 +10,7 @@
 - [x] Implement psi-started acquisition
   - [x] Launch configured command vector in target worktree
   - [x] Read `.nrepl-port` from launch directory
-  - [ ] Wait for readiness and establish managed client session
+  - [x] Wait for readiness and establish managed client session
 - [ ] Implement attach acquisition
   - [ ] Connect via explicit port/optional host or worktree-local `.nrepl-port`
   - [ ] Bind attached endpoint explicitly to target worktree in psi state

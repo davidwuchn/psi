@@ -75,7 +75,16 @@
                                                              (future
                                                                (Thread/sleep 50)
                                                                (spit (io/file worktree ".nrepl-port") "7777\n"))
-                                                             fake-process)]
+                                                             fake-process)
+                      psi.agent-session.project-nrepl-client/connect-instance-in! (fn [ctx worktree-path]
+                                                                                    (project-nrepl-runtime/update-instance-in!
+                                                                                     ctx worktree-path
+                                                                                     #(assoc %
+                                                                                             :lifecycle-state :ready
+                                                                                             :readiness true
+                                                                                             :active-session-id "nrepl-session-1"
+                                                                                             :can-eval? true
+                                                                                             :can-interrupt? true)))]
           (let [instance (project-nrepl-started/start-instance-in!
                           ctx worktree ["bb" "nrepl-server"] {:timeout-ms 1000 :poll-interval-ms 10})]
             (is (= :ready (:lifecycle-state instance)))

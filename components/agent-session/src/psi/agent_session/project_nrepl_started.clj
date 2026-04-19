@@ -2,6 +2,7 @@
   "Started-mode acquisition for managed project nREPL instances."
   (:require
    [clojure.java.io :as io]
+   [psi.agent-session.project-nrepl-client :as project-nrepl-client]
    [psi.agent-session.project-nrepl-config :as project-nrepl-config]
    [psi.agent-session.project-nrepl-runtime :as project-nrepl-runtime])
   (:import
@@ -84,14 +85,15 @@
          (project-nrepl-runtime/update-instance-in!
           ctx effective-worktree
           #(assoc %
-                  :lifecycle-state :ready
-                  :readiness true
+                  :lifecycle-state :starting
+                  :readiness false
                   :endpoint endpoint
                   :runtime-handle {:process process
                                    :pid (.pid process)
                                    :started-at (now)
                                    :launch-id (str (UUID/randomUUID))}
-                  :last-error nil)))
+                  :last-error nil))
+         (project-nrepl-client/connect-instance-in! ctx effective-worktree))
        (catch Throwable t
          (project-nrepl-runtime/update-instance-in!
           ctx effective-worktree
@@ -108,6 +110,7 @@
   (let [effective-worktree (project-nrepl-config/absolute-directory-path! worktree-path)
         instance           (project-nrepl-runtime/instance-in ctx effective-worktree)
         process            (get-in instance [:runtime-handle :process])]
+    (project-nrepl-client/disconnect-instance-in! ctx effective-worktree)
     (when (and process (.isAlive ^Process process))
       (.destroy ^Process process))
     (project-nrepl-runtime/update-instance-in!
