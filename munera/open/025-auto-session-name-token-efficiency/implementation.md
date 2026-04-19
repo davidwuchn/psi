@@ -45,6 +45,7 @@ Initialized on 2026-04-19.
   - child-specific system-prompt build opts
   - rebuilt reduced child base-system-prompt when prompt controls are supplied
 - Updated the auto-session-name namespace docstring to match current behavior.
+- Performed a code-shaper simplification pass on child-session initialization by extracting `derive-child-prompt-state` from `initialize-child-session-state` so prompt-selection policy and child state assembly are no longer interleaved.
 - Added focused proof for:
   - context-file omission in reduced prompt assembly
   - extension contribution allowlist behavior

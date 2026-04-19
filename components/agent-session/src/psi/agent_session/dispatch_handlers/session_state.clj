@@ -137,44 +137,64 @@
       (assoc-in (session-flush-state-path new-session-id) {:flushed?     false
                                                            :session-file (io/file session-file)}))))
 
+(defn- derive-child-prompt-state
+  "Derive child prompt-related state from parent session data and child creation params.
+   Returns normalized selection, filtered capabilities, optional rebuild opts, and the
+   base prompt to store on the child session."
+  [parent-sd {:keys [system-prompt tool-defs prompt-component-selection]}]
+  (let [normalized-selection (psi.agent-session.system-prompt/normalize-prompt-component-selection prompt-component-selection)
+        resolved-tool-defs   (if normalized-selection
+                               (psi.agent-session.system-prompt/filter-tool-defs
+                                (or tool-defs (:tool-defs parent-sd))
+                                normalized-selection)
+                               (vec (or tool-defs (:tool-defs parent-sd))))
+        resolved-skills      (if normalized-selection
+                               (psi.agent-session.system-prompt/filter-skills
+                                (:skills parent-sd)
+                                normalized-selection)
+                               (vec (or (:skills parent-sd) [])))
+        build-opts           (when normalized-selection
+                               (-> (:system-prompt-build-opts parent-sd)
+                                   (assoc :selected-tools (mapv :name resolved-tool-defs))
+                                   (assoc :skills resolved-skills)
+                                   (assoc :include-preamble? (:include-preamble? normalized-selection))
+                                   (assoc :include-runtime-metadata? (:include-runtime-metadata? normalized-selection))
+                                   (assoc :include-context-files? (:include-context-files? normalized-selection))))
+        resolved-base-prompt (or system-prompt
+                                 (when build-opts
+                                   (psi.agent-session.system-prompt/build-system-prompt build-opts))
+                                 (:base-system-prompt parent-sd))]
+    {:prompt-component-selection normalized-selection
+     :tool-defs                 resolved-tool-defs
+     :skills                    resolved-skills
+     :system-prompt-build-opts  build-opts
+     :base-system-prompt        resolved-base-prompt
+     :system-prompt             (or system-prompt resolved-base-prompt (:system-prompt parent-sd))}))
+
 (defn initialize-child-session-state
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
-  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection]}]
-  (let [normalized-selection (psi.agent-session.system-prompt/normalize-prompt-component-selection prompt-component-selection)
-        tool-defs (if (some? prompt-component-selection)
-                    (psi.agent-session.system-prompt/filter-tool-defs (or tool-defs (:tool-defs parent-sd)) normalized-selection)
-                    (or tool-defs (:tool-defs parent-sd)))
-        filtered-skills (if (some? prompt-component-selection)
-                          (psi.agent-session.system-prompt/filter-skills (:skills parent-sd) normalized-selection)
-                          (:skills parent-sd))
-        build-opts (when (some? prompt-component-selection)
-                     (-> (:system-prompt-build-opts parent-sd)
-                         (assoc :selected-tools (mapv :name tool-defs))
-                         (assoc :skills filtered-skills)
-                         (assoc :include-preamble? (:include-preamble? normalized-selection))
-                         (assoc :include-runtime-metadata? (:include-runtime-metadata? normalized-selection))
-                         (assoc :include-context-files? (:include-context-files? normalized-selection))))
-        computed-base-prompt (when build-opts
-                               (psi.agent-session.system-prompt/build-system-prompt build-opts))
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection] :as child-opts}]
+  (let [{:keys [prompt-component-selection tool-defs skills system-prompt-build-opts base-system-prompt system-prompt]}
+        (derive-child-prompt-state parent-sd child-opts)
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
-                        {:session-id              child-session-id
-                         :session-name            session-name
-                         :spawn-mode              :agent
-                         :parent-session-id       (:session-id parent-sd)
-                         :system-prompt           (or system-prompt computed-base-prompt (:system-prompt parent-sd))
-                         :base-system-prompt      (or system-prompt computed-base-prompt (:base-system-prompt parent-sd))
-                         :developer-prompt        (or developer-prompt (:developer-prompt parent-sd))
-                         :developer-prompt-source (or developer-prompt-source (:developer-prompt-source parent-sd))
-                         :thinking-level          (or thinking-level :off)
-                         :tool-defs               tool-defs
-                         :skills                  filtered-skills
-                         :system-prompt-build-opts build-opts
-                         :cache-breakpoints       (or cache-breakpoints (:cache-breakpoints parent-sd))
-                         :prompt-component-selection normalized-selection
-                         :model                   (:model parent-sd)
-                         :created-at              (java.time.Instant/now)})]
+                        {:session-id                child-session-id
+                         :session-name              session-name
+                         :spawn-mode                :agent
+                         :parent-session-id         (:session-id parent-sd)
+                         :system-prompt             system-prompt
+                         :base-system-prompt        base-system-prompt
+                         :developer-prompt          (or developer-prompt (:developer-prompt parent-sd))
+                         :developer-prompt-source   (or developer-prompt-source (:developer-prompt-source parent-sd))
+                         :thinking-level            (or thinking-level :off)
+                         :tool-defs                 tool-defs
+                         :skills                    skills
+                         :system-prompt-build-opts  system-prompt-build-opts
+                         :cache-breakpoints         (or cache-breakpoints (:cache-breakpoints parent-sd))
+                         :prompt-component-selection prompt-component-selection
+                         :model                     (:model parent-sd)
+                         :created-at                (java.time.Instant/now)})]
     (-> state
         (assoc-in (session-data-path child-session-id) child-sd)
         (assoc-in [:agent-session :sessions child-session-id :persistence]
