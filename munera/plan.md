@@ -12,7 +12,6 @@ Open tasks in suggested execution order:
 8. `munera/open/015-direct-project-repl-support/`
 9. `munera/open/017-runtime-reload-refresh-convergence/`
 10. `munera/open/018-emacs-footer-session-display-stability/`
-11. `munera/open/019-emacs-footer-session-activity-indicators/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.
