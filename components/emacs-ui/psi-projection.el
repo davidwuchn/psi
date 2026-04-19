@@ -151,6 +151,33 @@
         (or lines (list ""))
       (list (psi-emacs--projection-item-text widget)))))
 
+(defun psi-emacs--session-runtime-face (runtime-state)
+  "Return face symbol for RUNTIME-STATE string."
+  (pcase runtime-state
+    ("waiting" 'psi-emacs-session-waiting-face)
+    ("running" 'psi-emacs-session-running-face)
+    ("retrying" 'psi-emacs-session-retrying-face)
+    ("compacting" 'psi-emacs-session-compacting-face)
+    (_ nil)))
+
+(defun psi-emacs--propertize-session-line (txt runtime-state is-current)
+  "Return TXT with session-state fragment faces applied from metadata."
+  (let ((out (copy-sequence txt)))
+    (when (and is-current (string-match (regexp-quote " ← current") out))
+      (add-text-properties (match-beginning 0) (match-end 0)
+                           '(face psi-emacs-session-current-face
+                             font-lock-face psi-emacs-session-current-face)
+                           out))
+    (when (and (stringp runtime-state)
+               (not (string-empty-p runtime-state))
+               (string-match (regexp-quote (format " [%s]" runtime-state)) out))
+      (let ((face (psi-emacs--session-runtime-face runtime-state)))
+        (when face
+          (add-text-properties (match-beginning 0) (match-end 0)
+                               (list 'face face 'font-lock-face face)
+                               out))))
+    out))
+
 (defun psi-emacs--projection-widget-lines (widget)
   "Render projected WIDGET as one or more deterministic content lines.
 
@@ -168,11 +195,15 @@ from transcript projection rendering."
                                          ((listp line)
                                           (let* ((txt (psi-emacs--event-data-get line '(:text text)))
                                                  (action (psi-emacs--event-data-get line '(:action action)))
-                                                 (command (psi-emacs--projection-action->command action)))
-                                            (when (and (stringp txt)
-                                                       (not (string-empty-p txt)))
+                                                 (command (psi-emacs--projection-action->command action))
+                                                 (runtime-state (psi-emacs--event-data-get line '(:runtime-state runtime-state)))
+                                                 (is-current (psi-emacs--event-data-get line '(:is-current is-current)))
+                                                 (styled-txt (and (stringp txt)
+                                                                  (not (string-empty-p txt))
+                                                                  (psi-emacs--propertize-session-line txt runtime-state is-current))))
+                                            (when styled-txt
                                               (if command
-                                                  (propertize txt
+                                                  (propertize styled-txt
                                                               'face 'psi-emacs-projection-widget-face
                                                               'font-lock-face 'psi-emacs-projection-widget-face
                                                               'mouse-face 'highlight
@@ -180,7 +211,7 @@ from transcript projection rendering."
                                                               'follow-link t
                                                               'keymap psi-emacs--projection-widget-action-keymap
                                                               'psi-widget-command command)
-                                                txt))))
+                                                styled-txt))))
                                          ((null line) nil)
                                          (t (format "%s" line))))
                                       line-seq)))))
@@ -246,6 +277,40 @@ backend semantic text."
      (structured-left structured-left)
      (t nil))))
 
+(defun psi-emacs--projection-footer-session-activity-line (data)
+  "Return propertized footer session activity line from structured DATA when present."
+  (let* ((buckets* (psi-emacs--event-data-get data '(:session-activity-buckets session-activity-buckets)))
+         (buckets (psi-emacs--projection-seq buckets*)))
+    (if (not buckets)
+        (let ((line* (psi-emacs--event-data-get data '(:session-activity-line session-activity-line))))
+          (and (stringp line*)
+               (not (string-empty-p line*))
+               (propertize line*
+                           'face 'psi-emacs-projection-footer-status-face
+                           'font-lock-face 'psi-emacs-projection-footer-status-face)))
+      (let ((parts
+             (delq nil
+                   (mapcar (lambda (bucket)
+                             (let* ((state (psi-emacs--event-data-get bucket '(:state state)))
+                                    (labels* (psi-emacs--event-data-get bucket '(:labels labels)))
+                                    (labels (psi-emacs--projection-seq labels*))
+                                    (face (psi-emacs--session-runtime-face state)))
+                               (when (and (stringp state)
+                                          labels)
+                                 (let ((bucket-text (format "%s %s" state (string-join labels ", "))))
+                                   (if face
+                                       (propertize bucket-text 'face face 'font-lock-face face)
+                                     bucket-text)))))
+                           buckets))))
+        (when parts
+          (concat (propertize "sessions: "
+                              'face 'psi-emacs-projection-footer-status-face
+                              'font-lock-face 'psi-emacs-projection-footer-status-face)
+                  (string-join parts
+                               (propertize " · "
+                                           'face 'psi-emacs-projection-footer-status-face
+                                           'font-lock-face 'psi-emacs-projection-footer-status-face))))))))
+
 (defun psi-emacs--projection-footer-text (data)
   "Extract deterministic footer projection text from event DATA.
 
@@ -253,7 +318,7 @@ Canonical payload lines are rendered as multi-line text in this order:
 path-line, stats-line, session-activity-line, status-line (blank lines omitted)."
   (let* ((path-line* (psi-emacs--event-data-get data '(:path-line path-line)))
          (stats-line* (psi-emacs--projection-footer-stats-line data))
-         (session-activity-line* (psi-emacs--event-data-get data '(:session-activity-line session-activity-line)))
+         (session-activity-line (psi-emacs--projection-footer-session-activity-line data))
          (status-line* (psi-emacs--event-data-get data '(:status-line status-line)))
          (path-line (and (stringp path-line*)
                          (not (string-empty-p path-line*))
@@ -265,11 +330,6 @@ path-line, stats-line, session-activity-line, status-line (blank lines omitted).
                           (propertize stats-line*
                                       'face 'psi-emacs-projection-footer-stats-face
                                       'font-lock-face 'psi-emacs-projection-footer-stats-face)))
-         (session-activity-line (and (stringp session-activity-line*)
-                                     (not (string-empty-p session-activity-line*))
-                                     (propertize session-activity-line*
-                                                 'face 'psi-emacs-projection-footer-status-face
-                                                 'font-lock-face 'psi-emacs-projection-footer-status-face)))
          (status-line (and (stringp status-line*)
                            (not (string-empty-p status-line*))
                            (propertize status-line*
@@ -356,6 +416,17 @@ path-line, stats-line, session-activity-line, status-line (blank lines omitted).
       (psi-emacs--schedule-notification-dismiss psi-emacs--state notification-id)
       (psi-emacs--upsert-projection-block))))
 
+(defun psi-emacs--projection-apply-default-face (text face)
+  "Apply FACE to unstyled characters in TEXT, preserving fragment faces."
+  (let ((out (copy-sequence text)))
+    (dotimes (i (length out))
+      (when (and (null (get-text-property i 'face out))
+                 (null (get-text-property i 'font-lock-face out)))
+        (add-text-properties i (1+ i)
+                             (list 'face face 'font-lock-face face)
+                             out)))
+    out))
+
 (defun psi-emacs--projection-render-block (state)
   "Render deterministic projection block from STATE."
   (let* ((widgets (or (psi-emacs-state-projection-widgets state) '()))
@@ -376,9 +447,8 @@ path-line, stats-line, session-activity-line, status-line (blank lines omitted).
     (when widgets
       (dolist (widget widgets)
         (dolist (widget-line (psi-emacs--projection-widget-lines widget))
-          (push (propertize widget-line
-                            'face 'psi-emacs-projection-widget-face
-                            'font-lock-face 'psi-emacs-projection-widget-face)
+          (push (psi-emacs--projection-apply-default-face widget-line
+                                                         'psi-emacs-projection-widget-face)
                 lines)))
       ;; Keep widget content visually isolated from statuses/footer.
       ;; Only add this divider when there are projected widgets.
@@ -413,9 +483,8 @@ path-line, stats-line, session-activity-line, status-line (blank lines omitted).
                 lines))))
     (when (and (stringp footer)
                (not (string-empty-p footer)))
-      (push (propertize footer
-                        'face 'psi-emacs-projection-footer-face
-                        'font-lock-face 'psi-emacs-projection-footer-face)
+      (push (psi-emacs--projection-apply-default-face footer
+                                                     'psi-emacs-projection-footer-face)
             lines))
     (if lines
         ;; Blank line before separator keeps visual breathing room between

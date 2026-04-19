@@ -101,6 +101,31 @@
   "Face for projection footer status lines."
   :group 'psi-emacs)
 
+(defface psi-emacs-session-current-face
+  '((t :inherit mode-line-emphasis))
+  "Face for current-session markers."
+  :group 'psi-emacs)
+
+(defface psi-emacs-session-waiting-face
+  '((t :inherit success :weight bold))
+  "Face for waiting sessions that need user attention."
+  :group 'psi-emacs)
+
+(defface psi-emacs-session-running-face
+  '((t :inherit shadow))
+  "Face for running session state badges."
+  :group 'psi-emacs)
+
+(defface psi-emacs-session-retrying-face
+  '((t :inherit warning))
+  "Face for retrying session state badges."
+  :group 'psi-emacs)
+
+(defface psi-emacs-session-compacting-face
+  '((t :inherit shadow :slant italic))
+  "Face for compacting session state badges."
+  :group 'psi-emacs)
+
 (defun psi-emacs--markdown-mode-available-p ()
   "Return non-nil when `markdown-mode' is available."
   (fboundp 'markdown-mode))

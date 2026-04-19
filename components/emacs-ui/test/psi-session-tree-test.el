@@ -56,8 +56,12 @@
                  (:session-tree-widget . ((:placement . "left")
                                           (:extension-id . "psi-session")
                                           (:widget-id . "session-tree")
-                                          (:content-lines . [((:text . "main [s1] — 09:00 / 09:15 — /repo/main ← current [waiting]"))
+                                          (:content-lines . [((:text . "main [s1] — 09:00 / 09:15 — /repo/main ← current [waiting]")
+                                                              (:runtime-state . "waiting")
+                                                              (:is-current . t))
                                                              ((:text . "  fork-1 [s2] — 08:00 / 08:10 — /repo/child [waiting]")
+                                                              (:runtime-state . "waiting")
+                                                              (:is-current . nil)
                                                               (:action . ((:type . "command")
                                                                           (:command . "/tree s2"))))])))))))
     (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
@@ -75,6 +79,38 @@
         (should (cl-some (lambda (txt) (string-match-p "/repo/main" txt)) texts))
         (should (cl-some (lambda (txt) (string-match-p "← current" txt)) texts))
         (should (cl-some (lambda (txt) (string-match-p "fork-1" txt)) texts))))))
+
+(ert-deftest psi-context-updated-session-tree-applies-current-and-waiting-faces ()
+  "Structured session tree metadata drives current and waiting faces in the buffer."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "context/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:runtime-state . "waiting") (:is-streaming . nil) (:parent-session-id . nil))
+                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:runtime-state . "running") (:is-streaming . t) (:parent-session-id . "s1"))])
+                 (:session-tree-widget . ((:placement . "left")
+                                          (:extension-id . "psi-session")
+                                          (:widget-id . "session-tree")
+                                          (:content-lines . [((:text . "main [s1] ← current [waiting]")
+                                                              (:runtime-state . "waiting")
+                                                              (:is-current . t))
+                                                             ((:text . "  fork-1 [s2] [running]")
+                                                              (:runtime-state . "running")
+                                                              (:is-current . nil)
+                                                              (:action . ((:type . "command")
+                                                                          (:command . "/tree s2"))))])))))))
+    (goto-char (point-min))
+    (search-forward "← current")
+    (should (eq 'psi-emacs-session-current-face
+                (get-text-property (1- (point)) 'face)))
+    (search-forward "[waiting]")
+    (should (eq 'psi-emacs-session-waiting-face
+                (get-text-property (1- (point)) 'face)))
+    (search-forward "[running]")
+    (should (eq 'psi-emacs-session-running-face
+                (get-text-property (1- (point)) 'face)))))
 
 (ert-deftest psi-context-updated-single-session-omits-widget ()
   "context/updated with only one session does not add session-tree widget."
@@ -179,7 +215,6 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
-    ;; Seed a context snapshot with two sessions
     (setf (psi-emacs-state-context-snapshot psi-emacs--state)
           '((:active-session-id . "s1")
             (:sessions . (((:id . "s1") (:name . "main")   (:is-active . t)   (:runtime-state . "waiting") (:is-streaming . nil) (:parent-session-id . nil))
@@ -288,9 +323,9 @@ replayed persisted messages."
       (psi-emacs--rehydrate-switch-state-from-query-frame psi-emacs--state frame))
     (let ((text (buffer-string)))
       (should (string-match-p "persisted reply" text))
-      (should (string-match-p "\$ ls success" text))
+      (should (string-match-p "\\$ ls success" text))
       (should (string-match-p "tool output" text))
-      (should (string-match-p "read foo\.clj pending" text))
+      (should (string-match-p "read foo\\.clj pending" text))
       (should (string-match-p "ψ: live tail" text)))))
 
 (ert-deftest psi-switch-session-rehydration-targets-selected-session-explicitly ()
@@ -387,11 +422,11 @@ summaries and made toggling body visibility ineffective after returning."
         (should (equal '("switch_session" "get_messages" "query_eql")
                        (mapcar #'car rpc-calls)))
         (let ((text (buffer-string)))
-          (should (string-match-p "\$ ls success" text))
+          (should (string-match-p "\\$ ls success" text))
           (should-not (string-match-p "tool output" text))
           (psi-emacs-toggle-tool-output-view)
           (let ((expanded (buffer-string)))
-            (should (string-match-p "\$ ls success\ntool output" expanded))))))))
+            (should (string-match-p "\\$ ls success\ntool output" expanded))))))))
 
 (ert-deftest psi-tree-slash-command-no-op-when-already-active ()
   "'/tree <active-id>' appends a message and sends no RPC."
@@ -407,9 +442,6 @@ summaries and made toggling body visibility ineffective after returning."
                    (push (list op params) calls)
                    t)))
         (psi-emacs--default-handle-slash-command psi-emacs--state "/tree s1"))
-      ;; Direct /tree <id> dispatches switch_session immediately (no-op message
-      ;; only happens from the picker path; direct id dispatch always fires)
-      ;; Confirm exactly one call to switch_session was made (session-id branch)
       (should (= 1 (length calls))))))
 
 (ert-deftest psi-tree-command-uses-backend-selector-flow-even-with-context-snapshot ()
@@ -470,7 +502,6 @@ summaries and made toggling body visibility ineffective after returning."
                     (:display-name . "Tree label")
                     (:name . nil))))))
 
-
 (ert-deftest psi-tree-session-candidates-include-id-and-support-command-keys ()
   "tree candidates expose backend labels and support command payload keys."
   (let ((candidates
@@ -507,7 +538,6 @@ summaries and made toggling body visibility ineffective after returning."
     (let* ((capf (psi-emacs-prompt-capf))
            (cands (all-completions "/tr" (nth 2 capf))))
       (should (member "/tree" cands)))))
-
 
 (provide 'psi-session-tree-test)
 

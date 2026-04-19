@@ -275,6 +275,8 @@ command rehydration."
          (:data . ((:path-line . "~/psi-main")
                    (:usage-parts . ["latency" "12ms"])
                    (:session-activity-line . "sessions: waiting helper · running main")
+                   (:session-activity-buckets . [((:state . "waiting") (:labels . ["helper"]))
+                                                ((:state . "running") (:labels . ["main"]))])
                    (:status-line . "connected")))))
       (should (string-match-p "ψ: hello" (buffer-string)))
       (should (string-match-p "~/psi-main\nlatency 12ms\nsessions: waiting helper . running main\nconnected" (buffer-string)))
@@ -283,6 +285,26 @@ command rehydration."
                  (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (should (>= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
                   before-anchor)))))
+
+(ert-deftest psi-extension-ui-footer-structured-activity-applies-state-faces ()
+  (with-temp-buffer
+    (insert "ψ: hello\n")
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:usage-parts . ["latency" "12ms"])
+                 (:session-activity-buckets . [((:state . "waiting") (:labels . ["helper"]))
+                                              ((:state . "running") (:labels . ["main"]))])))))
+    (goto-char (point-min))
+    (search-forward "waiting helper")
+    (should (eq 'psi-emacs-session-waiting-face
+                (get-text-property (1- (point)) 'face)))
+    (search-forward "running main")
+    (should (eq 'psi-emacs-session-running-face
+                (get-text-property (1- (point)) 'face)))))
 
 (ert-deftest psi-extension-ui-footer-renders-blank-line-and-separator-before-block ()
   (with-temp-buffer
