@@ -162,6 +162,80 @@
       (str base section)
       base)))
 
+(def ^:private all-prompt-components
+  #{:preamble :context-files :skills :runtime-metadata})
+
+(defn normalize-prompt-component-selection
+  "Normalize child-session prompt component selection into a deterministic map.
+   Returns nil when no selection is supplied."
+  [selection]
+  (when (some? selection)
+    (let [components        (when (contains? selection :components)
+                              (set (or (:components selection) #{})))
+          component-enabled? (fn [component]
+                               (if (some? components)
+                                 (contains? components component)
+                                 true))
+          tool-names        (when (contains? selection :tool-names)
+                              (vec (or (:tool-names selection) [])))
+          skill-names       (when (contains? selection :skill-names)
+                              (vec (or (:skill-names selection) [])))
+          ext-contribs      (when (contains? selection :extension-prompt-contributions)
+                              (vec (or (:extension-prompt-contributions selection) [])))
+          agents-md?        (if (contains? selection :agents-md?)
+                              (boolean (:agents-md? selection))
+                              true)]
+      {:agents-md?                     agents-md?
+       :components                     (or components all-prompt-components)
+       :include-preamble?              (component-enabled? :preamble)
+       :include-context-files?         (and agents-md? (component-enabled? :context-files))
+       :include-skills?                (component-enabled? :skills)
+       :include-runtime-metadata?      (component-enabled? :runtime-metadata)
+       :extension-prompt-contributions ext-contribs
+       :tool-names                     tool-names
+       :skill-names                    skill-names})))
+
+(defn filter-prompt-contributions
+  "Filter extension prompt contributions according to normalized selection.
+   When selection omits contribution controls, enabled contributions are returned unchanged.
+   When the allowlist is empty, no contributions are returned."
+  [contributions selection]
+  (let [normalized (normalize-prompt-component-selection selection)
+        allowlist  (some-> (:extension-prompt-contributions normalized) set)]
+    (cond
+      (and normalized (some? (:extension-prompt-contributions normalized)) (empty? allowlist)) []
+      allowlist (->> contributions
+                     (filter #(contains? allowlist (:ext-path %)))
+                     vec)
+      :else (vec (or contributions [])))))
+
+(defn filter-tool-defs
+  "Filter tool definitions according to normalized prompt-component selection.
+   When :tool-names is absent, returns the original tool-defs."
+  [tool-defs selection]
+  (let [normalized (normalize-prompt-component-selection selection)]
+    (if (and normalized (some? (:tool-names normalized)))
+      (let [allowed (set (:tool-names normalized))]
+        (->> tool-defs
+             (filter #(contains? allowed (:name %)))
+             vec))
+      (vec (or tool-defs [])))))
+
+(defn filter-skills
+  "Filter skill maps according to normalized prompt-component selection.
+   When skills are disabled entirely, returns []. When :skill-names is absent,
+   returns the original skills."
+  [skills selection]
+  (let [normalized (normalize-prompt-component-selection selection)]
+    (cond
+      (and normalized (false? (:include-skills? normalized))) []
+      (and normalized (some? (:skill-names normalized)))
+      (let [allowed (set (:skill-names normalized))]
+        (->> skills
+             (filter #(contains? allowed (:name %)))
+             vec))
+      :else (vec (or skills [])))))
+
 (def ^:private datetime-formatter
   (java.time.format.DateTimeFormatter/ofPattern
    "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z"))
@@ -330,14 +404,15 @@
    Returns the assembled prompt as a string."
   ([] (build-system-prompt {}))
   ([{:keys [cwd session-instant prompt-mode nucleus-prelude-override
-            custom-prompt append-prompt include-preamble? include-runtime-metadata?
+            custom-prompt append-prompt include-preamble? include-runtime-metadata? include-context-files?
             selected-tools extension-tool-descriptions context-files skills graph-capabilities]}]
-   (let [resolved-cwd          (or cwd (System/getProperty "user.dir"))
-         resolved-instant      (or session-instant (java.time.Instant/now))
-         mode                  (or prompt-mode :lambda)
-         include-preamble?     (if (contains? #{true false} include-preamble?) include-preamble? true)
-         include-runtime-meta? (if (contains? #{true false} include-runtime-metadata?) include-runtime-metadata? true)
-         tool-names            (or selected-tools ["read" "bash" "edit" "write" "psi-tool"])
+   (let [resolved-cwd           (or cwd (System/getProperty "user.dir"))
+         resolved-instant       (or session-instant (java.time.Instant/now))
+         mode                   (or prompt-mode :lambda)
+         include-preamble?      (if (contains? #{true false} include-preamble?) include-preamble? true)
+         include-runtime-meta?  (if (contains? #{true false} include-runtime-metadata?) include-runtime-metadata? true)
+         include-context-files? (if (contains? #{true false} include-context-files?) include-context-files? true)
+         tool-names             (or selected-tools ["read" "bash" "edit" "write" "psi-tool"])
          has-read?             (some #(= "read" %) tool-names)
          has-app-query?        (some #(= "psi-tool" %) tool-names)
          loaded-skills         (or skills [])
@@ -346,7 +421,7 @@
 
          ;; Context files section
          context-section
-         (when (seq loaded-ctx)
+         (when (and include-context-files? (seq loaded-ctx))
            (str "\n\n# Project Context\n\n"
                 "Project-specific instructions and guidelines:\n\n"
                 (str/join "\n\n"

@@ -252,6 +252,15 @@
                      :append-prompt "Helper prompt."})]
         (is (= "Helper prompt." prompt))))
 
+    (testing "can omit context files while preserving appended prompt"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:include-preamble? false
+                     :include-runtime-metadata? false
+                     :include-context-files? false
+                     :context-files [{:path "/AGENTS.md" :content "Context text"}]
+                     :append-prompt "Helper prompt."})]
+        (is (= "Helper prompt." prompt))))
+
     (testing "includes worktree directory metadata"
       (let [prompt (sys-prompt/build-system-prompt
                     {:cwd "/tmp/worktree-demo"})]

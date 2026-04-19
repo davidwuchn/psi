@@ -13,11 +13,11 @@
 
 (defn- effective-prompt
   [base contributions selection]
-  (if (some? (:extension-prompt-contributions selection))
-    (or base "")
-    (sys-prompt/apply-prompt-contributions
-     (or base "")
-     (session/sorted-prompt-contributions contributions))))
+  (sys-prompt/apply-prompt-contributions
+   (or base "")
+   (-> contributions
+       (sys-prompt/filter-prompt-contributions selection)
+       session/sorted-prompt-contributions)))
 
 (defn- normalize-prompt-contribution [ext-path id contribution]
   (let [now (java.time.Instant/now)

@@ -99,14 +99,9 @@
 
 (defn- sorted-contributions
   [session-data]
-  (let [selection (:prompt-component-selection session-data)
-        allowed   (some-> (:extension-prompt-contributions selection) set)]
-    (cond
-      (and (some? (:extension-prompt-contributions selection)) (empty? allowed)) []
-      allowed (->> (:prompt-contributions session-data)
-                   (filter #(contains? allowed (:ext-path %)))
-                   ss/sorted-prompt-contributions)
-      :else (ss/sorted-prompt-contributions (:prompt-contributions session-data)))))
+  (-> (:prompt-contributions session-data)
+      (system-prompt/filter-prompt-contributions (:prompt-component-selection session-data))
+      ss/sorted-prompt-contributions))
 
 (defn- developer-prompt-section
   [session-data]
@@ -134,7 +129,8 @@
    provider-facing conversation shape used for prompt execution."
   [session-data messages]
   (let [cache-bps (set (or (:cache-breakpoints session-data) #{}))
-        tool-defs (or (:tool-defs session-data) [])]
+        tool-defs (system-prompt/filter-tool-defs (:tool-defs session-data)
+                                                  (:prompt-component-selection session-data))]
     (conv/agent-messages->ai-conversation
      (effective-system-prompt session-data)
      messages

@@ -1,12 +1,12 @@
 (ns extensions.auto-session-name
-  "MVP auto-session-name extension.
+  "Auto session-name extension.
 
    Current behavior:
    - counts completed turns per session
    - every N turns schedules a delayed checkpoint event
-   - when the checkpoint fires, emits a transient UI notification (or log fallback)
-
-   This does not rename sessions yet."
+   - when the checkpoint fires, infers a concise title from recent visible conversation
+   - applies validated inferred names to the source session while preserving stale/manual override guards
+   - emits a transient UI notification (or log fallback) when no rename is applied"
   (:require
    [clojure.string :as str]
    [psi.ai.model-selection :as model-selection]))

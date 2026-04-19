@@ -30,5 +30,26 @@ Initialized on 2026-04-19.
   - extension test assertions for `create-child-session` needed to ignore runtime-injected routing keys like `:session-id` / `:ext-path`
 - Updated `doc/extension-api.md` to document the new child-session prompt-shaping controls and the reduced helper-run pattern.
 
-Remaining known limitation after this task:
-- `:prompt-component-selection` is currently exercised concretely for reduced preamble/runtime-metadata assembly plus suppression of extension prompt contributions; the auto-session-name path also disables tool definitions/capabilities by passing empty tool defs. If future callers need fully general skill/tool allowlist enforcement directly from `:prompt-component-selection`, that can be layered on without changing the core naming behavior implemented here.
+2026-04-19 — Step 4: complete the general child prompt-component control surface
+- Added canonical prompt-component normalization in `system_prompt.clj` so child selection now derives explicit effective semantics rather than remaining declarative-only metadata.
+- Added shared filtering helpers for:
+  - extension prompt contributions
+  - tool definitions
+  - skills
+- Wired prompt contribution filtering through a single path used by both prompt refresh and prepared-request assembly so allowlist semantics no longer diverge.
+- Extended base prompt assembly to support `:include-context-files?` so AGENTS/context-file suppression is now real rather than merely documented.
+- Updated child-session state initialization so prompt-component selection now drives:
+  - normalized child selection storage
+  - filtered child tool defs
+  - filtered child skills
+  - child-specific system-prompt build opts
+  - rebuilt reduced child base-system-prompt when prompt controls are supplied
+- Updated the auto-session-name namespace docstring to match current behavior.
+- Added focused proof for:
+  - context-file omission in reduced prompt assembly
+  - extension contribution allowlist behavior
+  - child prompt rebuild/tool filtering coherence
+- Re-ran focused unit coverage for `system-prompt-test` and `child-session-mutation-test`; both are green.
+
+Remaining known limitation after this step:
+- `:prompt-component-selection` now concretely controls standard prompt layers, extension contribution filtering, and child tool/skill filtering for the child-session flow added here. If future callers need broader lifecycle-wide prompt-component control beyond child-session creation/rebuild paths, that can build on the now-canonical normalization/filtering helpers rather than inventing a second contract.
