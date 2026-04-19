@@ -105,6 +105,11 @@ reference, and runtime scoped setters:
 Project query/config tool details:
 - [`doc/psi-project-config.md`](doc/psi-project-config.md)
 
+## Project nREPL
+
+For direct project-local REPL support distinct from psi's own runtime nREPL, see:
+- [`doc/project-nrepl.md`](doc/project-nrepl.md)
+
 ## References
 
 - [pi-mono](https://github.com/badlogic/pi-mono) — inspiration

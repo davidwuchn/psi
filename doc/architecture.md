@@ -149,6 +149,7 @@ Current runtime handles on ctx:
 | workflow registry | workflow instances, pump thread, statechart env | background jobs, workflow public data |
 | `:oauth-ctx` | credential store, token refresh, file locks | authenticated providers, login status |
 | nREPL server | live server object | `[:runtime :nrepl]` endpoint metadata |
+| project nREPL registry | managed project/worktree nREPL runtime handles | `:psi.project-nrepl/*` projected instance state |
 | query context | Pathom3 registry, compiled env | (is the query infrastructure itself) |
 | engine context | statechart engines, system state, transition log | (is the engine infrastructure itself) |
 | memory context | memory stores, store registry | (is the memory infrastructure itself) |
