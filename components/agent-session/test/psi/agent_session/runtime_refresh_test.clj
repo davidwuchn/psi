@@ -1,6 +1,7 @@
 (ns psi.agent-session.runtime-refresh-test
   (:require
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.runtime :as runtime]
@@ -93,6 +94,34 @@
     (is (= :extension-run-fn
            (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
     (is (= "Registered extension run fn could not be reinstalled because the target session has no usable model selection."
+           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
+
+(deftest refresh-runtime-reports-in-flight-prompt-limitation-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        _ (swap! (:state* ctx) assoc-in [:agent-session :sessions session-id :data :is-streaming] true)
+        result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
+    (is (= :partial (:psi.runtime-refresh/status result)))
+    (is (= :in-flight-prompt
+           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
+    (is (= "The target session is currently streaming, so in-flight prompt work may still be executing with pre-refresh closures."
+           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
+
+(deftest refresh-runtime-reports-active-background-job-limitation-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        _ (dispatch/dispatch! ctx :session/update-background-jobs-state
+                              {:update-fn (fn [store]
+                                            (:state (bg-jobs/start-background-job
+                                                     store
+                                                     {:tool-call-id "tc-runtime-refresh-1"
+                                                      :thread-id session-id
+                                                      :tool-name "agent-chain"
+                                                      :job-id "job-runtime-refresh-1"})))}
+                              {:origin :test})
+        result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
+    (is (= :partial (:psi.runtime-refresh/status result)))
+    (is (= :background-jobs
+           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
+    (is (= "The target session has 1 active background job(s) that may still be executing with pre-refresh closures."
            (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
 
 (deftest refresh-runtime-refreshes-extensions-via-canonical-path-test

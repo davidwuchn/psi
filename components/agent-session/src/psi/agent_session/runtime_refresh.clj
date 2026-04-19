@@ -148,11 +148,26 @@
                                    :extension-run-fn (:reason extension-run-reinstall)}]
       (step-result :runtime-hooks status summary details))))
 
+(defn- session-streaming?
+  [ctx session-id]
+  (let [get-session-data-in (requiring-resolve 'psi.agent-session.session-state/get-session-data-in)]
+    (boolean (:is-streaming (get-session-data-in ctx session-id)))))
+
+(defn- active-background-jobs
+  [ctx session-id]
+  (let [list-background-jobs-in! (requiring-resolve 'psi.agent-session.background-job-runtime/list-background-jobs-in!)
+        jobs                     (list-background-jobs-in! ctx session-id [:running :pending-cancel])]
+    (vec jobs)))
+
 (defn- collect-limitations
   [{:keys [ctx session-id]}]
   (let [existing-run-fn? (some? (some-> ctx :extension-run-fn-atom deref))
         ai-model         (when (and ctx session-id existing-run-fn?)
-                           (session-ai-model ctx session-id))]
+                           (session-ai-model ctx session-id))
+        streaming?       (when (and ctx session-id)
+                           (session-streaming? ctx session-id))
+        background-jobs  (when (and ctx session-id)
+                           (active-background-jobs ctx session-id))]
     (cond-> []
       (and existing-run-fn? (nil? session-id))
       (conj (limitation :extension-run-fn
@@ -162,7 +177,17 @@
       (and existing-run-fn? session-id (nil? ai-model))
       (conj (limitation :extension-run-fn
                         "Registered extension run fn could not be reinstalled because the target session has no usable model selection."
-                        "Set a session model and re-run runtime refresh, or re-register extension run fn from the owning runtime/bootstrap path.")))))
+                        "Set a session model and re-run runtime refresh, or re-register extension run fn from the owning runtime/bootstrap path."))
+
+      streaming?
+      (conj (limitation :in-flight-prompt
+                        "The target session is currently streaming, so in-flight prompt work may still be executing with pre-refresh closures."
+                        "Wait for the active turn to finish or interrupt it, then re-run runtime refresh if full convergence matters."))
+
+      (seq background-jobs)
+      (conj (limitation :background-jobs
+                        (str "The target session has " (count background-jobs) " active background job(s) that may still be executing with pre-refresh closures.")
+                        "Wait for running background jobs to finish, cancel them, or restart the runtime if full convergence matters.")))))
 
 (defn- overall-status
   [steps limitations]
