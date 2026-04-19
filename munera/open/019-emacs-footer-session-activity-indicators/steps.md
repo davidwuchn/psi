@@ -12,5 +12,11 @@
   - shared footer model now computes `:session-activity-line` from canonical context sessions
   - RPC `footer/updated` now carries `:session-activity-line`
   - Emacs footer projection now renders the canonical activity line between stats and status lines
-- [ ] Add/adjust tests
-- [ ] Verify footer readability with multiple sessions
+- [x] Add/adjust tests
+  - app-runtime footer tests cover multi-session activity line generation
+  - RPC footer tests cover `:session-activity-line` payload emission
+  - Emacs footer tests cover rendering the canonical activity line in the projection block
+- [x] Verify footer readability with multiple sessions
+  - targeted Clojure footer/RPC/TUI tests pass (`23 tests, 76 assertions, 0 failures`)
+  - Emacs frontend suite passes (`286 tests, 286 results as expected`)
+  - footer path rendering remains compatible with TUI call sites that still pass fallback `:cwd`

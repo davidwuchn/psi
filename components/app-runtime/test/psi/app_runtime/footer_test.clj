@@ -72,6 +72,29 @@
              (get-in model [:footer/lines :stats-line])))
       (is (nil? (get-in model [:footer/lines :status-line]))))))
 
+(deftest footer-model-from-data-includes-session-activity-line-test
+  (testing "footer exposes compact backend-owned session activity text for multi-session contexts"
+    (let [model (footer/footer-model-from-data
+                 {:psi.agent-session/worktree-path "/repo/project"
+                  :psi.agent-session/context-window 400000
+                  :psi.agent-session/model-provider "openai"
+                  :psi.agent-session/model-id "gpt-5.3-codex"
+                  :psi.agent-session/model-reasoning false
+                  :psi.ui/statuses []}
+                 {:context-sessions [{:session-id "s1"
+                                     :display-name "main"
+                                     :is-streaming true}
+                                    {:session-id "s2"
+                                     :display-name "helper"
+                                     :is-streaming false}
+                                    {:session-id "s3"
+                                     :session-name "notes"
+                                     :is-streaming false}]})]
+      (is (= "sessions: active main · idle helper, notes"
+             (get-in model [:footer/session-activity :line])))
+      (is (= "sessions: active main · idle helper, notes"
+             (get-in model [:footer/lines :session-activity-line]))))))
+
 (deftest footer-model-from-data-ignores-keyword-sentinels-test
   (testing "keyword sentinel values are treated as absent instead of seqable collections/strings"
     (let [model (footer/footer-model-from-data

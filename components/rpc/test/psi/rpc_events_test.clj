@@ -46,7 +46,22 @@
       (is (= "(openai-codex) gpt-5.3-codex • thinking high"
              (:model-text payload)))
       (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
-             (:status-line payload))))))
+             (:status-line payload)))
+      (is (nil? (:session-activity-line payload))))))
+
+(deftest footer-updated-payload-includes-session-activity-line-test
+  (testing "footer payload includes canonical backend session activity text"
+    (let [[ctx session-id] (support/create-session-context {:cwd "/repo/project"})
+          _               (ss/apply-root-state-update-in! ctx
+                                                          (ss/session-update session-id #(assoc %
+                                                                                                  :session-name "main"
+                                                                                                  :is-streaming true)))
+          child           (session/new-session-in! ctx session-id {:session-name "helper"})
+          payload         (rpc.events/footer-updated-payload ctx session-id)]
+      (is (= "/repo/project • helper"
+             (get-in (rpc.events/footer-updated-payload ctx (:session-id child)) [:path-line])))
+      (is (= "sessions: active main · idle helper"
+             (:session-activity-line payload))))))
 
 (deftest footer-updated-payload-prefers-session-display-name-test
   (testing "footer payload uses derived display name when explicit session name is absent"
