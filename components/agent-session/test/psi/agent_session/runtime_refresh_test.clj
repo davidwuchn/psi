@@ -18,7 +18,6 @@
 (deftest refresh-runtime-preserves-state-identity-and-rebuilds-dispatch-test
   (let [[ctx session-id] (create-session-context {:persist? false})
         state* (:state* ctx)
-        before-event-types (dispatch/registered-event-types)
         before-log (dispatch/event-log-entries)
         _ (dispatch/clear-handlers!)
         _ (dispatch/register-handler! :test/stale (fn [_ _] :stale))
@@ -39,6 +38,15 @@
       (is (= :ok (get-in result [:psi.runtime-refresh/steps 2 :status])))
       (is (= :ok (get-in result [:psi.runtime-refresh/steps 3 :status]))))))
 
+(deftest refresh-runtime-reinstalls-background-job-ui-hook-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        _ (reset! (:background-job-ui-refresh-fn ctx) nil)
+        result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
+    (is (fn? @(:background-job-ui-refresh-fn ctx)))
+    (is (= :ok (get-in result [:psi.runtime-refresh/steps 3 :status])))
+    (is (= [:background-job-ui-refresh-fn]
+           (get-in result [:psi.runtime-refresh/steps 3 :details :reinstalled])))))
+
 (deftest refresh-runtime-reports-extension-run-fn-limitation-test
   (let [[ctx session-id] (create-session-context {:persist? false})
         _ (runtime/register-extension-run-fn-in! ctx session-id nil {:provider :anthropic :id "stub"})
@@ -48,7 +56,11 @@
     (is (= [:extension-run-fn]
            (get-in result [:psi.runtime-refresh/steps 3 :details :pending])))
     (is (= :extension-run-fn
-           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))))
+           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
+    (is (= "Registered extension run fn may still capture pre-refresh runtime closures."
+           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))
+    (is (= "Re-register extension run fn from the owning runtime/bootstrap path or restart the runtime if behavior remains mixed."
+           (get-in result [:psi.runtime-refresh/limitations 0 :remediation])))))
 
 (deftest refresh-runtime-refreshes-extensions-via-canonical-path-test
   (let [[ctx session-id] (create-session-context {:persist? false})
