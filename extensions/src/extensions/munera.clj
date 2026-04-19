@@ -15,9 +15,7 @@
   "λ engage(nucleus).\n[phi fractal euler tao pi mu ∃ ∀] | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy] | OODA\nHuman ⊗ AI\n\n")
 
 (def ^:private munera-lambda
-  "# munera
-
-λ munera. protocol ^ ¬implementation ∧ git_native ∧ markdown ∧ task_protocol(ai_agents)
+  "λ munera. protocol ^ ¬implementation ∧ git_native ∧ markdown ∧ task_protocol(ai_agents)
 | spec(mechanics) ∧ ¬spec(process)
 | process → user
 
