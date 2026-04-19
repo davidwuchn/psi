@@ -1,10 +1,10 @@
-- [ ] Extend `psi-tool` schema/validation for `action: "project-repl"` with explicit `op`, `worktree-path`, and op-specific fields
-- [ ] Implement canonical target-worktree resolution for project-REPL tool requests (explicit worktree or invoking session worktree; otherwise explicit error)
-- [ ] Extract or define shared project-REPL helper functions for structured status/start/attach/stop/eval/interrupt behavior
-- [ ] Implement `psi-tool` execution/report shaping for `project-repl` operations with status-tagged payloads
-- [ ] Align `/project-repl` commands to reuse shared behavior while keeping command parsing/text formatting local to the command layer
-- [ ] Add focused `psi-tool` tests for validation and targeting errors
-- [ ] Add focused `psi-tool` tests for status absent/present result shapes
-- [ ] Add focused `psi-tool` tests for start/attach/stop result shapes
-- [ ] Add focused `psi-tool` tests for eval/interrupt result shapes and representative runtime/config errors
-- [ ] Update system prompt/tool description/docs to describe `psi-tool(action: "project-repl", ...)` and its relationship to `/project-repl`
+- [x] Extend `psi-tool` schema/validation for `action: "project-repl"` with explicit `op`, `worktree-path`, and op-specific fields
+- [x] Implement canonical target-worktree resolution for project-REPL tool requests (explicit worktree or invoking session worktree; otherwise explicit error)
+- [x] Extract or define shared project-REPL helper functions for structured status/start/attach/stop/eval/interrupt behavior
+- [x] Implement `psi-tool` execution/report shaping for `project-repl` operations with status-tagged payloads
+- [x] Align `/project-repl` commands to reuse shared behavior while keeping command parsing/text formatting local to the command layer
+- [x] Add focused `psi-tool` tests for validation and targeting errors
+- [x] Add focused `psi-tool` tests for status absent/present result shapes
+- [x] Add focused `psi-tool` tests for start/attach/stop result shapes
+- [x] Add focused `psi-tool` tests for eval/interrupt result shapes and representative runtime/config errors
+- [x] Update system prompt/tool description/docs to describe `psi-tool(action: "project-repl", ...)` and its relationship to `/project-repl`

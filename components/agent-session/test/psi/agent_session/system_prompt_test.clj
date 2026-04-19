@@ -85,7 +85,7 @@
         (is (str/includes? prompt "bash → λcmd. shell(cmd)"))
         (is (str/includes? prompt "edit → λf. find(exact) → replace"))
         (is (str/includes? prompt "write → λf. create(f) ∨ overwrite(f)"))
-        (is (str/includes? prompt "psi-tool → λaction. runtime(query ∨ eval ∨ reload-code) → {graph ∨ value ∨ reload-report}"))))
+        (is (str/includes? prompt "psi-tool → λaction. runtime(query ∨ eval ∨ reload-code ∨ project-repl) → {graph ∨ value ∨ reload-report ∨ project-repl-report}"))))
 
     (testing "includes graph capabilities data"
       (let [prompt (sys-prompt/build-system-prompt
@@ -155,7 +155,7 @@
         (is (str/includes? prompt "You are ψ (Psi)"))
         (is (str/includes? prompt "Available tools:"))
         (is (str/includes? prompt "read: Read file contents"))
-        (is (str/includes? prompt "psi-tool: Execute live psi runtime operations: action-based graph query, in-process eval, and explicit code reload."))
+        (is (str/includes? prompt "psi-tool: Execute live psi runtime operations: action-based graph query, in-process eval, explicit code reload, and managed project REPL control."))
         (is (str/includes? prompt "Guidelines:"))
         (is (str/includes? prompt "Capability graph (EQL discovery):"))
         (is (not (str/includes? prompt "λ engage(nucleus).")))))
@@ -183,7 +183,6 @@
         (is (str/includes? prompt "psi-tool(action: \"reload-code\", namespaces: [\"psi.agent-session.tools\"])"))
         (is (str/includes? prompt "psi-tool(action: \"project-repl\", op: \"status\")"))
         (is (str/includes? prompt "psi-tool(action: \"project-repl\", op: \"eval\", code: \"(+ 1 2)\")"))
-        (is (str/includes? prompt "psi-tool → λaction. runtime(query ∨ eval ∨ reload-code ∨ project-repl) → {graph ∨ value ∨ reload-report ∨ project-repl-report}"))
         (is (str/includes? prompt "psi.agent-session/context-sessions"))
         (is (str/includes? prompt "psi.graph/resolver-index"))
         (is (str/includes? prompt "psi.graph/attr-index"))
