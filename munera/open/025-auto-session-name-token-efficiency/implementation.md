@@ -22,6 +22,13 @@ Initialized on 2026-04-19.
   - auto-session-name helper child creation params
   - helper prompt truncation and runtime prompt shape
 
-Open follow-up after this step:
-- verify whether child prompt-component selection should actively filter skill/tool/session prompt layers in request preparation beyond the already enforced empty tool defs and explicit extension suppression
-- run focused tests and fix any edge mismatches discovered there
+2026-04-19 — Step 3: verification and documentation follow-through
+- Ran focused unit coverage for the shared prompt-building and child-session mutation surfaces via `bb clojure:test:unit --focus psi.agent-session.system-prompt-test --focus psi.agent-session.child-session-mutation-test`.
+- Ran focused auto-session-name tests via direct Clojure test invocation because the aggregate extension suite currently contains unrelated LSP failures.
+- Fixed two edge mismatches discovered during focused verification:
+  - helper transcript truncation should preserve newline-separated assembled lines rather than re-squishing the whole transcript
+  - extension test assertions for `create-child-session` needed to ignore runtime-injected routing keys like `:session-id` / `:ext-path`
+- Updated `doc/extension-api.md` to document the new child-session prompt-shaping controls and the reduced helper-run pattern.
+
+Remaining known limitation after this task:
+- `:prompt-component-selection` is currently exercised concretely for reduced preamble/runtime-metadata assembly plus suppression of extension prompt contributions; the auto-session-name path also disables tool definitions/capabilities by passing empty tool defs. If future callers need fully general skill/tool allowlist enforcement directly from `:prompt-component-selection`, that can be layered on without changing the core naming behavior implemented here.

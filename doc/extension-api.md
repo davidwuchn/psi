@@ -88,6 +88,40 @@ Example:
              :id       (:psi.agent-session/model-id model-ctx)}}))
 ```
 
+## Child-session helper runs
+
+Extensions can create targeted helper/background child sessions with:
+
+- `psi.extension/create-child-session`
+- `psi.extension/run-agent-loop-in-session`
+
+`create-child-session` accepts the existing child runtime controls such as:
+
+- `:session-name`
+- `:system-prompt`
+- `:tool-defs`
+- `:thinking-level`
+- `:preloaded-messages`
+- `:cache-breakpoints`
+
+It also now accepts prompt-shaping controls for reduced helper runs:
+
+- `:prompt-component-selection`
+  - `:agents-md?` — include discovered `AGENTS.md` / context-file content when true
+  - `:extension-prompt-contributions` — allowlist of extension prompt-contribution owners; `[]` means none
+  - `:tool-names` — caller-declared tool selection metadata for the helper run
+  - `:skill-names` — caller-declared skill selection metadata for the helper run
+  - `:components` — standard prompt-component set, currently including `:preamble`, `:context-files`, `:skills`, `:runtime-metadata`
+- `:system-prompt`
+  - may be used as a minimal caller-supplied helper instruction when the selected standard prompt components are disabled
+
+Behavior note:
+- when no prompt-component controls are supplied, existing child-session behavior is unchanged
+- reduced helper runs should disable capabilities as well as prompt text when the helper does not need them
+
+Current reference example:
+- `auto-session-name` creates a helper child with no AGENTS/context prompt content, no extension prompt contributions, no tool defs, no skill prelude content, and one minimal naming-specific system prompt
+
 ## Shared model selection for extensions
 
 Extensions that need to choose a model for helper/background work should prefer
