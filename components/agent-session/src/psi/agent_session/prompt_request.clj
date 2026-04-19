@@ -99,7 +99,14 @@
 
 (defn- sorted-contributions
   [session-data]
-  (ss/sorted-prompt-contributions (:prompt-contributions session-data)))
+  (let [selection (:prompt-component-selection session-data)
+        allowed   (some-> (:extension-prompt-contributions selection) set)]
+    (cond
+      (and (some? (:extension-prompt-contributions selection)) (empty? allowed)) []
+      allowed (->> (:prompt-contributions session-data)
+                   (filter #(contains? allowed (:ext-path %)))
+                   ss/sorted-prompt-contributions)
+      :else (ss/sorted-prompt-contributions (:prompt-contributions session-data)))))
 
 (defn- developer-prompt-section
   [session-data]

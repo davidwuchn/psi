@@ -318,7 +318,9 @@
      :prompt-mode                 — :lambda (default) or :prose
      :nucleus-prelude-override    — custom prelude text (lambda mode only)
      :custom-prompt               — replaces the default prompt entirely
-     :append-prompt               — text appended after the main prompt
+     :append-prompt               — text appended after the standard prompt layers
+     :include-preamble?           — include psi-authored identity/tools/guidelines preamble (default true)
+     :include-runtime-metadata?   — include time/worktree metadata tail (default true)
      :selected-tools              — tool name strings
      :extension-tool-descriptions — [{:name :description :lambda-description}]
      :context-files               — [{:path :content}] pre-loaded context files
@@ -328,20 +330,19 @@
    Returns the assembled prompt as a string."
   ([] (build-system-prompt {}))
   ([{:keys [cwd session-instant prompt-mode nucleus-prelude-override
-            custom-prompt append-prompt selected-tools extension-tool-descriptions
-            context-files skills graph-capabilities]}]
-   (let [resolved-cwd     (or cwd (System/getProperty "user.dir"))
-         resolved-instant (or session-instant (java.time.Instant/now))
-         mode           (or prompt-mode :lambda)
-         tool-names     (or selected-tools ["read" "bash" "edit" "write" "psi-tool"])
-         has-read?      (some #(= "read" %) tool-names)
-         has-app-query? (some #(= "psi-tool" %) tool-names)
-         loaded-skills   (or skills [])
-         loaded-ctx      (or context-files [])
-         loaded-caps     (or graph-capabilities [])
-
-         ;; Append section
-         append-section (when append-prompt (str "\n\n" append-prompt))
+            custom-prompt append-prompt include-preamble? include-runtime-metadata?
+            selected-tools extension-tool-descriptions context-files skills graph-capabilities]}]
+   (let [resolved-cwd          (or cwd (System/getProperty "user.dir"))
+         resolved-instant      (or session-instant (java.time.Instant/now))
+         mode                  (or prompt-mode :lambda)
+         include-preamble?     (if (contains? #{true false} include-preamble?) include-preamble? true)
+         include-runtime-meta? (if (contains? #{true false} include-runtime-metadata?) include-runtime-metadata? true)
+         tool-names            (or selected-tools ["read" "bash" "edit" "write" "psi-tool"])
+         has-read?             (some #(= "read" %) tool-names)
+         has-app-query?        (some #(= "psi-tool" %) tool-names)
+         loaded-skills         (or skills [])
+         loaded-ctx            (or context-files [])
+         loaded-caps           (or graph-capabilities [])
 
          ;; Context files section
          context-section
@@ -362,20 +363,28 @@
 
          ;; Main prompt — mode-branched preamble
          base-prompt
-         (if custom-prompt
+         (cond
            custom-prompt
+           custom-prompt
+
+           include-preamble?
            (if (= mode :lambda)
              (build-lambda-preamble tool-names has-app-query? loaded-caps
                                     nucleus-prelude-override extension-tool-descriptions)
              (build-prose-preamble tool-names has-app-query? loaded-caps
-                                   extension-tool-descriptions)))]
+                                   extension-tool-descriptions))
 
-     ;; Skills come before context files (AGENTS.md) so that psi-authored
-     ;; content groups together and project context appears last before the
-     ;; runtime metadata tail. Extension contributions are now appended by the
-     ;; prompt handler/request-preparation path, not by base prompt assembly.
-     (str base-prompt
-          (or append-section "")
-          (or skills-section "")
-          (or context-section "")
-          (runtime-metadata-tail resolved-cwd resolved-instant)))))
+           :else
+           "")
+
+         runtime-section
+         (when include-runtime-meta?
+           (runtime-metadata-tail resolved-cwd resolved-instant))
+
+         sections (->> [base-prompt
+                        skills-section
+                        context-section
+                        runtime-section
+                        append-prompt]
+                       (remove str/blank?))]
+     (str/join "\n\n" sections))))

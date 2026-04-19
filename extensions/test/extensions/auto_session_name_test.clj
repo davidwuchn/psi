@@ -156,6 +156,27 @@
                     (keep (fn [[kind op _]] (when (= kind :mutate) op)))
                     (remove #{'psi.extension/schedule-event})
                     vec)))
+        (is (= {:session-name               "auto-session-name"
+                :system-prompt              "Infer a concise session title from the supplied conversation excerpt. Return title text only. No explanation. No quotes. No markdown."
+                :tool-defs                  []
+                :thinking-level             :off
+                :prompt-component-selection {:agents-md? false
+                                             :extension-prompt-contributions []
+                                             :tool-names []
+                                             :skill-names []
+                                             :components #{}}
+                :cache-breakpoints          #{}}
+               (some->> @calls
+                        (keep (fn [[kind op params]]
+                                (when (and (= kind :mutate)
+                                           (= op 'psi.extension/create-child-session))
+                                  (select-keys params [:session-name
+                                                       :system-prompt
+                                                       :tool-defs
+                                                       :thinking-level
+                                                       :prompt-component-selection
+                                                       :cache-breakpoints]))))
+                        first)))
         (is (= {:provider :openai
                 :id "gpt-5.3-codex-spark"
                 :name "GPT-5.3 Codex Spark"}

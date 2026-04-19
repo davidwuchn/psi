@@ -245,6 +245,13 @@
                     {:append-prompt "Extra instructions."})]
         (is (str/includes? prompt "Extra instructions."))))
 
+    (testing "can omit preamble and runtime metadata"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:include-preamble? false
+                     :include-runtime-metadata? false
+                     :append-prompt "Helper prompt."})]
+        (is (= "Helper prompt." prompt))))
+
     (testing "includes worktree directory metadata"
       (let [prompt (sys-prompt/build-system-prompt
                     {:cwd "/tmp/worktree-demo"})]

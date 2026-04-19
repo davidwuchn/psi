@@ -14,6 +14,7 @@
 (def ^:private default-turn-interval 2)
 (def ^:private default-delay-ms 250)
 (def ^:private max-title-chars 60)
+(def ^:private max-conversation-chars 4000)
 (def ^:private checkpoint-event "auto_session_name/rename_checkpoint")
 
 (defonce ^:private state
@@ -94,13 +95,21 @@
        (keep session-entry->message)
        sanitize-message-history))
 
+(defn- truncate-conversation-text
+  [text]
+  (when-let [text* (some-> text str/trim not-empty)]
+    (if (<= (count text*) max-conversation-chars)
+      text*
+      (subs text* (- (count text*) max-conversation-chars)))))
+
 (defn- build-rename-prompt
   [lines]
-  (when (seq lines)
-    (str "Based on this conversation, what is the current purpose of the session?\n"
-         "Reply with only a terse phrase of 2–8 words.\n"
-         "No quotes. No explanation.\n\n"
-         (str/join "\n" lines))))
+  (when-let [conversation (some->> lines
+                                   (str/join "\n")
+                                   truncate-conversation-text)]
+    {:system-prompt "Infer a concise session title from the supplied conversation excerpt. Return title text only. No explanation. No quotes. No markdown."
+     :user-prompt   (str "Conversation excerpt:\n\n"
+                         conversation)}))
 
 (defn- normalize-title
   [text]
@@ -197,19 +206,26 @@
 
 (defn- infer-session-title [api source-session-id checkpoint-turn-count]
   (when-not (stale-checkpoint? source-session-id checkpoint-turn-count)
-    (let [lines        (sanitize-session-entries (query-session-entries api source-session-id))
-          prompt       (build-rename-prompt lines)
-          helper-model (select-helper-model api source-session-id)]
-      (when (seq prompt)
+    (let [lines          (sanitize-session-entries (query-session-entries api source-session-id))
+          {:keys [system-prompt user-prompt]} (build-rename-prompt lines)
+          helper-model   (select-helper-model api source-session-id)]
+      (when (seq user-prompt)
         (let [child ((:mutate-session api) source-session-id 'psi.extension/create-child-session
-                     {:session-name   "auto-session-name"
-                      :tool-defs      []
-                      :thinking-level :off})
+                     {:session-name               "auto-session-name"
+                      :system-prompt              system-prompt
+                      :tool-defs                  []
+                      :thinking-level             :off
+                      :prompt-component-selection {:agents-md? false
+                                                   :extension-prompt-contributions []
+                                                   :tool-names []
+                                                   :skill-names []
+                                                   :components #{}}
+                      :cache-breakpoints          #{}})
               child-session-id (:psi.agent-session/session-id child)]
           (when child-session-id
             (remember-helper-session! child-session-id)
             (let [run-result ((:mutate-session api) child-session-id 'psi.extension/run-agent-loop-in-session
-                              (cond-> {:prompt prompt}
+                              (cond-> {:prompt user-prompt}
                                 helper-model
                                 (assoc :model helper-model)))
                   title      (some-> (:psi.agent-session/agent-run-text run-result)

@@ -77,6 +77,8 @@
       ((checkpoint-handler ctx ext-path) {:session-id session-id :turn-count 2})
       (is (= "Fix footer rendering"
              (:session-name (ss/get-session-data-in ctx session-id))))
+      (is (= "Conversation excerpt:\n\nUser: Fix footer rendering\nAssistant: I will inspect the selector path."
+             (:prompt @last-run-params*)))
       (is (= {:provider :openai
               :id "gpt-5.3-codex-spark"}
              (some-> @last-run-params*

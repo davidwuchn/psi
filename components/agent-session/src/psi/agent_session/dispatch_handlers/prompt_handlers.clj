@@ -12,10 +12,12 @@
 ;;; Prompt contribution pure helpers
 
 (defn- effective-prompt
-  [base contributions]
-  (sys-prompt/apply-prompt-contributions
-   (or base "")
-   (session/sorted-prompt-contributions contributions)))
+  [base contributions selection]
+  (if (some? (:extension-prompt-contributions selection))
+    (or base "")
+    (sys-prompt/apply-prompt-contributions
+     (or base "")
+     (session/sorted-prompt-contributions contributions))))
 
 (defn- normalize-prompt-contribution [ext-path id contribution]
   (let [now (java.time.Instant/now)
@@ -57,13 +59,14 @@
            ;; When build opts are stored, rebuild the assembled base prompt first,
            ;; then apply extension contributions as a distinct final layer so
            ;; request preparation and introspection can observe the split.
+           selection (:prompt-component-selection sd)
            base    (if-let [build-opts (:system-prompt-build-opts sd)]
                      (sys-prompt/build-system-prompt
                       (assoc build-opts
                              :prompt-mode (:prompt-mode sd :lambda)
                              :prompt-contributions nil))
                      (or (:base-system-prompt sd) (:system-prompt sd) ""))
-           prompt  (effective-prompt base contrib)]
+           prompt  (effective-prompt base contrib selection)]
        {:root-state-update (session/session-update session-id #(assoc %
                                                            :base-system-prompt base
                                                            :system-prompt prompt))
@@ -73,9 +76,10 @@
   (dispatch/register-handler!
    :session/set-system-prompt
    (fn [ctx {:keys [session-id prompt]}]
-     (let [base*   (or prompt "")
-           contrib (session/list-prompt-contributions-in ctx session-id)
-           prompt* (effective-prompt base* contrib)]
+     (let [base*     (or prompt "")
+           contrib   (session/list-prompt-contributions-in ctx session-id)
+           selection (:prompt-component-selection (session/get-session-data-in ctx session-id))
+           prompt*   (effective-prompt base* contrib selection)]
        {:root-state-update (session/session-update session-id #(assoc %
                                                            :base-system-prompt base*
                                                            :system-prompt prompt*))
@@ -95,7 +99,7 @@
                                   xs))
            next*     (conj xs* norm)
            base      (or (:base-system-prompt sd) (:system-prompt sd) "")
-           prompt*   (effective-prompt base next*)]
+           prompt*   (effective-prompt base next* (:prompt-component-selection sd))]
        {:root-state-update
         (session/session-update session-id
          #(assoc %
@@ -129,7 +133,7 @@
                                  c))
                              xs)
                base    (or (:base-system-prompt sd) (:system-prompt sd) "")
-               prompt* (effective-prompt base next*)]
+               prompt* (effective-prompt base next* (:prompt-component-selection sd))]
            {:root-state-update (session/session-update session-id #(assoc %
                                                                :prompt-contributions next*
                                                                :system-prompt prompt*))
@@ -153,7 +157,7 @@
        (if-not removed?
          {:return {:removed? false :count (count xs)}}
          (let [base    (or (:base-system-prompt sd) (:system-prompt sd) "")
-               prompt* (effective-prompt base next*)]
+               prompt* (effective-prompt base next* (:prompt-component-selection sd))]
            {:root-state-update (session/session-update session-id #(assoc %
                                                                :prompt-contributions next*
                                                                :system-prompt prompt*))

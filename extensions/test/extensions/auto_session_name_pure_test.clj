@@ -36,13 +36,25 @@
               :psi.session-entry/data {:ignored true}}])))))
 
 (deftest build-rename-prompt-test
-  (testing "embeds sanitized conversation lines in terse-purpose prompt"
-    (let [prompt (#'sut/build-rename-prompt ["User: Fix footer"
-                                             "Assistant: I will inspect the selector path."])]
-      (is (string? prompt))
-      (is (.contains prompt "current purpose of the session"))
-      (is (.contains prompt "User: Fix footer"))
-      (is (.contains prompt "Assistant: I will inspect the selector path.")))))
+  (testing "builds minimal helper prompt with bounded conversation text"
+    (let [{:keys [system-prompt user-prompt]}
+          (#'sut/build-rename-prompt ["User: Fix footer"
+                                      "Assistant: I will inspect the selector path."])]
+      (is (string? system-prompt))
+      (is (.contains system-prompt "Return title text only"))
+      (is (.contains user-prompt "Conversation excerpt:"))
+      (is (.contains user-prompt "User: Fix footer"))
+      (is (.contains user-prompt "Assistant: I will inspect the selector path."))))
+
+  (testing "truncates long conversation text to trailing 4000 chars"
+    (let [long-line (apply str (repeat 4500 "a"))
+          {:keys [user-prompt]} (#'sut/build-rename-prompt [(str "User: " long-line)])
+          excerpt (subs user-prompt (inc (.indexOf user-prompt "\n\n")))]
+      (is (<= (count excerpt) (+ 2 4000)))
+      (is (.endsWith user-prompt (apply str (repeat 4000 "a"))))))
+
+  (testing "returns nil when nothing remains after sanitization/truncation"
+    (is (nil? (#'sut/build-rename-prompt [])))))
 
 (deftest title-validation-test
   (testing "normalizes quoted titles"

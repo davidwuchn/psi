@@ -98,6 +98,7 @@
                                                     :nucleus-prelude-override
                                                     :cache-breakpoints
                                                     :system-prompt-build-opts
+                                                    :prompt-component-selection
                                                     :developer-prompt
                                                     :developer-prompt-source
                                                     :auto-retry-enabled
@@ -138,7 +139,7 @@
 (defn initialize-child-session-state
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
-  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints]}]
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection]}]
   (let [tool-defs (or tool-defs (:tool-defs parent-sd))
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
@@ -153,6 +154,7 @@
                          :thinking-level          (or thinking-level :off)
                          :tool-defs               tool-defs
                          :cache-breakpoints       (or cache-breakpoints (:cache-breakpoints parent-sd))
+                         :prompt-component-selection prompt-component-selection
                          :model                   (:model parent-sd)
                          :created-at              (java.time.Instant/now)})]
     (-> state
@@ -174,6 +176,7 @@
                                                      :nucleus-prelude-override
                                                      :cache-breakpoints
                                                      :system-prompt-build-opts
+                                                     :prompt-component-selection
                                                      :developer-prompt
                                                      :developer-prompt-source
                                                      :auto-retry-enabled

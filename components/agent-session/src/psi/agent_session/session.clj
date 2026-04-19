@@ -113,6 +113,17 @@
 (def prompt-mode-schema
   [:enum :lambda :prose])
 
+(def prompt-component-schema
+  [:enum :preamble :context-files :skills :runtime-metadata])
+
+(def prompt-component-selection-schema
+  [:map
+   [:agents-md? {:optional true} :boolean]
+   [:extension-prompt-contributions {:optional true} [:maybe [:vector :string]]]
+   [:tool-names {:optional true} [:maybe [:vector :string]]]
+   [:skill-names {:optional true} [:maybe [:vector :string]]]
+   [:components {:optional true} [:maybe [:set prompt-component-schema]]]])
+
 (def agent-session-schema
   [:map
    [:session-id :string]
@@ -134,6 +145,7 @@
    [:nucleus-prelude-override {:optional true} [:maybe :string]]
    [:cache-breakpoints {:optional true} [:set cache-breakpoint-schema]]
    [:system-prompt-build-opts {:optional true} [:maybe :map]]
+   [:prompt-component-selection {:optional true} [:maybe prompt-component-selection-schema]]
    [:developer-prompt {:optional true} [:maybe :string]]
    [:developer-prompt-source {:optional true} [:maybe [:enum :env :explicit]]]
    [:steering-messages [:vector :string]]
@@ -219,6 +231,7 @@
      :system-prompt           ""
      :prompt-mode              :lambda
      :cache-breakpoints       #{:system}
+     :prompt-component-selection nil
      :developer-prompt        nil
      :developer-prompt-source nil
      :steering-messages       []
