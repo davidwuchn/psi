@@ -21,7 +21,7 @@
   - [ ] Apply session-scoped reinstalls across dependent live sessions
   - [x] Treat other closure-backed ctx-installed hooks as limitations in the first slice
 - [x] Define explicit limitation reporting for non-hot-refreshable boundaries
-  - [ ] Long-lived loop/thread boundaries
+  - [x] Long-lived loop/thread boundaries
   - [x] In-flight prompt/background/service work when relevant
   - [x] `boundary` / `reason` / `remediation` result shape
 - [x] Expose the refresh pass for consumer tasks such as `014-psi-tool-code-reload`

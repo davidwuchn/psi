@@ -3,6 +3,7 @@ Step 3 strengthened proof in commit `a865f4b` (`⚒ runtime-refresh: strengthen 
 Step 5 documented the code-reload vs runtime-refresh distinction in commit `b167e74` (`⚒ runtime-refresh: document reload vs refresh`).
 Step 6 added best-effort extension run-fn reinstall in commit `8885e7b` (`⚒ runtime-refresh: reinstall extension run fn when possible`).
 Step 8 added in-flight work limitation reporting in commit `1d8860e` (`⚒ runtime-refresh: report in-flight work limitations`).
+Step 10 added long-lived loop/thread limitation reporting in commit `2aa7f99` (`⚒ runtime-refresh: report long-lived loop limits`).
 
 Initial findings captured in design:
 - surviving runtime data is often not the problem
@@ -64,12 +65,17 @@ Current honest limitation reporting:
 - runtime refresh now also reports in-flight limitation entries for:
   - `:in-flight-prompt` when the target session is actively streaming
   - `:background-jobs` when the target session has running or pending-cancel background jobs
+- runtime refresh now also reports long-lived loop/thread limitation entries for:
+  - `:workflow-pump-thread` when the workflow event pump thread is alive
+  - `:managed-services` when one or more managed services are still running
 - proof now explicitly covers:
   - background-job UI refresh hook reinstall
   - successful extension run-fn reinstall when session model is present
   - structured limitation entry shape and contents for extension run-fn reinstall failures
   - in-flight prompt limitation reporting
   - active background-job limitation reporting
+  - workflow pump thread limitation reporting
+  - managed service loop limitation reporting
 
 Notes from landing this slice:
 - a direct compile-time require from `runtime_refresh` into `context` / `dispatch-handlers` caused a load cycle through `psi_tool`; switching refresh internals to `requiring-resolve` removed that cycle
