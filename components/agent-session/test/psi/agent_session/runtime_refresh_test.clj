@@ -4,6 +4,7 @@
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.workflows :as workflows]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.runtime-refresh :as sut]
    [psi.agent-session.test-support :as test-support]))
@@ -122,6 +123,30 @@
     (is (= :background-jobs
            (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
     (is (= "The target session has 1 active background job(s) that may still be executing with pre-refresh closures."
+           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
+
+(deftest refresh-runtime-reports-workflow-pump-thread-limitation-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        _ (workflows/ensure-pump! (:workflow-registry ctx))
+        result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
+    (is (= :partial (:psi.runtime-refresh/status result)))
+    (is (= :workflow-pump-thread
+           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
+    (is (= "The workflow event pump thread is long-lived and is not rewritten in place by runtime refresh."
+           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
+
+(deftest refresh-runtime-reports-managed-service-loop-limitation-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        _ (swap! (-> ctx :service-registry :state) assoc-in [:services :svc-1]
+                 {:id "svc-1"
+                  :key :svc-1
+                  :status :running
+                  :command ["dummy"]})
+        result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
+    (is (= :partial (:psi.runtime-refresh/status result)))
+    (is (= :managed-services
+           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
+    (is (= "The runtime has 1 running managed service(s) whose long-lived reader/process loops are not rewritten in place by runtime refresh."
            (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
 
 (deftest refresh-runtime-refreshes-extensions-via-canonical-path-test

@@ -159,15 +159,29 @@
         jobs                     (list-background-jobs-in! ctx session-id [:running :pending-cancel])]
     (vec jobs)))
 
+(defn- workflow-pump-active?
+  [ctx]
+  (let [pump-thread (get-in @(-> ctx :workflow-registry :state) [:pump-thread])]
+    (boolean (and pump-thread (.isAlive ^Thread pump-thread)))))
+
+(defn- running-service-count
+  [ctx]
+  (let [projected-services-in (requiring-resolve 'psi.agent-session.services/projected-services-in)]
+    (->> (projected-services-in ctx)
+         (filter #(= :running (:status %)))
+         count)))
+
 (defn- collect-limitations
   [{:keys [ctx session-id]}]
-  (let [existing-run-fn? (some? (some-> ctx :extension-run-fn-atom deref))
-        ai-model         (when (and ctx session-id existing-run-fn?)
-                           (session-ai-model ctx session-id))
-        streaming?       (when (and ctx session-id)
-                           (session-streaming? ctx session-id))
-        background-jobs  (when (and ctx session-id)
-                           (active-background-jobs ctx session-id))]
+  (let [existing-run-fn?   (some? (some-> ctx :extension-run-fn-atom deref))
+        ai-model           (when (and ctx session-id existing-run-fn?)
+                             (session-ai-model ctx session-id))
+        streaming?         (when (and ctx session-id)
+                             (session-streaming? ctx session-id))
+        background-jobs    (when (and ctx session-id)
+                             (active-background-jobs ctx session-id))
+        workflow-pump?     (when ctx (workflow-pump-active? ctx))
+        running-services   (when ctx (running-service-count ctx))]
     (cond-> []
       (and existing-run-fn? (nil? session-id))
       (conj (limitation :extension-run-fn
@@ -187,7 +201,17 @@
       (seq background-jobs)
       (conj (limitation :background-jobs
                         (str "The target session has " (count background-jobs) " active background job(s) that may still be executing with pre-refresh closures.")
-                        "Wait for running background jobs to finish, cancel them, or restart the runtime if full convergence matters.")))))
+                        "Wait for running background jobs to finish, cancel them, or restart the runtime if full convergence matters."))
+
+      workflow-pump?
+      (conj (limitation :workflow-pump-thread
+                        "The workflow event pump thread is long-lived and is not rewritten in place by runtime refresh."
+                        "Restart the workflow runtime or the full psi runtime if workflow pump closure convergence matters."))
+
+      (pos? (long (or running-services 0)))
+      (conj (limitation :managed-services
+                        (str "The runtime has " running-services " running managed service(s) whose long-lived reader/process loops are not rewritten in place by runtime refresh.")
+                        "Reconnect or restart managed services, or restart the full psi runtime if service loop closure convergence matters.")))))
 
 (defn- overall-status
   [steps limitations]
