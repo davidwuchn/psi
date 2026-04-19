@@ -1,6 +1,6 @@
 - [x] Reproduce and characterize the `/tree` picker transcript-loss bug against agent-created sessions
 - [x] Trace the picker selection path across Emacs, RPC, and app-runtime rehydration surfaces
-- [ ] Identify the concrete root cause/divergence from direct session switching
-- [ ] Implement the minimal fix
-- [ ] Add focused regression proof
+- [x] Identify one concrete divergence from direct session switching: missing `context/updated` on picker-submit switch navigation
+- [x] Implement the minimal fix for that divergence
+- [x] Add focused RPC proof for existing-session picker switch rehydration
 - [ ] Verify no regression in adjacent session-switch behavior

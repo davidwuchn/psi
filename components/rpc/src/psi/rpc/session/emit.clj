@@ -96,6 +96,7 @@
   (emit-session-rehydration! emit! rehydration)
   (emit-session-updated! emit! ctx session-id)
   (emit-footer-updated! emit! ctx session-id)
+  (emit-context-updated! emit! ctx state session-id)
   {:session-id session-id
    :session-file session-file})
 

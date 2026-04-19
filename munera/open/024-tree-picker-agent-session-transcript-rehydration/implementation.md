@@ -25,3 +25,10 @@ Findings so far:
 Current narrowed hypothesis:
 - The bug is more likely in the picker selection switch path itself (or its frontend handling/proof gap) than in child-session journal persistence.
 - The highest-value next step is to add focused proof for `frontend_action_result select-session` switching to an existing agent-created child session and observe whether backend rehydration already drops messages before they reach Emacs.
+
+Additional finding:
+- Added focused RPC proof for `frontend_action_result select-session` switching to an existing child session.
+- That proof showed the backend did emit `session/resumed` and `session/rehydrated` with the expected child transcript, but did not emit `context/updated` on this switch path.
+- This confirms one concrete divergence from other navigation flows: picker-submit switching via `emit-navigation-result!` was not refreshing canonical context snapshots.
+- A minimal fix was applied in `psi.rpc.session.emit/emit-navigation-result!` to emit `context/updated` after rehydration/session/footer updates.
+- Full test verification is currently blocked by an unrelated compile-time failure in `psi.agent-session.psi-tool` (`project-nrepl-ops/perform!` var missing), which prevents the unit suite from loading.

@@ -306,6 +306,43 @@
       (is (= new-sid (get-in context-evt [:data :active-session-id])))
       (is (= [{:role "user" :content "branch here"}
               {:role "assistant" :content [{:type :text :text "reply here"}]}]
+             (get-in rehyd-evt [:data :messages])))))
+
+  (testing "frontend_action_result select-session switches to existing child session and rehydrates transcript"
+    (let [[ctx sid] (support/create-session-context {:persist? false})
+          qctx      (query/create-query-context)
+          mutate    (fn [op params]
+                      (get (query/query-in qctx
+                                           {:psi/agent-session-ctx ctx}
+                                           [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                                                       (not (contains? params :session-id))
+                                                       (assoc :session-id sid)))])
+                           op))
+          _         (session/register-resolvers-in! qctx false)
+          _         (session/register-mutations-in! qctx mutations/all-mutations true)
+          child-id  (:psi.agent-session/session-id
+                     (mutate 'psi.extension/create-child-session
+                             {:session-name "child"
+                              :tool-defs []
+                              :preloaded-messages [{:role "user" :content [{:type :text :text "hello child"}]}
+                                                   {:role "assistant" :content [{:type :text :text "child reply"}]}]}))
+          state     (atom {:transport {:ready? true :pending {}}
+                           :connection {:subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}}})
+          handler   (support/make-handler ctx state)
+          input     (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                         "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-2\" :action-name \"select-session\" :status \"submitted\" :value {:action/kind :switch-session :action/session-id \"" child-id "\"}}}\n")
+          {:keys [out-lines]} (support/run-loop input handler state)
+          frames      (support/parse-frames out-lines)
+          resumed-evt (some #(when (= "session/resumed" (:event %)) %) frames)
+          rehyd-evt   (some #(when (= "session/rehydrated" (:event %)) %) frames)
+          context-evt (some #(when (= "context/updated" (:event %)) %) frames)]
+      (is (some? resumed-evt))
+      (is (some? rehyd-evt))
+      (is (some? context-evt))
+      (is (= child-id (get-in resumed-evt [:data :session-id])))
+      (is (= child-id (get-in context-evt [:data :active-session-id])))
+      (is (= [{:role "user" :content [{:type :text :text "hello child"}]}
+              {:role "assistant" :content [{:type :text :text "child reply"}]}]
              (get-in rehyd-evt [:data :messages]))))))
 
 (deftest rpc-new-session-emits-context-updated-test
