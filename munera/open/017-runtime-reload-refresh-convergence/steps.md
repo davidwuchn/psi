@@ -15,10 +15,10 @@
 - [x] Define and implement extension runtime refresh inside the pass
   - [x] Use canonical extension reload path
   - [x] Preserve extension-local data/state by default
-- [ ] Reinstall known runtime hooks
+- [x] Reinstall known runtime hooks
   - [x] Extension run fn
   - [x] Background-job UI refresh fn
-  - [ ] Apply session-scoped reinstalls across dependent live sessions
+  - [x] Apply session-scoped reinstalls across dependent live sessions
   - [x] Treat other closure-backed ctx-installed hooks as limitations in the first slice
 - [x] Define explicit limitation reporting for non-hot-refreshable boundaries
   - [x] Long-lived loop/thread boundaries

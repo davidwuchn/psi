@@ -124,6 +124,7 @@ Current first-slice semantics:
 - preserves normal runtime/session data by default
 - does not recreate `ctx`
 - does not claim that all long-lived loops or installed closures were rebound in place
+- known runtime hook note: extension run fn is currently one shared ctx-level hook, so runtime refresh rebinds that shared hook using the targeted session model rather than iterating a per-session hook registry
 
 Current honest limitation policy:
 - when psi cannot honestly claim full in-place convergence, runtime refresh reports structured limitation entries with:

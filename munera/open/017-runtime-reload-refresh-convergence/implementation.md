@@ -52,7 +52,9 @@ Current implementation boundaries:
 - extension run fn is now reinstalled best-effort when runtime refresh has:
   - a target `session-id`
   - a usable session model (`:provider`, `:id`, optional `:reasoning`)
-- extension run fn still remains a limitation when runtime refresh cannot safely reconstruct it from current session state
+- important first-slice clarification: extension run fn is a single ctx-level hook (`:extension-run-fn-atom`), not a per-session registry
+- therefore “apply session-scoped reinstalls across dependent live sessions” is satisfied in first-slice form by rebinding the one shared hook against the targeted session model, rather than by iterating multiple stored per-session run-fns
+- extension run fn still remains a limitation when runtime refresh cannot safely reconstruct that shared hook from current session state
 
 Current honest limitation reporting:
 - if `:extension-run-fn-atom` is populated but runtime refresh cannot safely rebuild it, runtime refresh reports a limitation entry with:
@@ -71,6 +73,7 @@ Current honest limitation reporting:
 - proof now explicitly covers:
   - background-job UI refresh hook reinstall
   - successful extension run-fn reinstall when session model is present
+  - targeted-session rebinding of the one shared ctx-level extension run-fn hook
   - structured limitation entry shape and contents for extension run-fn reinstall failures
   - in-flight prompt limitation reporting
   - active background-job limitation reporting

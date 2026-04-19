@@ -149,6 +149,24 @@
     (is (= "The runtime has 1 running managed service(s) whose long-lived reader/process loops are not rewritten in place by runtime refresh."
            (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
 
+(deftest refresh-runtime-rebinds-shared-extension-run-fn-for-target-session-test
+  (let [[ctx session-id] (create-session-context {:persist? false
+                                                  :session-defaults {:model {:provider "anthropic"
+                                                                             :id "claude-sonnet"
+                                                                             :reasoning true}}})
+        second-sd (session/new-session-in! ctx session-id {:model {:provider "openai"
+                                                                   :id "gpt-5"
+                                                                   :reasoning false}})
+        second-id (:session-id second-sd)
+        original-fn (fn [_ _] :old)
+        _ (reset! (:extension-run-fn-atom ctx) original-fn)
+        result (sut/refresh-runtime! {:ctx ctx :session-id second-id})]
+    (is (fn? @(:extension-run-fn-atom ctx)))
+    (is (not (identical? original-fn @(:extension-run-fn-atom ctx))))
+    (is (= :ok (:psi.runtime-refresh/status result)))
+    (is (= [:background-job-ui-refresh-fn :extension-run-fn]
+           (get-in result [:psi.runtime-refresh/steps 3 :details :reinstalled])))))
+
 (deftest refresh-runtime-refreshes-extensions-via-canonical-path-test
   (let [[ctx session-id] (create-session-context {:persist? false})
         calls (atom [])]
