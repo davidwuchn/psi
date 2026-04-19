@@ -44,7 +44,7 @@ Planned slices:
 
 6. Limitation reporting
 - Identify long-lived loops/threads that cannot be safely swapped in place.
-- Identify in-flight prompt/background/service work that is not guaranteed to be rebound to refreshed code.
+- Identify in-flight prompt/background/service work that is not guaranteed to be rebound to refreshed code. ✅ first slice landed in `1d8860e`
 - Report those boundaries explicitly in the final result using `boundary` / `reason` / `remediation` semantics.
 - Use `:partial` when full in-place convergence cannot honestly be claimed.
 
