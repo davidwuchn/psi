@@ -26,4 +26,4 @@
   - [ ] Transcript-visible output plus queryable summaries
 - [x] Implement interrupt for the active eval on the managed session
 - [x] Add canonical command/tool/UI integration for start/attach/status/stop/restart/eval/interrupt
-- [ ] Add focused tests and docs for started mode, attach mode, eval, interrupt, and observability
+- [x] Add focused tests and docs for started mode, attach mode, eval, interrupt, and observability

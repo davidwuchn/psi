@@ -159,3 +159,15 @@
   - command routing + user-visible text results
   - resolver projection of recent eval/interrupt summaries
 - This lands the first canonical user-facing integration path, though richer transcript-native rendering is still pending.
+
+2026-04-19 — Step 9: observability proof
+
+- Added `components/agent-session/test/psi/agent_session/project_nrepl_observability_test.clj`.
+- Added focused proof that:
+  - project nREPL diagnostic summaries are queryable from the session-scoped projection surface
+  - project nREPL attrs remain distinct from psi runtime nREPL attrs
+  - graph discovery exposes both runtime-nREPL and project-nREPL query surfaces without conflating them
+- Adjusted the graph proof to assert the actual join-map edge shapes emitted by graph introspection for join attrs like:
+  - `{:psi.project-nrepl/instances [...output attrs...]}`
+  - `{:psi.agent-session/project-nrepl [...output attrs...]}`
+- With this slice, the task now has focused tests/docs for started mode, attach mode, eval, interrupt, command integration, and observability.
