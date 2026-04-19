@@ -1,0 +1,7 @@
+- [ ] Inspect current Emacs session display and `/tree` picker flow
+- [ ] Define dedicated session-tree buffer commands and section layout
+- [ ] Render session/message tree with `magit-section`
+- [ ] Make session selection focus the session in the psi buffer
+- [ ] Make message selection fork at that chat and focus the new session
+- [ ] Retire or demote the old `/tree` picker workflow
+- [ ] Add focused Emacs proof for rendering and selection behavior
