@@ -992,10 +992,13 @@ or a canonical action map."
             (is-active (and (equal item-kind "session")
                             (or is-active-raw
                                 (and id active-id (equal id active-id)))))
-            (name (or (psi-emacs--event-data-get slot '(:label label))
+            (explicit-label (psi-emacs--event-data-get slot '(:label label)))
+            (name (or explicit-label
                       (psi-emacs--tree-slot-label slot item-kind id entry-id)))
             (indent (if (or parent-id (equal item-kind "fork-point")) "  " ""))
-            (suffix (psi-emacs--tree-runtime-suffix slot item-kind is-active))
+            (suffix (if explicit-label
+                        ""
+                      (psi-emacs--tree-runtime-suffix slot item-kind is-active)))
             (label (concat indent name suffix))
             (value (psi-emacs--tree-slot-value slot item-kind id entry-id)))
        (cons label value)))

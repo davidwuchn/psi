@@ -494,7 +494,7 @@ summaries and made toggling body visibility ineffective after returning."
           "abc123456789")))
     (should (= 2 (length candidates)))
     (should (equal "abc123456789" (cdar candidates)))
-    (should (equal "Alpha [abc12345] — 05:12 / 06:47 — /repo/alpha ← current [waiting]" (caar candidates)))
+    (should (equal "Alpha [abc12345] — 05:12 / 06:47 — /repo/alpha" (caar candidates)))
     (should (equal "def987654321" (cdadr candidates)))
     (should (equal "  (session def98765) [def98765] — 04:00 / 04:05 — /repo/beta"
                    (car (cadr candidates))))))
