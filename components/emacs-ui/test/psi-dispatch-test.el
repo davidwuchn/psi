@@ -756,6 +756,36 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-session-rehydrated-picker-switch-renders-agent-child-messages ()
+  "Picker-switch rehydrate events should render child-session transcript messages.
+
+Regression target: selecting an agent-created child session through bare `/tree`
+updates session/footer state, but must also replay the backend-owned transcript."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/resumed")
+       (:data . ((:session-id . "child-1")
+                 (:session-file . "/tmp/child-1.ndedn")
+                 (:message-count . 2)))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/rehydrated")
+       (:data . ((:session-id . "child-1")
+                 (:messages . [((:role . "user")
+                                (:content . [((:type . "text") (:text . "hello child"))]))
+                               ((:role . "assistant")
+                                (:content . [((:type . "text") (:text . "child reply"))]))])
+                 (:tool-calls . ())
+                 (:tool-order . ())))))
+    (let ((text (buffer-string)))
+      (should (string-match-p (regexp-quote "User: hello child") text))
+      (should (string-match-p (regexp-quote "ψ: child reply") text))
+      (should-not (string-match-p (regexp-quote "ψ: hello child") text)))))
+
 (ert-deftest psi-on-rpc-event-defers-frontend-action-prompts-out-of-process-filter-path ()
   "Frontend action prompts should be deferred off the process filter path.
 

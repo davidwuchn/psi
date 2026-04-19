@@ -3,4 +3,5 @@
 - [x] Identify one concrete divergence from direct session switching: missing `context/updated` on picker-submit switch navigation
 - [x] Implement the minimal fix for that divergence
 - [x] Add focused RPC proof for existing-session picker switch rehydration
+- [x] Add focused Emacs proof that picker-switch rehydrate events render agent-child transcript messages
 - [ ] Verify no regression in adjacent session-switch behavior
