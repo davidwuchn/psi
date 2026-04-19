@@ -1,0 +1,5 @@
+- [ ] Inspect current `psi-tool` action surface and project REPL APIs
+- [ ] Define canonical `psi-tool` project REPL actions and result shapes
+- [ ] Implement explicit targeting and structured project REPL operations
+- [ ] Align command/docs surfaces with the canonical tool API
+- [ ] Add focused proof for lifecycle, eval, and error paths
