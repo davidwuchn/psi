@@ -92,6 +92,9 @@
                                      :runtime-state "waiting"}]})]
       (is (= "sessions: waiting helper, notes · running main"
              (get-in model [:footer/session-activity :line])))
+      (is (= [{:state "waiting" :labels ["helper" "notes"]}
+              {:state "running" :labels ["main"]}]
+             (get-in model [:footer/session-activity :buckets])))
       (is (= "sessions: waiting helper, notes · running main"
              (get-in model [:footer/lines :session-activity-line]))))))
 

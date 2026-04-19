@@ -223,19 +223,30 @@
 
 (def ^:private runtime-state-order ["waiting" "running" "retrying" "compacting"])
 
-(defn- footer-session-activity-line
+(defn- footer-session-activity-buckets
   [context-sessions]
   (let [sessions* (->> (order-context-sessions-parent-first context-sessions)
                        (keep (fn [session-map]
                                (when-let [label (footer-session-label session-map)]
                                  {:label label
                                   :runtime-state (:runtime-state session-map)}))))
-        grouped   (group-by :runtime-state sessions*)
-        parts     (->> runtime-state-order
-                       (keep (fn [state]
-                               (when-let [xs (seq (get grouped state))]
-                                 (str state " " (str/join ", " (map :label xs))))))
-                       vec)]
+        grouped   (group-by :runtime-state sessions*)]
+    (->> runtime-state-order
+         (keep (fn [state]
+                 (when-let [xs (seq (get grouped state))]
+                   {:state state
+                    :labels (mapv :label xs)})))
+         vec)))
+
+(defn- footer-session-activity-line
+  [context-sessions]
+  (let [sessions* (->> (order-context-sessions-parent-first context-sessions)
+                       (keep footer-session-label)
+                       vec)
+        buckets   (footer-session-activity-buckets context-sessions)
+        parts     (mapv (fn [{:keys [state labels]}]
+                          (str state " " (str/join ", " labels)))
+                        buckets)]
     (when (> (count sessions*) 1)
       (str "sessions: " (str/join " · " parts)))))
 
@@ -243,22 +254,23 @@
   ([d]
    (footer-model-from-data d {}))
   ([d {:keys [worktree-path cwd context-sessions]}]
-   (let [fallback-worktree-path (or worktree-path cwd)
-         context-fraction  (:psi.agent-session/context-fraction d)
-         context-window    (:psi.agent-session/context-window d)
-         auto-compact?     (boolean (:psi.agent-session/auto-compaction-enabled d))
-         context-text      (footer-context-text context-fraction context-window auto-compact?)
-         usage-parts*      (usage-parts d context-text)
-         model-text*       (model-text d)
-         path-text*        (path-text d fallback-worktree-path)
-         statuses*         (status-items (:psi.ui/statuses d))
-         session-activity-line (footer-session-activity-line context-sessions)
-         status-line       (->> statuses*
-                                (map :status/text)
-                                (remove str/blank?)
-                                (str/join " "))
-         stats-line        (str/join " " (concat usage-parts* [model-text*]))
-         thinking-level    (normalize-thinking-level (:psi.agent-session/thinking-level d))]
+   (let [fallback-worktree-path   (or worktree-path cwd)
+         context-fraction         (:psi.agent-session/context-fraction d)
+         context-window           (:psi.agent-session/context-window d)
+         auto-compact?            (boolean (:psi.agent-session/auto-compaction-enabled d))
+         context-text             (footer-context-text context-fraction context-window auto-compact?)
+         usage-parts*             (usage-parts d context-text)
+         model-text*              (model-text d)
+         path-text*               (path-text d fallback-worktree-path)
+         statuses*                (status-items (:psi.ui/statuses d))
+         session-activity-buckets (footer-session-activity-buckets context-sessions)
+         session-activity-line    (footer-session-activity-line context-sessions)
+         status-line              (->> statuses*
+                                       (map :status/text)
+                                       (remove str/blank?)
+                                       (str/join " "))
+         stats-line               (str/join " " (concat usage-parts* [model-text*]))
+         thinking-level           (normalize-thinking-level (:psi.agent-session/thinking-level d))]
      {:footer/path {:cwd                  (or (:psi.agent-session/worktree-path d)
                                               fallback-worktree-path
                                               "")
@@ -284,7 +296,8 @@
                      :effective-reasoning-effort (:psi.agent-session/effective-reasoning-effort d)
                      :text                       model-text*}
       :footer/statuses statuses*
-      :footer/session-activity {:line session-activity-line}
+      :footer/session-activity {:line session-activity-line
+                                :buckets session-activity-buckets}
       :footer/lines {:path-line             path-text*
                      :stats-line            stats-line
                      :session-activity-line session-activity-line

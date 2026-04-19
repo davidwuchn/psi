@@ -63,22 +63,22 @@
                                         (and parent-id (contains? slot-id-set parent-id)))
                                  "  " "")
                   base-label   (session-tree-line-label slot)
-                  suffix       (str (when is-active " ← current")
-                                    (runtime-state-badge slot))
-                  text         (str indent base-label suffix)]
-              (cond
-                (and (= item-kind "session") is-active)
-                {:text text}
+                  current-text (when is-active " ← current")
+                  runtime-text (runtime-state-badge slot)
+                  text         (str indent base-label current-text runtime-text)]
+              (cond-> {:text text}
+                (= item-kind "session")
+                (assoc :runtime-state (:runtime-state slot)
+                       :is-current is-active)
 
                 (= item-kind "fork-point")
-                {:text text
-                 :action {:type "command"
-                          :command (str "/fork " entry-id)}}
+                (assoc :action {:type "command"
+                                :command (str "/fork " entry-id)})
 
-                :else
-                {:text text
-                 :action {:type "command"
-                          :command (str "/tree " id)}})))
+                (and (not= item-kind "fork-point")
+                     (not is-active))
+                (assoc :action {:type "command"
+                                :command (str "/tree " id)}))))
           slots)))
 
 (defn context-widget

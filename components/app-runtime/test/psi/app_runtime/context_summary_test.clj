@@ -18,7 +18,9 @@
                 {:id "s2" :name "child" :parent-session-id "s1" :runtime-state "running"}
                 {:id "e1" :item-kind "fork-point" :display-name "Branch from here" :entry-id "e1" :parent-session-id "s1"}]
                "s1")]
-    (is (= {:text "main [s1] ← current [waiting]"}
+    (is (= {:text "main [s1] ← current [waiting]"
+            :runtime-state "waiting"
+            :is-current true}
            (first lines)))
     (is (= "/tree s2"
            (get-in (second lines) [:action :command])))

@@ -60,7 +60,10 @@
       (is (= "/repo/project • helper"
              (get-in (rpc.events/footer-updated-payload ctx (:session-id child)) [:path-line])))
       (is (= "sessions: waiting helper · running main"
-             (:session-activity-line payload))))))
+             (:session-activity-line payload)))
+      (is (= [{:state "waiting" :labels ["helper"]}
+              {:state "running" :labels ["main"]}]
+             (:session-activity-buckets payload))))))
 
 (deftest footer-updated-payload-prefers-session-display-name-test
   (testing "footer payload uses derived display name when explicit session name is absent"
