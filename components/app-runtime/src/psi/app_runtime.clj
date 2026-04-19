@@ -354,7 +354,10 @@ Available: " (str/join ", " (map name (keys all))))
          ext-paths        (ext/discover-extension-paths [] cwd)
          psi-tool         (tools/make-psi-tool (fn
                                                  ([q] (session/query-in ctx session-id q))
-                                                 ([q entity] (session/query-in ctx q entity))))
+                                                 ([q entity] (session/query-in ctx q entity)))
+                                               {:ctx ctx
+                                                :session-id session-id
+                                                :cwd cwd})
          summary          (session-bootstrap/bootstrap-in!
                            ctx session-id
                            {:register-global-query? false
