@@ -6,3 +6,10 @@
 - [x] Add or update tests for child-session controls and auto-session-name prompt shaping
 - [x] Verify empty-input skip/no-op preservation
 - [x] Record implementation notes/trade-offs
+- [ ] Add canonical normalization/interpreter for `:prompt-component-selection`
+- [ ] Unify prompt-contribution filtering semantics across refresh and prepared-request paths
+- [ ] Make prompt-component selection control standard prompt layers during child prompt rebuild
+- [ ] Make `:tool-names` and `:skill-names` drive real filtering
+- [ ] Align child runtime tool defs with prompt-visible tool selection
+- [ ] Add coherence tests for session prompt state vs prepared request under selection
+- [ ] Fix stale docstrings/docs after the full control surface is implemented
