@@ -54,7 +54,8 @@ Planned slices:
 
 8. Docs + proof
 - Document the distinction between code reload and runtime refresh.
-- Add focused tests proving convergence for query, dispatch, extensions, known installed hooks, and limitation reporting.
+- Focused tests now prove first-slice behavior for dispatch refresh, extension refresh, background-job UI hook reinstall, and structured limitation reporting.
+- Remaining proof work is mainly around sharper query-refresh guarantees and broader limitation classes.
 
 Implementation notes:
 - Prefer one clear refresh pass over a refresh-unit mini-framework.

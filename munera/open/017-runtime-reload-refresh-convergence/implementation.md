@@ -1,4 +1,5 @@
 Step 1 landed in commit `2051a94` (`⚒ runtime-refresh: add canonical refresh scaffold`).
+Step 3 strengthened proof in commit `a865f4b` (`⚒ runtime-refresh: strengthen scaffold proof`).
 
 Initial findings captured in design:
 - surviving runtime data is often not the problem
@@ -45,7 +46,12 @@ Current implementation boundaries:
 Current honest limitation reporting:
 - if `:extension-run-fn-atom` is populated, runtime refresh reports a limitation entry with:
   - `:boundary :extension-run-fn`
-  - reason/remediation text explaining likely stale closure capture and the need to re-register from bootstrap/runtime ownership
+  - `:reason`
+  - `:remediation`
+  - text explaining likely stale closure capture and the need to re-register from bootstrap/runtime ownership
+- proof now explicitly covers:
+  - background-job UI refresh hook reinstall
+  - structured limitation entry shape and contents for `:extension-run-fn`
 
 Notes from landing this slice:
 - a direct compile-time require from `runtime_refresh` into `context` / `dispatch-handlers` caused a load cycle through `psi_tool`; switching refresh internals to `requiring-resolve` removed that cycle

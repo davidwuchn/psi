@@ -1,28 +1,28 @@
 - [x] Define the canonical runtime refresh pass entrypoint and structured result shape
   - [x] Fixed-order full pass for the first slice
   - [x] First slice does not recreate `ctx`
-- [ ] Implement query graph refresh
-  - [ ] Resolver registration refresh
-  - [ ] Mutation registration refresh
-  - [ ] Query env rebuild
-  - [ ] Replace stale registrations rather than append
-  - [ ] Use canonical query registration surfaces as authority
-- [ ] Implement dispatch handler refresh
-  - [ ] Refresh executable handler entries
-  - [ ] Clear-and-re-register executable handler entries in the first slice
-  - [ ] Preserve event-log/trace data by default
-  - [ ] Use canonical dispatch handler registration path as authority
-- [ ] Define and implement extension runtime refresh inside the pass
-  - [ ] Use canonical extension reload path
-  - [ ] Preserve extension-local data/state by default
+- [x] Implement query graph refresh
+  - [x] Resolver registration refresh
+  - [x] Mutation registration refresh
+  - [x] Query env rebuild
+  - [x] Replace stale registrations rather than append
+  - [x] Use canonical query registration surfaces as authority
+- [x] Implement dispatch handler refresh
+  - [x] Refresh executable handler entries
+  - [x] Clear-and-re-register executable handler entries in the first slice
+  - [x] Preserve event-log/trace data by default
+  - [x] Use canonical dispatch handler registration path as authority
+- [x] Define and implement extension runtime refresh inside the pass
+  - [x] Use canonical extension reload path
+  - [x] Preserve extension-local data/state by default
 - [ ] Reinstall known runtime hooks
   - [ ] Extension run fn
-  - [ ] Background-job UI refresh fn
+  - [x] Background-job UI refresh fn
   - [ ] Apply session-scoped reinstalls across dependent live sessions
-  - [ ] Treat other closure-backed ctx-installed hooks as limitations in the first slice
-- [ ] Define explicit limitation reporting for non-hot-refreshable boundaries
+  - [x] Treat other closure-backed ctx-installed hooks as limitations in the first slice
+- [x] Define explicit limitation reporting for non-hot-refreshable boundaries
   - [ ] Long-lived loop/thread boundaries
   - [ ] In-flight prompt/background/service work when relevant
-  - [ ] `boundary` / `reason` / `remediation` result shape
+  - [x] `boundary` / `reason` / `remediation` result shape
 - [x] Expose the refresh pass for consumer tasks such as `014-psi-tool-code-reload`
 - [ ] Add focused tests and docs for runtime refresh convergence
