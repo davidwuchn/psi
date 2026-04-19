@@ -1,5 +1,10 @@
-- [ ] Inspect current `psi-tool` action surface and project REPL APIs
-- [ ] Define canonical `psi-tool` project REPL actions and result shapes
-- [ ] Implement explicit targeting and structured project REPL operations
-- [ ] Align command/docs surfaces with the canonical tool API
-- [ ] Add focused proof for lifecycle, eval, and error paths
+- [ ] Extend `psi-tool` schema/validation for `action: "project-repl"` with explicit `op`, `worktree-path`, and op-specific fields
+- [ ] Implement canonical target-worktree resolution for project-REPL tool requests (explicit worktree or invoking session worktree; otherwise explicit error)
+- [ ] Extract or define shared project-REPL helper functions for structured status/start/attach/stop/eval/interrupt behavior
+- [ ] Implement `psi-tool` execution/report shaping for `project-repl` operations with status-tagged payloads
+- [ ] Align `/project-repl` commands to reuse shared behavior while keeping command parsing/text formatting local to the command layer
+- [ ] Add focused `psi-tool` tests for validation and targeting errors
+- [ ] Add focused `psi-tool` tests for status absent/present result shapes
+- [ ] Add focused `psi-tool` tests for start/attach/stop result shapes
+- [ ] Add focused `psi-tool` tests for eval/interrupt result shapes and representative runtime/config errors
+- [ ] Update system prompt/tool description/docs to describe `psi-tool(action: "project-repl", ...)` and its relationship to `/project-repl`
