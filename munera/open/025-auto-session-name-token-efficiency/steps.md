@@ -1,5 +1,8 @@
-- [ ] Inspect current auto-session-name helper prompt construction
-- [ ] Implement minimal system prompt for rename inference
-- [ ] Cap considered conversation content to at most the last 4k
-- [ ] Add or update tests for prompt shaping and truncation
+- [ ] Review current child-session creation prompt assembly path
+- [ ] Design and implement prompt-component controls with default-preserving behavior
+- [ ] Add optional additional system prompt support with deterministic ordering
+- [ ] Wire auto-session-name helper creation to disable standard prompt components and helper capabilities
+- [ ] Truncate sanitized assembled conversation text to trailing 4000 characters
+- [ ] Add or update tests for child-session controls and auto-session-name prompt shaping
+- [ ] Verify empty-input skip/no-op preservation
 - [ ] Record implementation notes/trade-offs
