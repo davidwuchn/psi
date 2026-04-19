@@ -1,0 +1,5 @@
+- [ ] Inspect current auto-session-name helper prompt construction
+- [ ] Implement minimal system prompt for rename inference
+- [ ] Cap considered conversation content to at most the last 4k
+- [ ] Add or update tests for prompt shaping and truncation
+- [ ] Record implementation notes/trade-offs
