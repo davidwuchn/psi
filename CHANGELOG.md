@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-19
+
+- λ Δ Added direct project nREPL support as a first-class worktree-bound runtime capability:
+  - added managed project nREPL lifecycle with canonical worktree targeting
+  - supports both psi-started acquisition via configured command vector and attach acquisition via explicit endpoint or `.nrepl-port`
+  - establishes one managed nREPL client session per worktree instance in the first slice
+  - added single-flight eval and interrupt against the active eval op id
+  - exposed project nREPL projection state through EQL, including lifecycle, endpoint, capability flags, last-eval, and last-interrupt
+  - added shared `/project-repl` command surface for status/start/attach/stop/eval/interrupt
+  - documented project nREPL usage and clarified its distinction from psi runtime nREPL
+- ✓ Verification:
+  - targeted config/runtime/started/client/attach/eval/resolver/command/observability tests for the project nREPL slices
+
 ## 2026-04-18
 
 - λ Δ Fixed extension slash-command session targeting after `/new`:
