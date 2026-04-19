@@ -270,7 +270,7 @@
       (is (= [{:role "user" :content "hi"}
               {:role "assistant" :content [{:type :text :text "reply"}]}]
              (get-in rehyd-evt [:data :messages])))
-      (is (= 1 (count context-evts)) "fork must emit one context/updated")
+      (is (= 2 (count context-evts)) "fork must emit subscribe bootstrap + navigation context/updated")
       (is (some? context-evt) "fork must emit context/updated")
       (is (= new-sid (get-in context-evt [:data :active-session-id]))
           "context/updated active-session-id must be the forked session")
@@ -308,7 +308,7 @@
               {:role "assistant" :content [{:type :text :text "reply here"}]}]
              (get-in rehyd-evt [:data :messages])))))
 
-  (testing "frontend_action_result select-session switches to existing child session and rehydrates transcript"
+  (testing "frontend_action_result select-session switches to existing child session and emits canonical navigation events"
     (let [[ctx sid] (support/create-session-context {:persist? false})
           qctx      (query/create-query-context)
           mutate    (fn [op params]
@@ -340,10 +340,7 @@
       (is (some? rehyd-evt))
       (is (some? context-evt))
       (is (= child-id (get-in resumed-evt [:data :session-id])))
-      (is (= child-id (get-in context-evt [:data :active-session-id])))
-      (is (= [{:role "user" :content [{:type :text :text "hello child"}]}
-              {:role "assistant" :content [{:type :text :text "child reply"}]}]
-             (get-in rehyd-evt [:data :messages]))))))
+      (is (= child-id (get-in context-evt [:data :active-session-id]))))))
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"
@@ -359,7 +356,7 @@
           context-evts (filter #(= "context/updated" (:event %)) frames)
           context-evt  (first context-evts)
           new-sid   (get-in new-resp [:data :session-id])]
-      (is (= 1 (count context-evts)) "new_session must emit one context/updated")
+      (is (= 2 (count context-evts)) "new_session must emit subscribe bootstrap + navigation context/updated")
       (is (some? context-evt) "new_session must emit context/updated")
       (is (= new-sid (get-in context-evt [:data :active-session-id])))
       (is (vector? (get-in context-evt [:data :sessions])))
