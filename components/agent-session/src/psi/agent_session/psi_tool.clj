@@ -8,6 +8,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.extension-runtime :as extension-runtime]
    [psi.agent-session.extensions :as extensions]
+   [psi.agent-session.project-nrepl-ops :as project-nrepl-ops]
    [psi.agent-session.session-state :as session-state]
    [psi.agent-session.tool-output :as tool-output]
    [psi.query.core :as query]))
@@ -16,13 +17,14 @@
   {:name        "psi-tool"
    :label       "Psi Tool"
    :description (str "Execute a live psi runtime operation. Canonical requests use `action` with one of: "
-                     "`query`, `eval`, or `reload-code`. `query` executes an EQL query against the live session graph; "
+                     "`query`, `eval`, `reload-code`, or `project-repl`. `query` executes an EQL query against the live session graph; "
                      "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
-                     "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope. "
+                     "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
+                     "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
-                 :properties {:action        {:type "string" :enum ["query" "eval" "reload-code"]
+                 :properties {:action        {:type "string" :enum ["query" "eval" "reload-code" "project-repl"]
                                               :description "Canonical psi-tool operation discriminator."}
                               :query         {:type "string" :description "For `action: \"query\"`: EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}
                               :entity        {:type "string" :description "For `action: \"query\"`: optional EDN root entity map to seed the query, e.g. \"{:psi.agent-session/session-id \\\"sid\\\"}\" for explicit session targeting."}
@@ -30,7 +32,12 @@
                               :form          {:type "string" :description "For `action: \"eval\"`: Clojure form string to read with *read-eval* disabled and evaluate in the named namespace."}
                               :namespaces    {:type "array" :items {:type "string"}
                                               :description "For `action: \"reload-code\"` namespace mode: ordered vector of already loaded namespace names to reload."}
-                              :worktree-path {:type "string" :description "For `action: \"reload-code\"` worktree mode: explicit absolute target worktree path. When absent, invoking session worktree may be used."}}
+                              :worktree-path {:type "string" :description "For `action: \"reload-code\"` worktree mode, and `action: \"project-repl\"`: explicit absolute target worktree path. When absent, invoking session worktree may be used."}
+                              :op            {:type "string" :enum ["status" "start" "attach" "stop" "eval" "interrupt"]
+                                              :description "For `action: \"project-repl\"`: managed project REPL operation discriminator."}
+                              :host          {:type "string" :description "For `action: \"project-repl\"`, `op: \"attach\"`: explicit attach host override."}
+                              :port          {:type "integer" :description "For `action: \"project-repl\"`, `op: \"attach\"`: explicit attach port override."}
+                              :code          {:type "string" :description "For `action: \"project-repl\"`, `op: \"eval\"`: Clojure code to evaluate in the managed project REPL."}}
                  :required   []}})
 
 (defn- sanitize-psi-tool-result
@@ -60,10 +67,13 @@
     :else          nil))
 
 (def ^:private psi-tool-supported-actions
-  ["query" "eval" "reload-code"])
+  ["query" "eval" "reload-code" "project-repl"])
+
+(def ^:private project-repl-supported-ops
+  ["status" "start" "attach" "stop" "eval" "interrupt"])
 
 (defn- validate-psi-tool-request
-  [{:strs [query entity ns form namespaces worktree-path] :as args}]
+  [{:strs [query entity ns form namespaces worktree-path op host port code] :as args}]
   (let [effective-action (psi-tool-action args)]
     (cond
       (nil? effective-action)
@@ -109,7 +119,25 @@
                            :action effective-action})))
         {:action        effective-action
          :namespaces    namespaces
-         :worktree-path worktree-path}))))
+         :worktree-path worktree-path})
+
+      (= effective-action "project-repl")
+      (do
+        (when-not (some #{op} project-repl-supported-ops)
+          (throw (ex-info "psi-tool project-repl action requires valid `op`"
+                          {:phase        :validate
+                           :action       effective-action
+                           :op           op
+                           :supported-ops project-repl-supported-ops})))
+        (when (and (= op "eval") (not (string? code)))
+          (throw (ex-info "psi-tool project-repl eval requires `code`"
+                          {:phase :validate :action effective-action :op op})))
+        {:action        effective-action
+         :op            op
+         :worktree-path worktree-path
+         :host          host
+         :port          port
+         :code          code}))))
 
 (defn- sanitize-psi-tool-data
   [x]
@@ -133,14 +161,18 @@
    :is-error true})
 
 (defn telemetry-args
-  [{:strs [action query ns form namespaces worktree-path]}]
+  [{:strs [action query ns form namespaces worktree-path op host port code]}]
   (cond-> (ordered-map)
     action (assoc "action" action)
     query (assoc "query" query)
     ns (assoc "ns" ns)
     form (assoc "form" form)
     namespaces (assoc "namespaces" namespaces)
-    worktree-path (assoc "worktree-path" worktree-path)))
+    worktree-path (assoc "worktree-path" worktree-path)
+    op (assoc "op" op)
+    host (assoc "host" host)
+    port (assoc "port" port)
+    code (assoc "code" code)))
 
 (defn- execute-psi-tool-query
   [query-fn {:keys [query entity]}]
@@ -395,7 +427,7 @@
              :psi-tool/worktree-source worktree-source))))
 
 (defn truncation-visible-prefix
-  [{:keys [action ns form namespaces worktree-path]}]
+  [{:keys [action ns form namespaces worktree-path op code]}]
   (case action
     "eval"
     (str "Eval action=eval ns=" ns " form=" form)
@@ -404,6 +436,13 @@
     (if namespaces
       (str "Reload action=reload-code mode=namespaces namespaces=" (pr-str namespaces))
       (str "Reload action=reload-code mode=worktree worktree-path=" worktree-path))
+
+    "project-repl"
+    (str "Project REPL action=project-repl op=" op
+         (when worktree-path
+           (str " worktree-path=" worktree-path))
+         (when (= op "eval")
+           (str " code=" code)))
 
     nil))
 
@@ -427,6 +466,27 @@
          :psi-tool/ns          ns
          :psi-tool/duration-ms (long (/ (- (System/nanoTime) started-at) 1000000))
          :psi-tool/error       (psi-tool-error-summary :eval e)}))))
+
+(defn- execute-psi-tool-project-repl-report
+  [{:keys [ctx session-id]} {:keys [op] :as request}]
+  (let [started-at (System/nanoTime)]
+    (try
+      (let [{:keys [worktree-path project-repl error]}
+            (project-nrepl-ops/perform! ctx session-id request)
+            duration-ms (long (/ (- (System/nanoTime) started-at) 1000000))]
+        (cond-> {:psi-tool/action          :project-repl
+                 :psi-tool/project-repl-op (keyword op)
+                 :psi-tool/worktree-path   worktree-path
+                 :psi-tool/duration-ms     duration-ms
+                 :psi-tool/overall-status  (if error :error :ok)}
+          project-repl (assoc :psi-tool/project-repl (sanitize-psi-tool-data project-repl))
+          error (assoc :psi-tool/error (sanitize-psi-tool-data error))))
+      (catch Exception e
+        {:psi-tool/action          :project-repl
+         :psi-tool/project-repl-op (keyword op)
+         :psi-tool/duration-ms     (long (/ (- (System/nanoTime) started-at) 1000000))
+         :psi-tool/overall-status  :error
+         :psi-tool/error           (psi-tool-error-summary :project-repl e)}))))
 
 (defn serialize-operation-output
   [opts request output narrowing-hint]
@@ -478,6 +538,14 @@
                                                          request)
                   output (pr-str report)]
               (assoc (serialize-operation-output opts request output "Use a narrower reload scope to reduce output size.")
+                     :is-error (not= :ok (:psi-tool/overall-status report))))
+
+            "project-repl"
+            (let [report (execute-psi-tool-project-repl-report {:ctx (:ctx opts)
+                                                                :session-id (:session-id opts)}
+                                                               request)
+                  output (pr-str report)]
+              (assoc (serialize-operation-output opts request output "Use a narrower project REPL result to reduce output size.")
                      :is-error (not= :ok (:psi-tool/overall-status report))))))
         (catch StackOverflowError _
           {:content  "EQL query error: result contains recursive data that overflowed printer stack"
@@ -498,6 +566,15 @@
                             :psi-tool/duration-ms    0
                             :psi-tool/overall-status :error
                             :psi-tool/error          (psi-tool-error-summary :reload-code e)}]
+                {:content  (pr-str report)
+                 :is-error true})
+
+              "project-repl"
+              (let [report {:psi-tool/action         :project-repl
+                            :psi-tool/project-repl-op (some-> (get args "op") keyword)
+                            :psi-tool/duration-ms    0
+                            :psi-tool/overall-status :error
+                            :psi-tool/error          (psi-tool-error-summary :project-repl e)}]
                 {:content  (pr-str report)
                  :is-error true})
 

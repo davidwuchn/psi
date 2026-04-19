@@ -86,7 +86,17 @@
                                      "namespaces" ["psi.agent-session.tools"]
                                      "worktree-path" "/tmp"})]
         (is (true? (:is-error result)))
-        (is (re-find #"exactly one targeting mode" (:content result)))))))
+        (is (re-find #"exactly one targeting mode" (:content result)))))
+
+    (testing "project-repl requires valid op"
+      (let [result ((:execute tool) {"action" "project-repl"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"requires valid `op`" (:content result)))))
+
+    (testing "project-repl eval requires code"
+      (let [result ((:execute tool) {"action" "project-repl" "op" "eval"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"requires `code`" (:content result)))))))
 
 (deftest make-psi-tool-invalid-edn-test
   (testing "invalid EDN returns error"
@@ -236,8 +246,8 @@
 
   (testing "worktree mode uses session worktree-path when explicit target absent"
     (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
-                                                       [{:ns-name "clojure.string"
-                                                         :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
+                                                        [{:ns-name "clojure.string"
+                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
       (let [[ctx session-id] (create-session-context {:persist? false
                                                       :session-defaults {:worktree-path (System/getProperty "user.dir")}})
             tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id :cwd (System/getProperty "user.dir")})
@@ -274,8 +284,8 @@
 
   (testing "worktree mode explicit target reports explicit worktree source"
     (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
-                                                       [{:ns-name "clojure.string"
-                                                         :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
+                                                        [{:ns-name "clojure.string"
+                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])]
       (let [dir    (System/getProperty "user.dir")
             tool   (tools/make-psi-tool (fn [_q] {}))
             result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
@@ -286,8 +296,8 @@
 
   (testing "worktree mode graph refresh surfaces extension reload errors"
     (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
-                                                       [{:ns-name "clojure.string"
-                                                         :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])
+                                                        [{:ns-name "clojure.string"
+                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])
                   extension-runtime/reload-extensions-in!
                   (fn [& _] {:loaded [] :errors [{:path "/x" :error "broken"}]})]
       (let [[ctx session-id] (create-session-context {:persist? false
@@ -306,6 +316,125 @@
           parsed (read-string (:content result))]
       (is (false? (:is-error result)))
       (is (= ["psi.agent-session.tools"] (get-in parsed [:psi-tool/code-reload :namespaces]))))))
+
+(deftest make-psi-tool-project-repl-test
+  (testing "project-repl status reports absent instance"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          result           ((:execute tool) {"action" "project-repl" "op" "status"})
+          parsed           (read-string (:content result))]
+      (is (false? (:is-error result)))
+      (is (= :project-repl (:psi-tool/action parsed)))
+      (is (= :status (:psi-tool/project-repl-op parsed)))
+      (is (= :ok (:psi-tool/overall-status parsed)))
+      (is (= :absent (get-in parsed [:psi-tool/project-repl :status])))))
+
+  (testing "project-repl uses explicit worktree when provided"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          dir              (System/getProperty "user.dir")
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          result           ((:execute tool) {"action" "project-repl" "op" "status" "worktree-path" dir})
+          parsed           (read-string (:content result))]
+      (is (false? (:is-error result)))
+      (is (= dir (:psi-tool/worktree-path parsed)))))
+
+  (testing "project-repl status errors without resolvable worktree"
+    (let [tool   (tools/make-psi-tool (fn [_q] {}) {})
+          result ((:execute tool) {"action" "project-repl" "op" "status"})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :project-repl (:psi-tool/action parsed)))
+      (is (= :error (:psi-tool/overall-status parsed)))))
+
+  (testing "project-repl start returns structured started payload"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/start (fn [_ctx worktree-path]
+                                                                {:status :started
+                                                                 :instance {:worktree-path worktree-path
+                                                                            :acquisition-mode :started
+                                                                            :lifecycle-state :ready
+                                                                            :readiness true
+                                                                            :endpoint {:host "127.0.0.1" :port 7888 :port-source :dot-nrepl-port}}})]
+        (let [result ((:execute tool) {"action" "project-repl" "op" "start"})
+              parsed (read-string (:content result))]
+          (is (false? (:is-error result)))
+          (is (= :started (get-in parsed [:psi-tool/project-repl :status])))
+          (is (= :started (get-in parsed [:psi-tool/project-repl :instance :acquisition-mode])))))))
+
+  (testing "project-repl attach returns structured attached payload"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/attach (fn [_ctx worktree-path attach-input]
+                                                                 {:status :attached
+                                                                  :instance {:worktree-path worktree-path
+                                                                             :acquisition-mode :attached
+                                                                             :lifecycle-state :ready
+                                                                             :readiness true
+                                                                             :endpoint {:host (or (:host attach-input) "127.0.0.1")
+                                                                                        :port (:port attach-input)
+                                                                                        :port-source :explicit}}})]
+        (let [result ((:execute tool) {"action" "project-repl" "op" "attach" "host" "127.0.0.1" "port" 7888})
+              parsed (read-string (:content result))]
+          (is (false? (:is-error result)))
+          (is (= :attached (get-in parsed [:psi-tool/project-repl :status])))
+          (is (= 7888 (get-in parsed [:psi-tool/project-repl :instance :endpoint :port])))))))
+
+  (testing "project-repl stop returns prior acquisition mode"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/stop (fn [_ctx _worktree-path]
+                                                               {:status :stopped
+                                                                :had-instance? true
+                                                                :prior-acquisition-mode :started})]
+        (let [result ((:execute tool) {"action" "project-repl" "op" "stop"})
+              parsed (read-string (:content result))]
+          (is (false? (:is-error result)))
+          (is (= :stopped (get-in parsed [:psi-tool/project-repl :status])))
+          (is (= :started (get-in parsed [:psi-tool/project-repl :prior-acquisition-mode])))))))
+
+  (testing "project-repl eval returns structured ok payload"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/eval-op (fn [_ctx _worktree-path _code]
+                                                                  {:status :ok :value "3" :out "" :err "" :ns "user"})]
+        (let [result ((:execute tool) {"action" "project-repl" "op" "eval" "code" "(+ 1 2)"})
+              parsed (read-string (:content result))]
+          (is (false? (:is-error result)))
+          (is (= :ok (get-in parsed [:psi-tool/project-repl :status])))
+          (is (= "3" (get-in parsed [:psi-tool/project-repl :value])))))))
+
+  (testing "project-repl interrupt returns structured reason"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/interrupt (fn [_ctx _worktree-path]
+                                                                    {:status :ok :reason :interrupted})]
+        (let [result ((:execute tool) {"action" "project-repl" "op" "interrupt"})
+              parsed (read-string (:content result))]
+          (is (false? (:is-error result)))
+          (is (= :ok (get-in parsed [:psi-tool/project-repl :status])))
+          (is (= :interrupted (get-in parsed [:psi-tool/project-repl :reason])))))))
+
+  (testing "project-repl configuration/runtime errors return structured failure output"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+          tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})]
+      (with-redefs [psi.agent-session.project-nrepl-ops/start (fn [_ctx worktree-path]
+                                                                (throw (ex-info "Project nREPL start requires a configured start-command"
+                                                                                {:phase :config
+                                                                                 :worktree-path worktree-path})))]
+        (let [result ((:execute tool) {"action" "project-repl" "op" "start"})
+              parsed (read-string (:content result))]
+          (is (true? (:is-error result)))
+          (is (= :error (:psi-tool/overall-status parsed)))
+          (is (= :config (get-in parsed [:psi-tool/error :phase]))))))))
 
 (deftest make-psi-tool-query-fn-throws-test
   (testing "query-fn exception is caught and returned as error"
@@ -446,13 +575,13 @@
           child-sd                (session/new-session-in! ctx active-session-id {})
           child-session-id        (:session-id child-sd)
           _                       (swap! (:state* ctx)
-                                        assoc-in
-                                        [:agent-session :sessions child-session-id :data :session-name]
-                                        "helper session")
+                                         assoc-in
+                                         [:agent-session :sessions child-session-id :data :session-name]
+                                         "helper session")
           _                       (swap! (:state* ctx)
-                                        assoc-in
-                                        [:agent-session :sessions child-session-id :data :model]
-                                        {:provider "local" :id "gemma-3" :reasoning false})
+                                         assoc-in
+                                         [:agent-session :sessions child-session-id :data :model]
+                                         {:provider "local" :id "gemma-3" :reasoning false})
           tool                    (tools/make-psi-tool (fn
                                                          ([q] (session/query-in ctx active-session-id q))
                                                          ([q entity] (session/query-in ctx q entity))))

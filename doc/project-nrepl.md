@@ -109,6 +109,33 @@ Current shared command surface:
 - `/project-repl eval <code>` — evaluate code in the managed project nREPL
 - `/project-repl interrupt` — interrupt the active eval when one exists
 
+## `psi-tool` machine surface
+
+`psi-tool` also exposes the managed project REPL directly through:
+
+- `action: "project-repl"`
+- `op: "status" | "start" | "attach" | "stop" | "eval" | "interrupt"`
+
+Examples:
+
+```clojure
+psi-tool(action: "project-repl", op: "status")
+psi-tool(action: "project-repl", op: "start")
+psi-tool(action: "project-repl", op: "attach", host: "127.0.0.1", port: 7888)
+psi-tool(action: "project-repl", op: "eval", code: "(+ 1 2)")
+psi-tool(action: "project-repl", op: "interrupt")
+```
+
+Targeting precedence is:
+
+1. explicit `worktree-path`
+2. invoking session `worktree-path`
+3. otherwise explicit error
+
+`/project-repl` remains the human-oriented command layer.
+`psi-tool(action: "project-repl", ...)` is the structured machine-oriented layer.
+Both surfaces should share the same underlying project nREPL behavior.
+
 ## Queryable state
 
 The managed project nREPL is queryable through EQL.
