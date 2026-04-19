@@ -47,7 +47,40 @@
     (is (= [:background-job-ui-refresh-fn]
            (get-in result [:psi.runtime-refresh/steps 3 :details :reinstalled])))))
 
-(deftest refresh-runtime-reports-extension-run-fn-limitation-test
+(deftest refresh-runtime-reinstalls-extension-run-fn-when-session-model-is-present-test
+  (let [[ctx session-id] (create-session-context {:persist? false
+                                                  :session-defaults {:model {:provider "anthropic"
+                                                                             :id "claude-sonnet"
+                                                                             :reasoning true}}})
+        original-fn (fn [_ _] :old)
+        _ (reset! (:extension-run-fn-atom ctx) original-fn)
+        result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
+    (is (fn? @(:extension-run-fn-atom ctx)))
+    (is (not (identical? original-fn @(:extension-run-fn-atom ctx))))
+    (is (= :ok (:psi.runtime-refresh/status result)))
+    (is (= :ok (get-in result [:psi.runtime-refresh/steps 3 :status])))
+    (is (= [:background-job-ui-refresh-fn :extension-run-fn]
+           (get-in result [:psi.runtime-refresh/steps 3 :details :reinstalled])))
+    (is (= [] (get-in result [:psi.runtime-refresh/limitations])))))
+
+(deftest refresh-runtime-reports-extension-run-fn-limitation-when-session-id-missing-test
+  (let [[ctx session-id] (create-session-context {:persist? false
+                                                  :session-defaults {:model {:provider "anthropic"
+                                                                             :id "claude-sonnet"
+                                                                             :reasoning true}}})
+        _ session-id
+        _ (runtime/register-extension-run-fn-in! ctx session-id nil {:provider :anthropic :id "claude-sonnet" :supports-reasoning true})
+        result (sut/refresh-runtime! {:ctx ctx})]
+    (is (= :partial (:psi.runtime-refresh/status result)))
+    (is (= :partial (get-in result [:psi.runtime-refresh/steps 3 :status])))
+    (is (= [:extension-run-fn]
+           (get-in result [:psi.runtime-refresh/steps 3 :details :pending])))
+    (is (= :missing-session-id
+           (get-in result [:psi.runtime-refresh/steps 3 :details :extension-run-fn])))
+    (is (= :extension-run-fn
+           (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))))
+
+(deftest refresh-runtime-reports-extension-run-fn-limitation-when-session-model-missing-test
   (let [[ctx session-id] (create-session-context {:persist? false})
         _ (runtime/register-extension-run-fn-in! ctx session-id nil {:provider :anthropic :id "stub"})
         result (sut/refresh-runtime! {:ctx ctx :session-id session-id})]
@@ -55,12 +88,12 @@
     (is (= :partial (get-in result [:psi.runtime-refresh/steps 3 :status])))
     (is (= [:extension-run-fn]
            (get-in result [:psi.runtime-refresh/steps 3 :details :pending])))
+    (is (= :missing-model
+           (get-in result [:psi.runtime-refresh/steps 3 :details :extension-run-fn])))
     (is (= :extension-run-fn
            (get-in result [:psi.runtime-refresh/limitations 0 :boundary])))
-    (is (= "Registered extension run fn may still capture pre-refresh runtime closures."
-           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))
-    (is (= "Re-register extension run fn from the owning runtime/bootstrap path or restart the runtime if behavior remains mixed."
-           (get-in result [:psi.runtime-refresh/limitations 0 :remediation])))))
+    (is (= "Registered extension run fn could not be reinstalled because the target session has no usable model selection."
+           (get-in result [:psi.runtime-refresh/limitations 0 :reason])))))
 
 (deftest refresh-runtime-refreshes-extensions-via-canonical-path-test
   (let [[ctx session-id] (create-session-context {:persist? false})

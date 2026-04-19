@@ -5,6 +5,7 @@
    runtime data by default while refreshing known executable wiring surfaces and
    reporting honest in-place refresh limitations."
   (:require
+   [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]))
 
 (def ^:private refresh-step-order
@@ -93,29 +94,75 @@
       (install! ctx)
       true)))
 
+(defn- session-ai-model
+  [ctx session-id]
+  (let [get-session-data-in (requiring-resolve 'psi.agent-session.session-state/get-session-data-in)
+        model               (:model (get-session-data-in ctx session-id))
+        provider            (:provider model)
+        model-id            (:id model)]
+    (when (and (string? provider)
+               (not (str/blank? provider))
+               (string? model-id)
+               (not (str/blank? model-id)))
+      {:provider           (keyword provider)
+       :id                 model-id
+       :supports-reasoning (boolean (:reasoning model))})))
+
+(defn- maybe-reinstall-extension-run-fn!
+  [ctx session-id]
+  (let [existing-run-fn? (some? (some-> ctx :extension-run-fn-atom deref))
+        ai-model         (when (and ctx session-id existing-run-fn?)
+                           (session-ai-model ctx session-id))]
+    (cond
+      (not existing-run-fn?)
+      {:reinstalled? false :pending? false :reason :not-installed}
+
+      (nil? session-id)
+      {:reinstalled? false :pending? true :reason :missing-session-id}
+
+      (nil? ai-model)
+      {:reinstalled? false :pending? true :reason :missing-model}
+
+      :else
+      (do
+        ((requiring-resolve 'psi.agent-session.runtime/register-extension-run-fn-in!)
+         ctx session-id nil ai-model)
+        {:reinstalled? true :pending? false :reason :reinstalled :session-id session-id}))))
+
 (defn- refresh-runtime-hooks!
-  [ctx]
+  [ctx session-id]
   (if-not ctx
     (step-result :runtime-hooks :ok "runtime hooks unchanged (no runtime ctx provided)")
-    (let [installed-background? (boolean (maybe-install-background-job-ui-refresh! ctx))
-          extension-run-present? (some? (some-> ctx :extension-run-fn-atom deref))
-          status (if extension-run-present? :partial :ok)
-          summary (if extension-run-present?
-                    "reinstalled known runtime hooks with remaining extension run-fn limitations"
-                    "reinstalled known runtime hooks")
-          details {:reinstalled (cond-> []
-                                  installed-background? (conj :background-job-ui-refresh-fn))
-                   :pending     (cond-> []
-                                  extension-run-present? (conj :extension-run-fn))}]
+    (let [installed-background?   (boolean (maybe-install-background-job-ui-refresh! ctx))
+          extension-run-reinstall (maybe-reinstall-extension-run-fn! ctx session-id)
+          extension-run-pending?  (:pending? extension-run-reinstall)
+          status                  (if extension-run-pending? :partial :ok)
+          summary                 (if extension-run-pending?
+                                    "reinstalled known runtime hooks with remaining extension run-fn limitations"
+                                    "reinstalled known runtime hooks")
+          details                 {:reinstalled (cond-> []
+                                                  installed-background? (conj :background-job-ui-refresh-fn)
+                                                  (:reinstalled? extension-run-reinstall) (conj :extension-run-fn))
+                                   :pending     (cond-> []
+                                                  extension-run-pending? (conj :extension-run-fn))
+                                   :extension-run-fn (:reason extension-run-reinstall)}]
       (step-result :runtime-hooks status summary details))))
 
 (defn- collect-limitations
-  [{:keys [ctx]}]
-  (cond-> []
-    (some? (some-> ctx :extension-run-fn-atom deref))
-    (conj (limitation :extension-run-fn
-                      "Registered extension run fn may still capture pre-refresh runtime closures."
-                      "Re-register extension run fn from the owning runtime/bootstrap path or restart the runtime if behavior remains mixed."))))
+  [{:keys [ctx session-id]}]
+  (let [existing-run-fn? (some? (some-> ctx :extension-run-fn-atom deref))
+        ai-model         (when (and ctx session-id existing-run-fn?)
+                           (session-ai-model ctx session-id))]
+    (cond-> []
+      (and existing-run-fn? (nil? session-id))
+      (conj (limitation :extension-run-fn
+                        "Registered extension run fn could not be reinstalled because runtime refresh had no target session-id."
+                        "Re-run runtime refresh with an explicit session-id or re-register extension run fn from the owning runtime/bootstrap path."))
+
+      (and existing-run-fn? session-id (nil? ai-model))
+      (conj (limitation :extension-run-fn
+                        "Registered extension run fn could not be reinstalled because the target session has no usable model selection."
+                        "Set a session model and re-run runtime refresh, or re-register extension run fn from the owning runtime/bootstrap path.")))))
 
 (defn- overall-status
   [steps limitations]
@@ -147,7 +194,7 @@
         steps        [(capture-step :query-graph #(refresh-query-graph! ctx))
                       (capture-step :dispatch-handlers #(refresh-dispatch-handlers! ctx))
                       (capture-step :extensions #(refresh-extensions! opts))
-                      (capture-step :runtime-hooks #(refresh-runtime-hooks! ctx))]
+                      (capture-step :runtime-hooks #(refresh-runtime-hooks! ctx (:session-id opts)))]
         limitations  (vec (collect-limitations opts))]
     {:psi.runtime-refresh/status      (overall-status steps limitations)
      :psi.runtime-refresh/steps       steps
