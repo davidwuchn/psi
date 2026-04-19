@@ -2,8 +2,10 @@
   "Formatting + command dispatch helpers for managed project nREPL operations."
   (:require
    [clojure.string :as str]
+   [psi.agent-session.project-nrepl-attach :as project-nrepl-attach]
    [psi.agent-session.project-nrepl-config :as project-nrepl-config]
-   [psi.agent-session.project-nrepl-ops :as project-nrepl-ops]
+   [psi.agent-session.project-nrepl-eval :as project-nrepl-eval]
+   [psi.agent-session.project-nrepl-started :as project-nrepl-started]
    [psi.agent-session.project-nrepl-runtime :as project-nrepl-runtime]
    [psi.agent-session.session-state :as ss]))
 
@@ -66,40 +68,37 @@
         (if-not command-vector
           {:type :text
            :message (missing-start-command-message worktree-path)}
-          (let [{:keys [status instance]} (project-nrepl-ops/start ctx worktree-path)]
+          (let [instance (project-nrepl-started/start-instance-in! ctx worktree-path command-vector)]
             {:type :text
-             :message (case status
-                        :present (str "Project nREPL already ready for " (:worktree-path instance)
-                                      " at " (get-in instance [:endpoint :host]) ":" (get-in instance [:endpoint :port]))
-                        :started (str "Started project nREPL for " (:worktree-path instance)
-                                      " at " (get-in instance [:endpoint :host]) ":" (get-in instance [:endpoint :port]))
-                        (str "Project nREPL start: " (name status)))})))
+             :message (str "Started project nREPL for " (:worktree-path instance)
+                           " at " (get-in instance [:endpoint :host]) ":" (get-in instance [:endpoint :port]))})))
 
       (= trimmed "/project-repl attach")
       (let [cfg      (project-nrepl-config/resolve-config worktree-path)
             attach   (project-nrepl-config/resolved-attach-endpoint cfg)
-            {:keys [instance]} (project-nrepl-ops/attach ctx worktree-path attach)]
+            instance (project-nrepl-attach/attach-instance-in! ctx worktree-path attach)]
         {:type :text
          :message (str "Attached project nREPL for " (:worktree-path instance)
                        " at " (get-in instance [:endpoint :host]) ":" (get-in instance [:endpoint :port]))})
 
       (= trimmed "/project-repl interrupt")
-      (let [result (project-nrepl-ops/interrupt ctx worktree-path)]
+      (let [result (project-nrepl-eval/interrupt-instance-in! ctx worktree-path)]
         {:type :text
          :message (str "Project nREPL interrupt: " (name (:status result))
                        (when-let [reason (:reason result)]
                          (str " (" (name reason) ")")))})
 
       (= trimmed "/project-repl stop")
-      (let [result (project-nrepl-ops/stop ctx worktree-path)]
+      (do
+        (if (= :started (:acquisition-mode (project-nrepl-runtime/instance-in ctx worktree-path)))
+          (project-nrepl-started/stop-started-instance-in! ctx worktree-path)
+          (project-nrepl-attach/detach-instance-in! ctx worktree-path))
         {:type :text
-         :message (str "Stopped project nREPL for " worktree-path
-                       (when-let [mode (:prior-acquisition-mode result)]
-                         (str " (mode=" (name mode) ")")))})
+         :message (str "Stopped project nREPL for " worktree-path)})
 
       (str/starts-with? trimmed "/project-repl eval ")
       (let [code   (parse-tail trimmed "/project-repl eval ")
-            result (project-nrepl-ops/eval-op ctx worktree-path code)]
+            result (project-nrepl-eval/eval-instance-in! ctx worktree-path code)]
         {:type :text
          :message (str "Project nREPL eval " (name (:status result))
                        (when-let [value (:value result)]
