@@ -11,6 +11,7 @@
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.project-nrepl-runtime :as project-nrepl-runtime]
    [psi.agent-session.prompt-chain :as prompt-chain]
    [psi.agent-session.prompt-recording :as prompt-recording]
    [psi.agent-session.prompt-request :as prompt-request]
@@ -192,6 +193,7 @@
                               :extension-registry         (ext/create-registry)
                               :workflow-registry          (wf/create-registry)
                               :service-registry           (services/create-registry)
+                              :project-nrepl-registry     (project-nrepl-runtime/create-registry)
                               :post-tool-registry         (post-tool/create-registry)
                               :event-queue                event-queue
                               :cwd                        resolved-cwd

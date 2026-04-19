@@ -10,6 +10,7 @@
    [psi.agent-session.dispatch-handlers :as dispatch-handlers]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.project-nrepl-runtime :as project-nrepl-runtime]
    [psi.agent-session.services :as services]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as ss]
@@ -115,6 +116,7 @@
                        :extension-registry           ext-reg
                        :workflow-registry            wf-reg
                        :service-registry             (services/create-registry)
+                       :project-nrepl-registry       (project-nrepl-runtime/create-registry)
                        :post-tool-registry           (post-tool/create-registry)
                        :tool-batch-executor          tool-batch-executor
                        :extension-run-fn-atom        (atom nil)

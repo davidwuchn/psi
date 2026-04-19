@@ -3,10 +3,10 @@
   - [x] Attach mode uses explicit port and optional host
   - [x] `.nrepl-port` discovery/parsing rules are explicit
   - [x] Worktree targeting and precedence are explicit
-- [ ] Add the runtime-owned managed project nREPL service skeleton
-  - [ ] Registry keyed by canonical absolute `worktree-path`
-  - [ ] Single-instance-per-worktree rule enforced
-  - [ ] Explicit restart/replace path for conflicts
+- [x] Add the runtime-owned managed project nREPL service skeleton
+  - [x] Registry keyed by canonical absolute `worktree-path`
+  - [x] Single-instance-per-worktree rule enforced
+  - [x] Explicit restart/replace path for conflicts
 - [ ] Implement psi-started acquisition
   - [ ] Launch configured command vector in target worktree
   - [ ] Read `.nrepl-port` from launch directory
