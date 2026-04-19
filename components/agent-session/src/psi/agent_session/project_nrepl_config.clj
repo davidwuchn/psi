@@ -63,29 +63,29 @@
                       {:phase :validate :worktree-path path})))
     (.getAbsolutePath f)))
 
-(defn resolved-started-command-vector
-  "Return the validated started-mode command vector or nil when unset."
+(defn resolved-start-command
+  "Return the validated started-mode start command vector or nil when unset."
   [cfg]
-  (let [command-vector (get-in cfg [:project-nrepl :started :command-vector])]
+  (let [start-command (get-in cfg [:project-nrepl :start-command])]
     (cond
-      (nil? command-vector) nil
-      (not (vector? command-vector))
-      (throw (ex-info "project nREPL started-mode command-vector must be a vector of strings"
-                      {:phase :validate :command-vector command-vector}))
+      (nil? start-command) nil
+      (not (vector? start-command))
+      (throw (ex-info "project nREPL start-command must be a vector of strings"
+                      {:phase :validate :start-command start-command}))
 
-      (empty? command-vector)
-      (throw (ex-info "project nREPL started-mode command-vector must not be empty"
-                      {:phase :validate :command-vector command-vector}))
+      (empty? start-command)
+      (throw (ex-info "project nREPL start-command must not be empty"
+                      {:phase :validate :start-command start-command}))
 
-      (not-every? string? command-vector)
-      (throw (ex-info "project nREPL started-mode command-vector entries must all be strings"
-                      {:phase :validate :command-vector command-vector}))
+      (not-every? string? start-command)
+      (throw (ex-info "project nREPL start-command entries must all be strings"
+                      {:phase :validate :start-command start-command}))
 
-      (str/blank? (first command-vector))
-      (throw (ex-info "project nREPL started-mode command-vector first element must be a non-blank command path string"
-                      {:phase :validate :command-vector command-vector}))
+      (str/blank? (first start-command))
+      (throw (ex-info "project nREPL start-command first element must be a non-blank command path string"
+                      {:phase :validate :start-command start-command}))
 
-      :else command-vector)))
+      :else start-command)))
 
 (defn resolved-attach-endpoint
   "Return the validated attach endpoint map or nil when unset.

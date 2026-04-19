@@ -45,15 +45,15 @@
 
 (defn- missing-start-command-message
   [worktree-path]
-  (str "Project nREPL start requires a configured started command for " worktree-path "\n"
-       "Configure `:agent-session :project-nrepl :started :command-vector` in either:\n"
+  (str "Project nREPL start requires a configured start-command for " worktree-path "\n"
+       "Configure `:agent-session :project-nrepl :start-command` in either:\n"
        "- ~/.psi/agent/config.edn\n"
        "- " worktree-path "/.psi/project.edn\n"
        "\n"
        "Example:\n"
        "{:agent-session\n"
        " {:project-nrepl\n"
-       "  {:started {:command-vector [\"bb\" \"nrepl-server\"]}}}}"))
+       "  {:start-command [\"bb\" \"nrepl-server\"]}}}"))
 
 (defn dispatch-project-nrepl-command
   [ctx session-id trimmed]
@@ -64,7 +64,7 @@
 
       (= trimmed "/project-repl start")
       (let [cfg            (project-nrepl-config/resolve-config worktree-path)
-            command-vector (project-nrepl-config/resolved-started-command-vector cfg)]
+            command-vector (project-nrepl-config/resolved-start-command cfg)]
         (if-not command-vector
           {:type :text
            :message (missing-start-command-message worktree-path)}

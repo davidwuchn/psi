@@ -21,8 +21,8 @@
                                                                             {:project-nrepl {}})]
         (let [result (commands/dispatch-in ctx session-id "/project-repl start" {})]
           (is (= :text (:type result)))
-          (is (re-find #"requires a configured started command" (:message result)))
-          (is (re-find #":agent-session :project-nrepl :started :command-vector" (:message result)))
+          (is (re-find #"requires a configured start-command" (:message result)))
+          (is (re-find #":agent-session :project-nrepl :start-command" (:message result)))
           (is (re-find #"~/.psi/agent/config.edn" (:message result)))
           (is (re-find #"/.psi/project.edn" (:message result)))))))
 

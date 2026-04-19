@@ -8,12 +8,12 @@
 
 (deftest resolve-config-test
   (testing "merges project nREPL config from user and project scopes"
-    (with-redefs [user-config/read-config (fn [] {:agent-session {:project-nrepl {:started {:command-vector ["bb" "nrepl-server"]}
+    (with-redefs [user-config/read-config (fn [] {:agent-session {:project-nrepl {:start-command ["bb" "nrepl-server"]
                                                                                    :attach {:host "localhost" :port 7888}}}})
                   project-prefs/read-preferences (fn [cwd]
                                                   (is (= "/tmp/project" cwd))
                                                   {:agent-session {:project-nrepl {:attach {:port 9999}}}})]
-      (is (= {:project-nrepl {:started {:command-vector ["bb" "nrepl-server"]}
+      (is (= {:project-nrepl {:start-command ["bb" "nrepl-server"]
                               :attach {:host "localhost" :port 9999}}}
              (project-nrepl-config/resolve-config "/tmp/project")))))
 
@@ -57,28 +57,28 @@
          clojure.lang.ExceptionInfo
          (project-nrepl-config/absolute-directory-path! "/definitely/not/a/dir")))))
 
-(deftest resolved-started-command-vector-test
-  (testing "returns valid command vector"
+(deftest resolved-start-command-test
+  (testing "returns valid start-command vector"
     (is (= ["bb" "nrepl-server"]
-           (project-nrepl-config/resolved-started-command-vector
-            {:project-nrepl {:started {:command-vector ["bb" "nrepl-server"]}}}))))
+           (project-nrepl-config/resolved-start-command
+            {:project-nrepl {:start-command ["bb" "nrepl-server"]}}))))
 
-  (testing "returns nil when started config absent"
-    (is (nil? (project-nrepl-config/resolved-started-command-vector {:project-nrepl {}}))))
+  (testing "returns nil when start-command config absent"
+    (is (nil? (project-nrepl-config/resolved-start-command {:project-nrepl {}}))))
 
-  (testing "rejects invalid command vector shapes"
+  (testing "rejects invalid start-command shapes"
     (is (thrown? clojure.lang.ExceptionInfo
-                 (project-nrepl-config/resolved-started-command-vector
-                  {:project-nrepl {:started {:command-vector '("bb" "nrepl-server")}}})))
+                 (project-nrepl-config/resolved-start-command
+                  {:project-nrepl {:start-command '("bb" "nrepl-server")}})))
     (is (thrown? clojure.lang.ExceptionInfo
-                 (project-nrepl-config/resolved-started-command-vector
-                  {:project-nrepl {:started {:command-vector []}}})))
+                 (project-nrepl-config/resolved-start-command
+                  {:project-nrepl {:start-command []}})))
     (is (thrown? clojure.lang.ExceptionInfo
-                 (project-nrepl-config/resolved-started-command-vector
-                  {:project-nrepl {:started {:command-vector ["" "nrepl-server"]}}})))
+                 (project-nrepl-config/resolved-start-command
+                  {:project-nrepl {:start-command ["" "nrepl-server"]}})))
     (is (thrown? clojure.lang.ExceptionInfo
-                 (project-nrepl-config/resolved-started-command-vector
-                  {:project-nrepl {:started {:command-vector ["bb" :nrepl-server]}}})))))
+                 (project-nrepl-config/resolved-start-command
+                  {:project-nrepl {:start-command ["bb" :nrepl-server]}})))))
 
 (deftest resolved-attach-endpoint-test
   (testing "returns validated attach endpoint"
