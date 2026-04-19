@@ -69,6 +69,21 @@ Startup note:
 - initial `session/updated`, `footer/updated`, and `context/updated` state arrives via subscribed event snapshots, not a handshake bootstrap event
 - `context/updated` now carries both the canonical context snapshot and the backend-projected session-tree widget used by Emacs rendering
 
+Session-state semantics:
+- `← current` marks the currently selected session in Emacs
+- runtime state is separate from current/selection identity
+- user-facing runtime labels are:
+  - `[waiting]` — canonical phase `:idle`
+  - `[running]` — canonical phase `:streaming`
+  - `[retrying]` — canonical phase `:retrying`
+  - `[compacting]` — canonical phase `:compacting`
+- footer session activity is grouped in attention-first order:
+  - `waiting`
+  - `running`
+  - `retrying`
+  - `compacting`
+- Emacs applies dedicated faces to current/runtime fragments, with waiting visually emphasized over running
+
 ## Slash commands
 
 Slash-prefixed input is always routed to the backend `command` RPC op, independent of frontend run-state.

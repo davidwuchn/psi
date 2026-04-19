@@ -174,6 +174,22 @@ Startup note:
 - Initial `session/updated`, `footer/updated`, and `context/updated` event snapshots arrive through the normal subscribed event path.
 - `context/updated` carries both the context snapshot and the canonical backend-projected session-tree widget used by Emacs.
 
+Session-state semantics:
+- `← current` marks the selected/current session in the Emacs UI.
+- Runtime state is represented separately from current/selection identity.
+- Canonical user-facing runtime labels are:
+  - `[waiting]` — phase `:idle`, ready for user input
+  - `[running]` — phase `:streaming`
+  - `[retrying]` — phase `:retrying`
+  - `[compacting]` — phase `:compacting`
+- Footer session activity uses the same canonical vocabulary and groups sessions in this order:
+  - waiting
+  - running
+  - retrying
+  - compacting
+- Structured backend payloads now carry session activity buckets and per-session runtime-state metadata so Emacs can style state fragments without reparsing rendered text.
+- Waiting state is visually emphasized over running because it is the next-user-action signal.
+
 ## Reconnect semantics
 
 - Reconnect is manual only (`C-c C-r`), no auto-restart.
