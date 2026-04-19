@@ -93,4 +93,41 @@ Rules:
 - worktree mode reloads only already loaded namespaces whose canonical source path resolves under the effective target worktree-path
 - worktree mode does not discover brand new namespaces from disk
 - namespace mode reloads exactly the requested already loaded namespaces in request order
-- reload reports code reload and graph/runtime refresh separately; success of one does not imply success of the other
+- reload reports code reload and runtime refresh separately; success of one does not imply success of the other
+
+### Runtime refresh after code reload
+
+`reload-code` is intentionally two-phase:
+
+1. code reload
+- reloads already loaded namespaces
+- reports that phase under `:psi-tool/code-reload`
+
+2. runtime refresh
+- refreshes known long-lived executable wiring that may otherwise still point at old code
+- reports that phase under `:psi-tool/runtime-refresh`
+
+Current runtime refresh report shape:
+- `:psi.runtime-refresh/status`
+- `:psi.runtime-refresh/steps`
+- `:psi.runtime-refresh/limitations`
+- `:psi.runtime-refresh/duration-ms`
+
+Current fixed refresh order:
+1. query graph
+2. dispatch handlers
+3. extensions
+4. runtime hooks
+
+Current first-slice semantics:
+- best-effort and non-atomic
+- preserves normal runtime/session data by default
+- does not recreate `ctx`
+- does not claim that all long-lived loops or installed closures were rebound in place
+
+Current honest limitation policy:
+- when psi cannot honestly claim full in-place convergence, runtime refresh reports structured limitation entries with:
+  - `:boundary`
+  - `:reason`
+  - `:remediation`
+- overall runtime refresh status becomes `:partial` when such limitations remain
