@@ -1,8 +1,8 @@
-- [ ] Define the canonical project nREPL config and validation surface
-  - [ ] Started mode uses a command vector of strings
-  - [ ] Attach mode uses explicit port and optional host
-  - [ ] `.nrepl-port` discovery/parsing rules are explicit
-  - [ ] Worktree targeting and precedence are explicit
+- [x] Define the canonical project nREPL config and validation surface
+  - [x] Started mode uses a command vector of strings
+  - [x] Attach mode uses explicit port and optional host
+  - [x] `.nrepl-port` discovery/parsing rules are explicit
+  - [x] Worktree targeting and precedence are explicit
 - [ ] Add the runtime-owned managed project nREPL service skeleton
   - [ ] Registry keyed by canonical absolute `worktree-path`
   - [ ] Single-instance-per-worktree rule enforced
