@@ -1,0 +1,5 @@
+- [ ] Inspect current footer session data/projection path
+- [ ] Decide canonical active vs idle source and representation
+- [ ] Implement footer display change
+- [ ] Add/adjust tests
+- [ ] Verify footer readability with multiple sessions
