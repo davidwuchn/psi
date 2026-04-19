@@ -140,3 +140,22 @@
   - interrupt when idle
   - interrupt against active op id
 - Transcript/UI integration is still pending; current work establishes the runtime + structured result contract first.
+
+2026-04-19 — Step 8: command + summary surface
+
+- Added `components/agent-session/src/psi/agent_session/project_nrepl_commands.clj`.
+- Added canonical `/project-repl` command family on the shared command surface:
+  - `/project-repl`
+  - `/project-repl start`
+  - `/project-repl attach`
+  - `/project-repl stop`
+  - `/project-repl eval ...`
+  - `/project-repl interrupt`
+- Wired command dispatch through the shared prefixed-command path instead of adapter-local handling.
+- Extended project nREPL resolvers to expose recent operation summaries:
+  - `:psi.project-nrepl/last-eval`
+  - `:psi.project-nrepl/last-interrupt`
+- Added focused tests for:
+  - command routing + user-visible text results
+  - resolver projection of recent eval/interrupt summaries
+- This lands the first canonical user-facing integration path, though richer transcript-native rendering is still pending.

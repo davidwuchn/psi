@@ -18,12 +18,12 @@
 - [x] Project canonical project nREPL state into `:state*`
   - [x] Lifecycle/acquisition/endpoint metadata
   - [x] Session-mode and active-session metadata
-  - [ ] Recent startup/attach/eval summaries
+  - [x] Recent startup/attach/eval summaries
 - [x] Add canonical EQL/query visibility for project nREPL state
 - [x] Implement eval on the managed single nREPL session
   - [x] Single-flight eval per worktree instance
   - [x] Structured success/error/unavailable result reporting
   - [ ] Transcript-visible output plus queryable summaries
 - [x] Implement interrupt for the active eval on the managed session
-- [ ] Add canonical command/tool/UI integration for start/attach/status/stop/restart/eval/interrupt
+- [x] Add canonical command/tool/UI integration for start/attach/status/stop/restart/eval/interrupt
 - [ ] Add focused tests and docs for started mode, attach mode, eval, interrupt, and observability

@@ -28,7 +28,9 @@
                :readiness true
                :active-session-id "nrepl-session-1"
                :can-eval? true
-               :can-interrupt? true))
+               :can-interrupt? true
+               :last-eval {:status :success :value "3"}
+               :last-interrupt {:status :success :interrupted-op-id "op-1"}))
       (let [result (session/query-in ctx session-id
                                      [:psi.project-nrepl/count
                                       :psi.project-nrepl/worktree-paths
@@ -39,7 +41,9 @@
                                         :psi.project-nrepl/readiness
                                         :psi.project-nrepl/active-session-id
                                         :psi.project-nrepl/can-eval?
-                                        :psi.project-nrepl/can-interrupt?]}])]
+                                        :psi.project-nrepl/can-interrupt?
+                                        :psi.project-nrepl/last-eval
+                                        :psi.project-nrepl/last-interrupt]}])]
         (is (= 1 (:psi.project-nrepl/count result)))
         (is (= [worktree] (:psi.project-nrepl/worktree-paths result)))
         (is (= [{:psi.project-nrepl/worktree-path worktree
@@ -48,7 +52,9 @@
                  :psi.project-nrepl/readiness true
                  :psi.project-nrepl/active-session-id "nrepl-session-1"
                  :psi.project-nrepl/can-eval? true
-                 :psi.project-nrepl/can-interrupt? true}]
+                 :psi.project-nrepl/can-interrupt? true
+                 :psi.project-nrepl/last-eval {:status :success :value "3"}
+                 :psi.project-nrepl/last-interrupt {:status :success :interrupted-op-id "op-1"}}]
                (:psi.project-nrepl/instances result))))))
 
   (testing "session-scoped project nREPL attr resolves by invoking session worktree"

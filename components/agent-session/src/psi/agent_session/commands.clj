@@ -32,6 +32,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.project-nrepl-commands :as project-nrepl-commands]
    [psi.ai.models :as ai-models]
    [psi.ai.model-registry :as model-registry]))
 
@@ -613,6 +614,7 @@
     "/worktree" :worktree
     "/logout" :logout
     "/reload-models" :reload-models
+    "/project-repl" :project-repl
     nil))
 
 (defn- prefixed-command
@@ -621,7 +623,7 @@
           (when (or (= trimmed prefix)
                     (str/starts-with? trimmed (str prefix " ")))
             prefix))
-        ["/tree" "/jobs" "/job" "/cancel-job" "/remember" "/model" "/thinking" "/login"]))
+        ["/tree" "/jobs" "/job" "/cancel-job" "/remember" "/model" "/thinking" "/login" "/project-repl"]))
 
 (defn- dispatch-prefixed-command
   [ctx session-id trimmed {:keys [oauth-ctx ai-model supports-session-tree?]}]
@@ -634,6 +636,7 @@
     "/model" (dispatch-model-command ctx session-id trimmed)
     "/thinking" (dispatch-thinking-command ctx session-id trimmed)
     "/login" (dispatch-login-command ctx session-id oauth-ctx ai-model trimmed)
+    "/project-repl" (project-nrepl-commands/dispatch-project-nrepl-command ctx session-id trimmed)
     nil))
 
 (defn- dispatch*
@@ -654,6 +657,7 @@
        :skills {:type :text :message (format-skills ctx session-id)}
        :worktree {:type :text :message (format-worktree ctx session-id)}
        :reload-models {:type :text :message (format-reload-models ctx session-id)}
+       :project-repl (project-nrepl-commands/dispatch-project-nrepl-command ctx session-id trimmed)
        :logout (dispatch-logout-command ctx session-id oauth-ctx)
        nil)
      (dispatch-prefixed-command ctx session-id trimmed opts)

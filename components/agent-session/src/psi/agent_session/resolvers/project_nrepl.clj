@@ -19,6 +19,8 @@
    :psi.project-nrepl/can-eval?
    :psi.project-nrepl/can-interrupt?
    :psi.project-nrepl/last-error
+   :psi.project-nrepl/last-eval
+   :psi.project-nrepl/last-interrupt
    :psi.project-nrepl/started-at
    :psi.project-nrepl/updated-at])
 
@@ -37,6 +39,8 @@
    :psi.project-nrepl/can-eval?        (boolean (:can-eval? instance))
    :psi.project-nrepl/can-interrupt?   (boolean (:can-interrupt? instance))
    :psi.project-nrepl/last-error       (:last-error instance)
+   :psi.project-nrepl/last-eval        (:last-eval instance)
+   :psi.project-nrepl/last-interrupt   (:last-interrupt instance)
    :psi.project-nrepl/started-at       (:started-at instance)
    :psi.project-nrepl/updated-at       (:updated-at instance)})
 
