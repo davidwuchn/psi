@@ -20,10 +20,10 @@
   - [x] Session-mode and active-session metadata
   - [ ] Recent startup/attach/eval summaries
 - [x] Add canonical EQL/query visibility for project nREPL state
-- [ ] Implement eval on the managed single nREPL session
-  - [ ] Single-flight eval per worktree instance
-  - [ ] Structured success/error/unavailable result reporting
+- [x] Implement eval on the managed single nREPL session
+  - [x] Single-flight eval per worktree instance
+  - [x] Structured success/error/unavailable result reporting
   - [ ] Transcript-visible output plus queryable summaries
-- [ ] Implement interrupt for the active eval on the managed session
+- [x] Implement interrupt for the active eval on the managed session
 - [ ] Add canonical command/tool/UI integration for start/attach/status/stop/restart/eval/interrupt
 - [ ] Add focused tests and docs for started mode, attach mode, eval, interrupt, and observability

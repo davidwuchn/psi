@@ -119,3 +119,24 @@
   - `.nrepl-port` fallback
   - successful attach projection
   - failed attach projection
+
+2026-04-19 — Step 7: eval + interrupt core
+
+- Added `components/agent-session/src/psi/agent_session/project_nrepl_eval.clj`.
+- Implemented first-slice eval semantics on the managed single client session:
+  - one active eval at a time per worktree instance
+  - structured result with op-id, target worktree, session id, input, timestamps, status, value/out/err
+  - projection of last eval result into managed instance state
+  - transport/runtime failures reported as `:unavailable` and also copied into `:last-error`
+- Implemented interrupt semantics:
+  - interrupt targets the current active operation id via nREPL `interrupt`
+  - no-active-eval returns explicit unavailable status instead of silently succeeding
+  - interrupt summaries are projected into `:last-interrupt`
+- Response summarization now normalizes singleton `:value` vectors from nREPL combined responses into scalar primary values for the common case.
+- Added focused tests in `project_nrepl_eval_test.clj` covering:
+  - successful eval
+  - single-flight rejection
+  - unavailable-on-eval-failure
+  - interrupt when idle
+  - interrupt against active op id
+- Transcript/UI integration is still pending; current work establishes the runtime + structured result contract first.
