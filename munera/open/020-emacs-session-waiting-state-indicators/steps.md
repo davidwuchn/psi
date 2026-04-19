@@ -1,40 +1,40 @@
-- [ ] Confirm shared/backend implementation seam for canonical per-session state
-  - [ ] identify where context snapshot/session summary/footer model should expose phase-derived state for all sessions
-  - [ ] choose structured payload shape for tree/footer rendering that avoids frontend text reparsing
-- [ ] Implement canonical per-session state exposure in shared projections
-  - [ ] ensure every session can surface one of: waiting, running, retrying, compacting
-  - [ ] ensure the source is canonical phase semantics, not `not streaming`
-- [ ] Update shared footer semantics
-  - [ ] replace active/idle grouping with waiting/running/retrying/compacting grouping
-  - [ ] ensure all sessions are represented; no non-empty state bucket is dropped
-  - [ ] preserve parent-first/stable ordering within buckets
-  - [ ] preserve intentional single-session omission behavior for the grouped footer line
-- [ ] Update shared session-tree semantics
-  - [ ] rename `← active` to `← current`
-  - [ ] add explicit runtime badge for each canonical phase in scope
-  - [ ] ensure current identity and runtime state are both rendered when applicable
-- [ ] Add/update Emacs faces
-  - [ ] add dedicated faces for current/waiting/running/retrying/compacting fragments
-  - [ ] make waiting visually strongest among non-error session states
-  - [ ] ensure current is visible but weaker than waiting
-  - [ ] ensure faces inherit cleanly across themes
-- [ ] Update Emacs rendering
-  - [ ] consume structured backend/shared semantics for footer and tree fragments
-  - [ ] avoid regex/text parsing of rendered labels to recover semantics
-  - [ ] render user-facing terms as current/waiting/running/retrying/compacting
-- [ ] Add/adjust tests
-  - [ ] shared/backend tests for canonical state mapping
-  - [ ] shared/backend tests for footer all-session coverage
-  - [ ] shared/backend tests for bucket ordering: waiting, running, retrying, compacting
-  - [ ] shared/backend tests for tree row labeling: current + runtime badge combinations
-  - [ ] RPC tests for payload shape/semantic additions if changed
-  - [ ] Emacs tests for footer wording/order
-  - [ ] Emacs tests for tree wording/order
-  - [ ] Emacs tests for fragment face application and precedence (`[waiting]` stronger than `← current`)
-  - [ ] text-only/readability checks where practical
-- [ ] Verify representative examples
-  - [ ] current + waiting
-  - [ ] current + running
-  - [ ] mixed waiting/running/retrying/compacting multi-session footer
-  - [ ] single-session behavior remains intentionally compact
-- [ ] Record implementation notes/discoveries in `implementation.md`
+- [x] Confirm shared/backend implementation seam for canonical per-session state
+  - [x] identify where context snapshot/session summary/footer model should expose phase-derived state for all sessions
+  - [x] choose structured payload shape for tree/footer rendering that avoids frontend text reparsing
+- [x] Implement canonical per-session state exposure in shared projections
+  - [x] ensure every session can surface one of: waiting, running, retrying, compacting
+  - [x] ensure the source is canonical phase semantics, not `not streaming`
+- [x] Update shared footer semantics
+  - [x] replace active/idle grouping with waiting/running/retrying/compacting grouping
+  - [x] ensure all sessions are represented; no non-empty state bucket is dropped
+  - [x] preserve parent-first/stable ordering within buckets
+  - [x] preserve intentional single-session omission behavior for the grouped footer line
+- [x] Update shared session-tree semantics
+  - [x] rename `← active` to `← current`
+  - [x] add explicit runtime badge for each canonical phase in scope
+  - [x] ensure current identity and runtime state are both rendered when applicable
+- [x] Add/update Emacs faces
+  - [x] add dedicated faces for current/waiting/running/retrying/compacting fragments
+  - [x] make waiting visually strongest among non-error session states
+  - [x] ensure current is visible but weaker than waiting
+  - [x] ensure faces inherit cleanly across themes
+- [x] Update Emacs rendering
+  - [x] consume structured backend/shared semantics for footer and tree fragments
+  - [x] avoid regex/text parsing of rendered labels to recover semantics
+  - [x] render user-facing terms as current/waiting/running/retrying/compacting
+- [x] Add/adjust tests
+  - [x] shared/backend tests for canonical state mapping
+  - [x] shared/backend tests for footer all-session coverage
+  - [x] shared/backend tests for bucket ordering: waiting, running, retrying, compacting
+  - [x] shared/backend tests for tree row labeling: current + runtime badge combinations
+  - [x] RPC tests for payload shape/semantic additions if changed
+  - [x] Emacs tests for footer wording/order
+  - [x] Emacs tests for tree wording/order
+  - [x] Emacs tests for fragment face application and precedence (`[waiting]` stronger than `← current`)
+  - [x] text-only/readability checks where practical
+- [x] Verify representative examples
+  - [x] current + waiting
+  - [x] current + running
+  - [x] mixed waiting/running/retrying/compacting multi-session footer
+  - [x] single-session behavior remains intentionally compact
+- [x] Record implementation notes/discoveries in `implementation.md`

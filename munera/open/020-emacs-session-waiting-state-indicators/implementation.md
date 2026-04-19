@@ -14,7 +14,8 @@ Implementation notes:
 - Emacs now renders `← current` and runtime-state labels with dedicated faces.
 - Waiting is visually emphasized over running.
 - Clickable session-tree rows preserve fragment-level faces instead of overwriting them with a generic widget face.
-- Current known limitation/work left:
-  - footer structured activity faces are implemented from structured buckets
-  - session-tree fragment faces are implemented from structured line metadata
-  - other adapters have not yet adopted comparable fragment-level styling
+- Documentation updated in `components/emacs-ui/README.md` and `doc/emacs-ui.md`.
+- Verification status:
+  - focused Clojure tests for app-runtime/RPC session-activity semantics are green
+  - Emacs frontend suite is green
+  - full repository Clojure unit run currently reports 2 unrelated failures in `psi.agent-session.resolvers-test/authenticated-providers-resolver-test`, reflecting local configured providers (`local`, `local2`) in the current environment rather than this session-state work
