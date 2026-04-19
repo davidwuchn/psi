@@ -43,6 +43,18 @@
           str/trim
           not-empty))
 
+(defn- missing-start-command-message
+  [worktree-path]
+  (str "Project nREPL start requires a configured started command for " worktree-path "\n"
+       "Configure `:agent-session :project-nrepl :started :command-vector` in either:\n"
+       "- ~/.psi/agent/config.edn\n"
+       "- " worktree-path "/.psi/project.edn\n"
+       "\n"
+       "Example:\n"
+       "{:agent-session\n"
+       " {:project-nrepl\n"
+       "  {:started {:command-vector [\"bb\" \"nrepl-server\"]}}}}"))
+
 (defn dispatch-project-nrepl-command
   [ctx session-id trimmed]
   (let [worktree-path (ss/session-worktree-path-in ctx session-id)]
@@ -52,11 +64,14 @@
 
       (= trimmed "/project-repl start")
       (let [cfg            (project-nrepl-config/resolve-config worktree-path)
-            command-vector (project-nrepl-config/resolved-started-command-vector cfg)
-            instance       (project-nrepl-started/start-instance-in! ctx worktree-path command-vector)]
-        {:type :text
-         :message (str "Started project nREPL for " (:worktree-path instance)
-                       " at " (get-in instance [:endpoint :host]) ":" (get-in instance [:endpoint :port]))})
+            command-vector (project-nrepl-config/resolved-started-command-vector cfg)]
+        (if-not command-vector
+          {:type :text
+           :message (missing-start-command-message worktree-path)}
+          (let [instance (project-nrepl-started/start-instance-in! ctx worktree-path command-vector)]
+            {:type :text
+             :message (str "Started project nREPL for " (:worktree-path instance)
+                           " at " (get-in instance [:endpoint :host]) ":" (get-in instance [:endpoint :port]))})))
 
       (= trimmed "/project-repl attach")
       (let [cfg      (project-nrepl-config/resolve-config worktree-path)

@@ -13,6 +13,19 @@
       (is (= :text (:type result)))
       (is (re-find #"Project nREPL" (:message result)))))
 
+  (testing "/project-repl start reports missing command configuration clearly"
+    (let [worktree-path (System/getProperty "user.dir")
+          [ctx session-id] (test-support/create-test-session {:persist? false
+                                                              :session-defaults {:worktree-path worktree-path}})]
+      (with-redefs [psi.agent-session.project-nrepl-config/resolve-config (fn [_]
+                                                                            {:project-nrepl {}})]
+        (let [result (commands/dispatch-in ctx session-id "/project-repl start" {})]
+          (is (= :text (:type result)))
+          (is (re-find #"requires a configured started command" (:message result)))
+          (is (re-find #":agent-session :project-nrepl :started :command-vector" (:message result)))
+          (is (re-find #"~/.psi/agent/config.edn" (:message result)))
+          (is (re-find #"/.psi/project.edn" (:message result)))))))
+
   (testing "/project-repl eval routes through project nREPL eval helper"
     (let [[ctx session-id] (test-support/create-test-session {:persist? false
                                                               :session-defaults {:worktree-path (System/getProperty "user.dir")}})]
