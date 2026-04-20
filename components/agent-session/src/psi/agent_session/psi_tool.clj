@@ -323,19 +323,49 @@
       {:status :ok
        :summary (str "refreshed live tool defs (" (count tool-defs) " tools)")})))
 
+(defn- install-summary
+  [install-state]
+  (let [entries            (vals (get-in install-state [:psi.extensions/effective :entries-by-lib]))
+        statuses           (map :status entries)
+        status-counts      (frequencies statuses)
+        restart-required   (->> (get-in install-state [:psi.extensions/effective :entries-by-lib])
+                                (keep (fn [[lib entry]]
+                                        (when (= :restart-required (:status entry))
+                                          lib)))
+                                vec)
+        last-apply         (:psi.extensions/last-apply install-state)
+        diagnostics        (vec (or (:psi.extensions/diagnostics install-state) []))]
+    {:status            (:status last-apply)
+     :restart-required? (boolean (:restart-required? last-apply))
+     :summary           (:summary last-apply)
+     :status-counts     status-counts
+     :restart-required-libs restart-required
+     :diagnostic-count  (count diagnostics)
+     :diagnostics       diagnostics}))
+
 (defn- refresh-worktree-extensions!
   [ctx session-id worktree-path]
   (if-not (and ctx session-id)
     {:status :ok
      :summary "extension rediscovery skipped (no session runtime provided)"
      :loaded []
-     :errors []}
-    (let [result (extension-runtime/reload-extensions-in! ctx session-id [] worktree-path)]
-      {:status  (if (seq (:errors result)) :error :ok)
+     :errors []
+     :install nil}
+    (let [result          (extension-runtime/reload-extensions-in! ctx session-id [] worktree-path)
+          install-state   (:install-state result)
+          install-report  (some-> install-state install-summary)
+          has-load-errors (seq (:errors result))
+          install-error?  (and install-report
+                               (nil? (:status install-report)))]
+      {:status  (if (or has-load-errors install-error?) :error :ok)
        :summary (str "reloaded extensions under worktree (loaded=" (count (:loaded result))
-                     ", errors=" (count (:errors result)) ")")
+                     ", errors=" (count (:errors result))
+                     (when install-report
+                       (str ", install-status=" (or (:status install-report) :invalid)))
+                     ")")
        :loaded  (:loaded result)
-       :errors  (mapv sanitize-psi-tool-data (:errors result))})))
+       :errors  (mapv sanitize-psi-tool-data (:errors result))
+       :install (some-> install-report sanitize-psi-tool-data)})))
 
 (defn- preserve-extension-registry-step
   []

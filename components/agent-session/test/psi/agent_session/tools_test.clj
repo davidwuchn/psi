@@ -6,9 +6,20 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.extension-runtime :as extension-runtime]
-   [psi.agent-session.prompt-lifecycle-test :refer [with-temp-dir]]
    [psi.agent-session.psi_tool :as psi-tool]
    [psi.agent-session.tools :as tools]))
+
+(defn- delete-tree! [path]
+  (when path
+    (doseq [f (reverse (file-seq (io/file path)))]
+      (.delete ^java.io.File f))))
+
+(defmacro with-temp-dir [[sym prefix] & body]
+  `(let [~sym (str (java.nio.file.Files/createTempDirectory ~prefix (make-array java.nio.file.attribute.FileAttribute 0)))]
+     (try
+       ~@body
+       (finally
+         (delete-tree! ~sym)))))
 (defn- create-session-context
   ([]
    (create-session-context {}))
@@ -240,11 +251,12 @@
             tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id :cwd (System/getProperty "user.dir")})
             result           ((:execute tool) {"action" "reload-code"})
             parsed           (read-string (:content result))]
-        (is (false? (:is-error result)))
         (is (= :worktree (:psi-tool/reload-mode parsed)))
         (is (= :session (:psi-tool/worktree-source parsed)))
         (is (string? (:psi-tool/worktree-path parsed)))
-        (is (= :ok (get-in parsed [:psi-tool/code-reload :status]))))))
+        (is (= :ok (get-in parsed [:psi-tool/code-reload :status])))
+        (is (contains? parsed :psi-tool/graph-refresh))
+        (is (contains? (get-in parsed [:psi-tool/graph-refresh :steps 3]) :install)))))
 
   (testing "worktree mode rejects non-absolute explicit worktree-path"
     (let [tool   (tools/make-psi-tool (fn [_q] {}))
@@ -261,13 +273,12 @@
       (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
 
   (testing "worktree mode rejects unreloadable explicit worktree-path"
-    (with-temp-dir
-      (fn [dir]
-        (let [tool   (tools/make-psi-tool (fn [_q] {}))
-              result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
-              parsed (read-string (:content result))]
-          (is (true? (:is-error result)))
-          (is (= :validate (get-in parsed [:psi-tool/error :phase])))))))
+    (with-temp-dir [dir "psi-tools-test-"]
+      (let [tool   (tools/make-psi-tool (fn [_q] {}))
+            result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
+            parsed (read-string (:content result))]
+        (is (true? (:is-error result)))
+        (is (= :validate (get-in parsed [:psi-tool/error :phase]))))))
 
   (testing "worktree mode explicit target reports explicit worktree source"
     (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
@@ -295,6 +306,39 @@
         (is (true? (:is-error result)))
         (is (= :error (get-in parsed [:psi-tool/graph-refresh :status])))
         (is (= :error (:psi-tool/overall-status parsed))))))
+
+  (testing "worktree mode graph refresh reports manifest install apply summary"
+    (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]
+                                                        [{:ns-name "clojure.string"
+                                                          :source-path (str worktree-path "/components/agent-session/src/psi/agent_session/tools.clj")}])
+                  extension-runtime/reload-extensions-in!
+                  (fn [& _]
+                    {:loaded ["/tmp/ext.clj"]
+                     :errors []
+                     :install-state
+                     {:psi.extensions/effective
+                      {:entries-by-lib
+                       {'foo/local {:status :loaded}
+                        'bar/remote {:status :restart-required}
+                        'support/lib {:status :not-applicable}}}
+                      :psi.extensions/diagnostics
+                      [{:severity :info :category :restart-required :message "restart required"}]
+                      :psi.extensions/last-apply
+                      {:status :restart-required
+                       :restart-required? true
+                       :summary "restart required for remote deps"}}})]
+      (let [[ctx session-id] (create-session-context {:persist? false
+                                                      :session-defaults {:worktree-path (System/getProperty "user.dir")}})
+            tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id :cwd (System/getProperty "user.dir")})
+            result           ((:execute tool) {"action" "reload-code"})
+            parsed           (read-string (:content result))]
+        (is (false? (:is-error result)))
+        (is (= :restart-required (get-in parsed [:psi-tool/graph-refresh :steps 3 :install :status])))
+        (is (= true (get-in parsed [:psi-tool/graph-refresh :steps 3 :install :restart-required?])))
+        (is (= ['bar/remote] (get-in parsed [:psi-tool/graph-refresh :steps 3 :install :restart-required-libs])))
+        (is (= {:loaded 1 :restart-required 1 :not-applicable 1}
+               (get-in parsed [:psi-tool/graph-refresh :steps 3 :install :status-counts])))
+        (is (= 1 (get-in parsed [:psi-tool/graph-refresh :steps 3 :install :diagnostic-count]))))))
 
   (testing "namespace mode may target loaded project namespaces"
     (let [tool   (tools/make-psi-tool (fn [_q] {}))
