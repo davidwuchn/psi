@@ -121,6 +121,11 @@
         (is (true? (:is-error result)))
         (is (re-find #"requires `definition-id` or `definition`" (:content result)))))
 
+    (testing "workflow register-agent-chains is accepted as a valid op"
+      (let [result ((:execute tool) {"action" "workflow" "op" "register-agent-chains"})
+            parsed (read-string (:content result))]
+        (is (= :workflow (:psi-tool/action parsed)))))
+
     (testing "workflow create-run rejects both definition-id and definition"
       (let [result ((:execute tool) {"action" "workflow"
                                      "op" "create-run"
@@ -397,6 +402,32 @@
       (is (= :ok (:psi-tool/overall-status parsed)))
       (is (= 1 (get-in parsed [:psi-tool/workflow :definition-count])))
       (is (= ["plan-build-review"] (get-in parsed [:psi-tool/workflow :definition-ids])))))
+
+  (testing "workflow register-agent-chains compiles and registers named chain definitions"
+    (let [tmp    (str (java.nio.file.Files/createTempDirectory
+                       "psi-tool-agent-chain-test-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+          cfg    (io/file tmp ".psi" "agents" "agent-chain.edn")]
+      (try
+        (io/make-parents cfg)
+        (spit cfg (pr-str [{:name "plan-build"
+                            :description "Plan and build"
+                            :steps [{:agent "planner" :prompt "$INPUT"}
+                                    {:agent "builder" :prompt "Execute: $INPUT"}]}]))
+        (let [[ctx session-id] (create-session-context {:persist? false :cwd tmp})
+              tool   (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+              result ((:execute tool) {"action" "workflow" "op" "register-agent-chains"})
+              parsed (read-string (:content result))]
+          (is (false? (:is-error result)))
+          (is (= :register-agent-chains (:psi-tool/workflow-op parsed)))
+          (is (= :ok (:psi-tool/overall-status parsed)))
+          (is (= 1 (get-in parsed [:psi-tool/workflow :registered-count])))
+          (is (= ["plan-build"] (get-in parsed [:psi-tool/workflow :definition-ids])))
+          (is (= "plan-build"
+                 (:definition-id (get-in @(:state* ctx) [:workflows :definitions "plan-build"])))))
+        (finally
+          (doseq [f (reverse (file-seq (io/file tmp)))]
+            (.delete f))))))
 
   (testing "workflow create-run creates a run from inline definition"
     (let [[ctx session-id] (create-session-context {:persist? false})

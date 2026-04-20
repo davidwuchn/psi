@@ -11,6 +11,7 @@
    [psi.agent-session.project-nrepl-ops :as project-nrepl-ops]
    [psi.agent-session.session-state :as session-state]
    [psi.agent-session.tool-output :as tool-output]
+   [psi.agent-session.workflow-agent-chain-runtime :as workflow-agent-chain-runtime]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]
    [psi.query.core :as query]))
@@ -23,7 +24,7 @@
                      "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
                      "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
                      "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`; "
-                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|create-run|read-run|list-runs|resume-run|cancel-run`. "
+                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|register-agent-chains|create-run|read-run|list-runs|resume-run|cancel-run`. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
@@ -84,7 +85,7 @@
   ["status" "start" "attach" "stop" "eval" "interrupt"])
 
 (def ^:private workflow-supported-ops
-  ["list-definitions" "create-run" "read-run" "list-runs" "resume-run" "cancel-run"])
+  ["list-definitions" "register-agent-chains" "create-run" "read-run" "list-runs" "resume-run" "cancel-run"])
 
 (defn- validate-psi-tool-request
   [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id reason] :as args}]
@@ -625,6 +626,16 @@
                                                                  :summary (:summary definition)
                                                                  :step-order (:step-order definition)})
                                                               definitions)}})
+
+              "register-agent-chains"
+              (let [report (workflow-agent-chain-runtime/register-agent-chain-definitions! ctx)]
+                {:psi-tool/action         :workflow
+                 :psi-tool/workflow-op    :register-agent-chains
+                 :psi-tool/overall-status (if (:error report) :error :ok)
+                 :psi-tool/workflow       {:config-path (:config-path report)
+                                           :registered-count (:registered-count report)
+                                           :definition-ids (:definition-ids report)
+                                           :error (:error report)}})
 
               "create-run"
               (let [create-opts (cond-> {}
