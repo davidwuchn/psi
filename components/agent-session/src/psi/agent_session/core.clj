@@ -142,6 +142,12 @@
   [ctx session-id]
   (settings/reload-models-in! ctx session-id))
 
+(defn reload-extension-installs-in!
+  "Reload/apply extension installs for the session worktree path.
+   Returns the extension-runtime reload report including `:install-state`."
+  [ctx session-id]
+  (settings/reload-extension-installs-in! ctx session-id))
+
 (defn execute-compaction-in!
   [ctx session-id custom-instructions]
   (compaction-runtime/execute-compaction-in! ctx session-id custom-instructions))

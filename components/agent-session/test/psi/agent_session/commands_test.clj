@@ -532,3 +532,25 @@
       (model-registry/init! {:user-models-path    nil
                               :project-models-path nil}))))
 
+(deftest reload-extension-installs-command-test
+  (testing "/reload-extension-installs returns :text result with apply summary"
+    (let [[ctx session-id] (make-test-ctx)]
+      (with-redefs [session/reload-extension-installs-in!
+                    (fn [_ctx _sid]
+                      {:install-state
+                       {:psi.extensions/effective
+                        {:entries-by-lib
+                         {'foo/local {:status :loaded}
+                          'bar/remote {:status :restart-required}}}
+                        :psi.extensions/diagnostics
+                        [{:severity :info :category :restart-required :message "restart required"}]
+                        :psi.extensions/last-apply
+                        {:status :restart-required
+                         :restart-required? true
+                         :summary "restart required for remote deps"}}})]
+        (let [result (commands/dispatch-in ctx session-id "/reload-extension-installs" cmd-opts)]
+          (is (= :text (:type result)))
+          (is (str/includes? (:message result) "Extension installs reloaded"))
+          (is (str/includes? (:message result) "restart-required"))
+          (is (str/includes? (:message result) "diagnostics")))))))
+

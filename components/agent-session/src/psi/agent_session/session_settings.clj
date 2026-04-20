@@ -2,6 +2,7 @@
   (:require
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-runtime :as extension-runtime]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]))
 
@@ -111,3 +112,9 @@
    Returns {:error string-or-nil :count int}."
   [ctx session-id]
   (dispatch/dispatch! ctx :session/reload-models {:session-id session-id} {:origin :core}))
+
+(defn reload-extension-installs-in!
+  "Reload/apply extension installs for `session-id`'s worktree path.
+   Returns the extension-runtime reload report including `:install-state`."
+  [ctx session-id]
+  (extension-runtime/reload-extensions-in! ctx session-id [] (ss/session-worktree-path-in ctx session-id)))

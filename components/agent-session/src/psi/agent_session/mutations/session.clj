@@ -264,6 +264,20 @@
           (sort-by (juxt :provider :id))
           vec)}))
 
+(pco/defmutation reload-extension-installs
+  "Reload/apply extension installs from user/project extensions.edn for the session worktree path."
+  [_ {:keys [psi/agent-session-ctx session-id]}]
+  {::pco/op-name 'psi.extension/reload-extension-installs
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.extensions/last-apply
+                  :psi.extensions/diagnostics
+                  :psi.extensions/effective]}
+  (let [result (core/reload-extension-installs-in! agent-session-ctx session-id)
+        install-state (:install-state result)]
+    {:psi.extensions/last-apply (:psi.extensions/last-apply install-state)
+     :psi.extensions/diagnostics (vec (or (:psi.extensions/diagnostics install-state) []))
+     :psi.extensions/effective (:psi.extensions/effective install-state)}))
+
 (pco/defmutation cancel-job
   "Cancel a background job by job-id."
   [_ {:keys [psi/agent-session-ctx session-id job-id]}]
@@ -317,6 +331,7 @@
    compact
    append-entry
    reload-models
+   reload-extension-installs
    cancel-job
    remember
    login-begin

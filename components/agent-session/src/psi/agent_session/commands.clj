@@ -132,6 +132,7 @@
          "  /remember [text] — capture a memory note for future ψ\n"
          "  /worktree — show git worktree context\n"
          "  /reload-models — reload custom model definitions from disk\n"
+         "  /reload-extension-installs — reload/apply extension installs from extensions.edn\n"
          "  /jobs [status ...] — list background jobs (default: running,pending-cancel)\n"
          "  /job <job-id> — inspect a background job\n"
          "  /cancel-job <job-id> — request background job cancellation\n"
@@ -246,7 +247,7 @@
 (defn- format-reload-models
   "Reload user + project custom models from disk and return a status string."
   [ctx session-id]
-  (let [worktree-path      (ss/session-worktree-path-in ctx session-id)
+  (let [worktree-path        (ss/session-worktree-path-in ctx session-id)
         {:keys [error count]} (session/reload-models-in! ctx session-id)]
     (if error
       (str "── Models reloaded (with errors) ─────\n"
@@ -257,6 +258,29 @@
       (str "── Models reloaded ───────────────────\n"
            "  worktree : " worktree-path "\n"
            "  count : " count "\n"
+           "───────────────────────────────────────"))))
+
+(defn- format-reload-extension-installs
+  "Reload/apply extension installs from extensions.edn and return a status string."
+  [ctx session-id]
+  (let [worktree-path (ss/session-worktree-path-in ctx session-id)
+        result        (session/reload-extension-installs-in! ctx session-id)
+        install-state (:install-state result)
+        last-apply    (:psi.extensions/last-apply install-state)
+        diagnostics   (vec (or (:psi.extensions/diagnostics install-state) []))
+        entries       (vals (get-in install-state [:psi.extensions/effective :entries-by-lib]))
+        status-counts (frequencies (map :status entries))]
+    (if last-apply
+      (str "── Extension installs reloaded ───────\n"
+           "  worktree : " worktree-path "\n"
+           "  status   : " (:status last-apply) "\n"
+           "  counts   : " (pr-str status-counts) "\n"
+           "  diagnostics : " (count diagnostics) "\n"
+           "───────────────────────────────────────")
+      (str "── Extension install reload failed ──\n"
+           "  worktree : " worktree-path "\n"
+           "  counts   : " (pr-str status-counts) "\n"
+           "  diagnostics : " (count diagnostics) "\n"
            "───────────────────────────────────────"))))
 
 ;; ============================================================
@@ -614,6 +638,7 @@
     "/worktree" :worktree
     "/logout" :logout
     "/reload-models" :reload-models
+    "/reload-extension-installs" :reload-extension-installs
     "/project-repl" :project-repl
     nil))
 
@@ -657,6 +682,7 @@
        :skills {:type :text :message (format-skills ctx session-id)}
        :worktree {:type :text :message (format-worktree ctx session-id)}
        :reload-models {:type :text :message (format-reload-models ctx session-id)}
+       :reload-extension-installs {:type :text :message (format-reload-extension-installs ctx session-id)}
        :project-repl (project-nrepl-commands/dispatch-project-nrepl-command ctx session-id trimmed)
        :logout (dispatch-logout-command ctx session-id oauth-ctx)
        nil)
