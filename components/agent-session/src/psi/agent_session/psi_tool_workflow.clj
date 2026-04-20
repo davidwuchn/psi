@@ -2,6 +2,7 @@
   "Workflow action handler for psi-tool: parse, summarise, and execute workflow ops."
   (:require
    [clojure.edn :as edn]
+   [psi.agent-session.session-state :as ss]
    [psi.agent-session.workflow-agent-chain-runtime :as workflow-agent-chain-runtime]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
@@ -55,6 +56,36 @@
    :blocked              (:blocked workflow-run)
    :terminal-outcome     (:terminal-outcome workflow-run)})
 
+(defn- find-required-fn
+  [ns-name var-name]
+  (or (some-> (find-var (symbol ns-name var-name)) var-get)
+      (throw (ex-info "Required workflow runtime function is not loaded"
+                      {:phase :workflow
+                       :ns ns-name
+                       :var var-name}))))
+
+(defn- resolve-session-id
+  [ctx session-id]
+  (or session-id
+      (some->> (ss/list-context-sessions-in ctx) first :session-id)))
+
+(defn- ensure-workflow-callbacks
+  "Patch older live ctx maps on demand so workflow execution controls can run
+   without requiring a full runtime/context rebuild."
+  [ctx]
+  (cond-> ctx
+    (nil? (:create-workflow-child-session-fn ctx))
+    (assoc :create-workflow-child-session-fn
+           (find-required-fn "psi.agent-session.context" "create-workflow-child-session!"))
+
+    (nil? (:execute-workflow-run-fn ctx))
+    (assoc :execute-workflow-run-fn
+           (find-required-fn "psi.agent-session.workflow-execution" "execute-run!"))
+
+    (nil? (:resume-and-execute-workflow-run-fn ctx))
+    (assoc :resume-and-execute-workflow-run-fn
+           (find-required-fn "psi.agent-session.workflow-execution" "resume-and-execute-run!"))))
+
 ;; ── Workflow op handler ──────────────────────────────────────────────────────
 
 (defn execute-psi-tool-workflow-report
@@ -64,7 +95,9 @@
       (when-not ctx
         (throw (ex-info "psi-tool workflow action requires live runtime ctx"
                         {:phase :validate :action "workflow" :op op})))
-      (let [result
+      (let [ctx (ensure-workflow-callbacks ctx)
+            session-id (resolve-session-id ctx session-id)
+            result
             (case op
               "list-definitions"
               (let [definitions (->> (get-in @(:state* ctx) [:workflows :definitions])

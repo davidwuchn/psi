@@ -69,12 +69,15 @@
 
 (defn- assistant-message-text
   [assistant-message]
-  (or (:content assistant-message)
-      (some->> (:content assistant-message)
+  (or (some->> (:content assistant-message)
                (filter map?)
-               (some (fn [block]
+               (keep (fn [block]
                        (when (= :text (:type block))
-                         (:text block)))))
+                         (:text block))))
+               seq
+               (clojure.string/join "\n"))
+      (when (string? (:content assistant-message))
+        (:content assistant-message))
       ""))
 
 (defn execute-current-step!

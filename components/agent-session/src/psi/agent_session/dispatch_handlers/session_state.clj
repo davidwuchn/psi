@@ -177,6 +177,9 @@
   [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection workflow-run-id workflow-step-id workflow-attempt-id workflow-owned?] :as child-opts}]
   (let [{:keys [prompt-component-selection tool-defs skills system-prompt-build-opts base-system-prompt system-prompt]}
         (derive-child-prompt-state parent-sd child-opts)
+        normalized-developer-prompt-source (let [source (or developer-prompt-source (:developer-prompt-source parent-sd))]
+                                             (when (not= :fallback source)
+                                               source))
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
                         {:session-id                child-session-id
@@ -190,7 +193,7 @@
                          :system-prompt             system-prompt
                          :base-system-prompt        base-system-prompt
                          :developer-prompt          (or developer-prompt (:developer-prompt parent-sd))
-                         :developer-prompt-source   (or developer-prompt-source (:developer-prompt-source parent-sd))
+                         :developer-prompt-source   normalized-developer-prompt-source
                          :thinking-level            (or thinking-level :off)
                          :tool-defs                 tool-defs
                          :skills                    skills
