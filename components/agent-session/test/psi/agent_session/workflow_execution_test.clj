@@ -79,11 +79,11 @@
                                                                                              :original "build this feature"}})]
                        state2)))
           prompted* (atom [])]
-      (with-redefs [psi.agent-session.core/prompt-in! (fn [_ctx child-session-id prompt]
-                                                        (swap! prompted* conj {:session-id child-session-id :prompt prompt})
-                                                        nil)
-                    psi.agent-session.core/last-assistant-message-in (fn [_ctx _child-session-id]
-                                                                       {:content "planner output"})]
+      (with-redefs [psi.agent-session.prompt-control/prompt-in! (fn [_ctx child-session-id prompt]
+                                                                  (swap! prompted* conj {:session-id child-session-id :prompt prompt})
+                                                                  nil)
+                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                                 {:content "planner output"})]
         (let [result (workflow-execution/execute-current-step! ctx session-id "run-1")
               run    (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")]
           (is (= "step-1-planner" (:step-id result)))
@@ -108,13 +108,13 @@
                        state2)))
           prompts*   (atom [])
           responses* (atom ["planner output" "builder output"])]
-      (with-redefs [psi.agent-session.core/prompt-in! (fn [_ctx child-session-id prompt]
-                                                        (swap! prompts* conj {:session-id child-session-id :prompt prompt})
-                                                        nil)
-                    psi.agent-session.core/last-assistant-message-in (fn [_ctx _child-session-id]
-                                                                       (let [resp (first @responses*)]
-                                                                         (swap! responses* subvec 1)
-                                                                         {:content resp}))]
+      (with-redefs [psi.agent-session.prompt-control/prompt-in! (fn [_ctx child-session-id prompt]
+                                                                  (swap! prompts* conj {:session-id child-session-id :prompt prompt})
+                                                                  nil)
+                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                                 (let [resp (first @responses*)]
+                                                                                   (swap! responses* subvec 1)
+                                                                                   {:content resp}))]
         (let [result (workflow-execution/execute-run! ctx session-id "run-1")
               run    (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")]
           (is (= :completed (:status result)))

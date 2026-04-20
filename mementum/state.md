@@ -124,11 +124,12 @@ Bootstrapped on 2026-04-02.
   - `execute-run!` now provides a first sequential loop for multi-step workflow execution to terminal/blocking status
   - blocked-status behavior is now explicitly proven in `workflow_execution_test.clj`
   - retry-aware loop behavior and resume-and-continue behavior are now also proven in `workflow_execution_test.clj`
-  - next 026 slice is less about core orchestration semantics and more about deciding which execution controls should be surfaced through `psi-tool` or chain-facing APIs
+  - attempted `psi-tool` exposure for execution controls hit a namespace load cycle (`psi_tool -> workflow_execution -> prompt_control/core -> context/... -> psi_tool`)
+  - next 026 slice should avoid forcing execution controls through the current `psi_tool` load graph without first breaking that cycle
 
 ## Suggested next step
 - Next active threads are now:
-  1. **026 deterministic workflows**: decide whether to expose workflow execution controls (`execute-run!`, resume-and-continue) through `psi-tool` / chain-facing runtime APIs
+  1. **026 deterministic workflows**: decide the cleanest non-cyclic public surface for workflow execution controls, or refactor dependencies so `psi-tool` can own them safely
   2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
   3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
   4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests

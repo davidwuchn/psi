@@ -12,7 +12,7 @@
    - resume a blocked run and continue execution with a fresh attempt"
   (:require
    [clojure.string :as str]
-   [psi.agent-session.core :as session]
+   [psi.agent-session.prompt-control :as prompt-control]
    [psi.agent-session.workflow-attempts :as workflow-attempts]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
@@ -106,8 +106,8 @@
                             #(workflow-attempts/append-attempt-to-run % step-id attempt))
                  (workflow-progression/start-latest-attempt run-id step-id))))
     (try
-      (session/prompt-in! ctx (:session-id execution-session) prompt)
-      (let [assistant-message (session/last-assistant-message-in ctx (:session-id execution-session))
+      (prompt-control/prompt-in! ctx (:session-id execution-session) prompt)
+      (let [assistant-message (prompt-control/last-assistant-message-in ctx (:session-id execution-session))
             envelope          {:outcome :ok
                                :outputs {:text (assistant-message-text assistant-message)}}]
         (swap! (:state* ctx) workflow-progression/submit-result-envelope run-id step-id envelope)

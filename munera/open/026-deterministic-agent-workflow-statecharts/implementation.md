@@ -238,5 +238,6 @@ Notes:
 - Added focused retry/resume proofs in `workflow_execution_test.clj` showing:
   - retryable execution failure can be followed by a successful later attempt within the sequential loop
   - blocked runs can be resumed and then continued to completion with a fresh attempt
-- Remaining likely follow-on is shaping these helpers into a broader runtime-facing execution control surface and integrating them into `psi-tool`/named chain execution flows if desired.
+- Attempted to expose execution controls directly through `psi-tool`, but that introduced a namespace load cycle because `psi_tool` sits on a load path that would pull in `workflow_execution -> prompt_control -> context/core`.
+- Decision taken: keep `workflow_execution` as an internal orchestration layer for now rather than forcing it through the current `psi_tool` load graph. Revisit once execution control surfaces can be introduced without creating a cyclic dependency.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
