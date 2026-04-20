@@ -6,6 +6,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.extension-runtime :as extension-runtime]
+   [psi.agent-session.prompt-lifecycle-test :refer [with-temp-dir]]
    [psi.agent-session.psi_tool :as psi-tool]
    [psi.agent-session.tools :as tools]))
 (defn- create-session-context

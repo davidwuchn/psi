@@ -98,7 +98,8 @@
   {:agent-session {:sessions {}}
    :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)
              :rpc-trace {:enabled? false
-                         :file nil}}
+                         :file nil}
+             :extension-installs {}}
    :background-jobs {:store (bg-jobs/empty-state)}
    :ui {:extension-ui @(ui-state/create-ui-state)}
    :recursion (or (some-> recursion-ctx :state-atom deref) nil)

@@ -74,7 +74,8 @@
    :ui-state        [:ui :extension-ui]
    :recursion       [:recursion]
    :oauth           [:oauth]
-   :rpc-trace       [:runtime :rpc-trace]})
+   :rpc-trace       [:runtime :rpc-trace]
+   :extension-installs [:runtime :extension-installs]})
 
 (def ^:private session-state-path-builders
   {:session-data             session-data-path

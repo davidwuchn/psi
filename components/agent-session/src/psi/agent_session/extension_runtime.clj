@@ -14,6 +14,7 @@
   (:require
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.extensions.runtime-delivery :as runtime-delivery]
    [psi.agent-session.extensions.runtime-fns :as runtime-fns]
@@ -44,9 +45,10 @@
    (reload-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
    (dispatch/dispatch! ctx :session/reset-prompt-contributions {:session-id session-id} {:origin :core})
-   (let [runtime-fns* (runtime-fns/make-extension-runtime-fns ctx session-id nil)
-         result       (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns*
-                                                 configured-paths cwd)]
+   (let [runtime-fns*   (runtime-fns/make-extension-runtime-fns ctx session-id nil)
+         result         (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns*
+                                                   configured-paths cwd)
+         _              (installs/apply-installs-in! ctx (or cwd (ss/session-worktree-path-in ctx session-id)))]
      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
      result)))
 

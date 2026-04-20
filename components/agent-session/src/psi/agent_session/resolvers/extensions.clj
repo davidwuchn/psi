@@ -4,6 +4,7 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.resolvers.support :as support]
    [psi.agent-session.workflows :as wf]
@@ -109,7 +110,30 @@
                          (range)
                          steps)}))
 
+(defn- extension-installs-state
+  [agent-session-ctx]
+  (let [cwd (:cwd agent-session-ctx)
+        persisted (installs/extension-installs-state-in agent-session-ctx)]
+    (if (seq persisted)
+      persisted
+      (installs/compute-install-state cwd))))
+
 ;; ── Extension registry resolvers ────────────────────────
+
+(pco/defresolver extension-install-config-resolver
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extensions/user-manifest
+                 :psi.extensions/project-manifest
+                 :psi.extensions/effective
+                 :psi.extensions/diagnostics
+                 :psi.extensions/last-apply]}
+  (let [state (extension-installs-state agent-session-ctx)]
+    {:psi.extensions/user-manifest (or (:psi.extensions/user-manifest state) {:deps {}})
+     :psi.extensions/project-manifest (or (:psi.extensions/project-manifest state) {:deps {}})
+     :psi.extensions/effective (:psi.extensions/effective state)
+     :psi.extensions/diagnostics (vec (or (:psi.extensions/diagnostics state) []))
+     :psi.extensions/last-apply (:psi.extensions/last-apply state)}))
 
 (pco/defresolver extension-paths-resolver
   [{:keys [psi/agent-session-ctx]}]
@@ -280,7 +304,8 @@
 ;; ── Resolver collection ─────────────────────────────────
 
 (def resolvers
-  [extension-paths-resolver
+  [extension-install-config-resolver
+   extension-paths-resolver
    extension-handlers-resolver
    extension-tools-resolver
    extension-commands-resolver
