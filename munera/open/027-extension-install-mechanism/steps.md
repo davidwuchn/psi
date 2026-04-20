@@ -27,4 +27,12 @@ Implementation checklist:
 - [x] Implement per-extension load status tracking
 - [x] Implement explicit reload/apply with `:applied` / `:restart-required` results
 - [x] Implement canonical read-surface projection for raw manifests, effective state, diagnostics, and last-apply result
-- [ ] Document manifest format and developer workflow
+- [x] Add operator-facing reload/apply surfaces
+  - [x] `psi-tool reload-code` reports extension install/apply status during worktree refresh
+  - [x] `/reload-extension-installs` command
+  - [x] `psi.extension/reload-extension-installs` mutation
+- [x] Document manifest format and developer workflow
+  - [x] `doc/extensions-install.md`
+  - [x] `README.md` link/update
+  - [x] `doc/extensions.md` install-manifest section
+  - [x] `doc/psi-project-config.md` install-state query example
