@@ -11,6 +11,7 @@ Open tasks in suggested execution order:
 7. `munera/open/005-canonical-dispatch-pipeline-trace-observability/`
 8. `munera/open/006-agent-tool-skill-prelude-follow-on/`
 9. `munera/open/027-extension-install-mechanism/`
+10. `munera/open/028-project-local-config-precedence/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.
