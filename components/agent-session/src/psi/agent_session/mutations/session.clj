@@ -75,7 +75,7 @@
   "Create a child session for agent execution without switching active session.
   Returns the child session-id. The child shares the parent's context but has
   its own journal, telemetry, and session data."
-  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection]}]
+  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection workflow-run-id workflow-step-id workflow-attempt-id workflow-owned?]}]
   {::pco/op-name 'psi.extension/create-child-session
    ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/session-id]}
@@ -97,11 +97,23 @@
                            (some? prompt-component-selection)
                            (assoc :prompt-component-selection prompt-component-selection)
 
-                          (some? developer-prompt)
-                          (assoc :developer-prompt developer-prompt)
+                           (some? developer-prompt)
+                           (assoc :developer-prompt developer-prompt)
 
-                          (some? developer-prompt-source)
-                          (assoc :developer-prompt-source developer-prompt-source))
+                           (some? developer-prompt-source)
+                           (assoc :developer-prompt-source developer-prompt-source)
+
+                           (some? workflow-run-id)
+                           (assoc :workflow-run-id workflow-run-id)
+
+                           (some? workflow-step-id)
+                           (assoc :workflow-step-id workflow-step-id)
+
+                           (some? workflow-attempt-id)
+                           (assoc :workflow-attempt-id workflow-attempt-id)
+
+                           (contains? {:workflow-owned? workflow-owned?} :workflow-owned?)
+                           (assoc :workflow-owned? workflow-owned?))
                         {:origin :mutations})
     (let [sd       (ss/get-session-data-in agent-session-ctx child-sid)
           messages (vec (or preloaded-messages []))

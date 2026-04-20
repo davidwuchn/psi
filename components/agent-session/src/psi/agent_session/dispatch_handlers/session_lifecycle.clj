@@ -71,7 +71,7 @@
 
   (dispatch/register-handler!
    :session/create-child
-   (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection]}]
+   (fn [ctx {:keys [session-id child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection workflow-run-id workflow-step-id workflow-attempt-id workflow-owned?]}]
      (let [parent-sd (session/get-session-data-in ctx session-id)]
        {:root-state-update #(ss/initialize-child-session-state % parent-sd
                                                                {:child-session-id       child-session-id
@@ -83,7 +83,11 @@
                                                                 :developer-prompt-source developer-prompt-source
                                                                 :preloaded-messages     preloaded-messages
                                                                 :cache-breakpoints      cache-breakpoints
-                                                                :prompt-component-selection prompt-component-selection})
+                                                                :prompt-component-selection prompt-component-selection
+                                                                :workflow-run-id        workflow-run-id
+                                                                :workflow-step-id       workflow-step-id
+                                                                :workflow-attempt-id    workflow-attempt-id
+                                                                :workflow-owned?        workflow-owned?})
         :effects [{:effect/type :projection/context-changed
                    :session-id child-session-id
                    :reason :session/create-child}]

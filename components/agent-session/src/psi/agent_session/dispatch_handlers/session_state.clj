@@ -174,7 +174,7 @@
 (defn initialize-child-session-state
   "Add a child session entry without switching active-session-id.
    The child is a lightweight session for agent execution."
-  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection] :as child-opts}]
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection workflow-run-id workflow-step-id workflow-attempt-id workflow-owned?] :as child-opts}]
   (let [{:keys [prompt-component-selection tool-defs skills system-prompt-build-opts base-system-prompt system-prompt]}
         (derive-child-prompt-state parent-sd child-opts)
         child-sd (merge (session-data-ns/initial-session
@@ -183,6 +183,10 @@
                          :session-name              session-name
                          :spawn-mode                :agent
                          :parent-session-id         (:session-id parent-sd)
+                         :workflow-run-id           workflow-run-id
+                         :workflow-step-id          workflow-step-id
+                         :workflow-attempt-id       workflow-attempt-id
+                         :workflow-owned?           (boolean workflow-owned?)
                          :system-prompt             system-prompt
                          :base-system-prompt        base-system-prompt
                          :developer-prompt          (or developer-prompt (:developer-prompt parent-sd))

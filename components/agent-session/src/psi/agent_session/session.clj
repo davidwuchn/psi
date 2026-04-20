@@ -133,6 +133,10 @@
    [:parent-session-id {:optional true} [:maybe :string]]
    [:parent-session-path {:optional true} [:maybe :string]]
    [:spawn-mode {:optional true} [:enum :new-root :fork-head :fork-at-entry :agent]]
+   [:workflow-run-id {:optional true} [:maybe :string]]
+   [:workflow-step-id {:optional true} [:maybe :string]]
+   [:workflow-attempt-id {:optional true} [:maybe :string]]
+   [:workflow-owned? {:optional true} :boolean]
    [:model {:optional true} [:maybe model-schema]]
    [:thinking-level thinking-level-schema]
    [:is-streaming :boolean]
@@ -221,6 +225,10 @@
      :parent-session-id       nil
      :parent-session-path     nil
      :spawn-mode              :new-root
+     :workflow-run-id         nil
+     :workflow-step-id        nil
+     :workflow-attempt-id     nil
+     :workflow-owned?         false
      :model                   nil
      :thinking-level          :off
      :is-streaming            false
