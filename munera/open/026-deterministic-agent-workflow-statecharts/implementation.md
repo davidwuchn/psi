@@ -241,3 +241,8 @@ Notes:
 - Attempted to expose execution controls directly through `psi-tool`, but that introduced a namespace load cycle because `psi_tool` sits on a load path that would pull in `workflow_execution -> prompt_control -> context/core`.
 - Decision taken: keep `workflow_execution` as an internal orchestration layer for now rather than forcing it through the current `psi_tool` load graph. Revisit once execution control surfaces can be introduced without creating a cyclic dependency.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
+
+2026-04-19 — worktree mixup cleanup
+- Diagnosed mixed-worktree edits after the aborted `psi-tool` execute/resume exposure attempt.
+- Restored the only uncommitted 026 stray edit in `components/agent-session/test/psi/agent_session/tools_test.clj` back to `HEAD`.
+- Confirmed the broader workflow execute/resume exposure changes are sitting in the `refactor` worktree and were intentionally left there for separate review rather than copied or merged into 026.

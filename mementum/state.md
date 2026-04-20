@@ -126,6 +126,7 @@ Bootstrapped on 2026-04-02.
   - retry-aware loop behavior and resume-and-continue behavior are now also proven in `workflow_execution_test.clj`
   - attempted `psi-tool` exposure for execution controls hit a namespace load cycle (`psi_tool -> workflow_execution -> prompt_control/core -> context/... -> psi_tool`)
   - next 026 slice should avoid forcing execution controls through the current `psi_tool` load graph without first breaking that cycle
+  - diagnosed a worktree mixup after the aborted execute/resume exposure attempt: restored the stray uncommitted `components/agent-session/test/psi/agent_session/tools_test.clj` edit in the 026 worktree and left refactor-side changes unapplied for separate review
 
 ## Suggested next step
 - Next active threads are now:
