@@ -13,10 +13,10 @@ Implementation checkpoints:
 - [x] Add malli schemas for workflow definitions, step definitions, runs, attempts, result envelopes, retry policy, and capability policy
 - [x] Define the workflow→statechart compilation boundary and explicit event/status model for slice one
 - [x] Implement workflow run creation and effective-definition snapshot capture
-- [ ] Implement one execution session per step attempt, with workflow linkage written into canonical sessions
-- [ ] Implement structured result-envelope submission, validation, and advancement logic
-- [ ] Implement simple retry behavior for validation failure and execution failure
-- [ ] Implement blocked/resume semantics with resume creating a new attempt
+- [x] Implement one execution session per step attempt, with workflow linkage written into canonical sessions
+- [x] Implement structured result-envelope submission, validation, and advancement logic
+- [x] Implement simple retry behavior for validation failure and execution failure
+- [x] Implement blocked/resume semantics with resume creating a new attempt
 - [ ] Expose workflow definitions and runs through Pathom/EQL, including workflow↔session relationships
 - [ ] Extend `psi-tool` with `action: "workflow"` and slice-one ops (`list-definitions`, `create-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
 - [ ] Add focused tests for the sequential workflow lifecycle and introspection surface
