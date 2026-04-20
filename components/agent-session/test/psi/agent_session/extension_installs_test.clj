@@ -65,10 +65,9 @@
         (is (some #(= :malformed-entry (:category %)) diags))))))
 
 (deftest apply-installs-in-persists-last-apply-state
-  (let [ctx (session/create-context (test-support/safe-context-opts {:persist? false}))
-        _   (session/new-session-in! ctx nil {})
-        cwd (test-support/temp-cwd)
-        home (tmp-dir)]
+  (let [cwd (test-support/temp-cwd)
+        home (tmp-dir)
+        [ctx _session-id] (test-support/create-test-session {:persist? false :cwd cwd})]
     (with-redefs [installs/user-manifest-file (fn [] (manifest-file home ".psi/agent/extensions.edn"))
                   installs/project-manifest-file (fn [_] (manifest-file cwd ".psi/extensions.edn"))]
       (spit (installs/project-manifest-file cwd)

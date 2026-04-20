@@ -2,14 +2,15 @@
   "Extension install manifest reading, effective-state projection, diagnostics,
    and conservative apply-state tracking.
 
-   Slice one intentionally separates manifest/config introspection from actual
-   dependency realization. The runtime can therefore expose canonical install
-   state now while keeping activation conservative until tools.deps-backed
-   realization lands fully."
+   Slice one intentionally separates manifest/config introspection from general
+   dependency realization. Runtime apply currently supports manifest-backed
+   `:local/root` extension activation and reports `:restart-required` for git
+   and mvn extension deps."
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.set :as set]
+   [clojure.string :as str]
    [psi.agent-session.session-state :as ss]))
 
 (defn user-manifest-file
@@ -35,13 +36,17 @@
    :source source
    :data (or data {})})
 
+(defn- read-edn-file
+  [file]
+  (edn/read-string (slurp file)))
+
 (defn- read-manifest-file
   [file source]
   (if-not (.exists ^java.io.File file)
     {:manifest (base-manifest)
      :diagnostics []}
     (try
-      (let [value (edn/read-string (slurp file))]
+      (let [value (read-edn-file file)]
         (cond
           (not (map? value))
           {:manifest (base-manifest)
@@ -78,7 +83,7 @@
        (filter #(and (keyword? %) (= "psi" (namespace %))))
        set))
 
-(defn- coordinate-family
+(defn coordinate-family
   [dep]
   (let [families (cond-> #{}
                    (contains? dep :local/root) (conj :local)
@@ -88,7 +93,7 @@
     (when (= 1 (count families))
       (first families))))
 
-(defn- extension-dep?
+(defn extension-dep?
   [dep]
   (and (map? dep) (contains? dep :psi/init)))
 
@@ -161,7 +166,10 @@
         :source-manifests (vec source-manifests)
         :overridden? overridden?
         :effective? true
-        :status (if (extension-dep? dep) :configured :not-applicable)
+        :status (cond
+                  (not (extension-dep? dep)) :not-applicable
+                  (false? (get dep :psi/enabled true)) :disabled
+                  :else :configured)
         :load-error nil
         :init-var (when (extension-dep? dep) (:psi/init dep))}])
 
@@ -211,13 +219,11 @@
                                                        false))))
                              (sort all-libs))
         effective-raw-deps (into {}
-                                 (map (fn [[lib {:keys [dep]}]]
-                                        [lib dep]))
+                                 (map (fn [[lib {:keys [dep]}]] [lib dep]))
                                  entries-by-lib)
         effective-extension-deps (into {}
                                        (keep (fn [[lib {:keys [dep extension?]}]]
-                                               (when extension?
-                                                 [lib dep])))
+                                               (when extension? [lib dep])))
                                        entries-by-lib)
         entry-diags (vec (concat (mapcat (fn [[lib dep]] (entry-diagnostics :user lib dep)) user-deps)
                                  (mapcat (fn [[lib dep]] (entry-diagnostics :project lib dep)) project-deps)))
@@ -236,32 +242,176 @@
   (or (ss/get-state-value-in ctx (ss/state-path :extension-installs))
       {}))
 
-(defn apply-installs-in!
-  "Re-read install manifests and publish conservative apply status.
+(defn- init-ns->relative-candidates
+  [init-var]
+  (let [ns-name (some-> init-var namespace)
+        rel     (some-> ns-name
+                        (str/replace "." "/")
+                        (str/replace "-" "_"))]
+    (when rel
+      [(str rel ".clj")
+       (str rel ".cljc")])) )
 
-   Slice one behavior:
-   - invalid manifests => diagnostics update, active runtime unchanged, no new
-     last-apply success state
-   - valid manifests with no effective extension deps => :applied
-   - valid manifests with extension deps => :restart-required"
-  [ctx cwd]
-  (let [state       (compute-install-state cwd)
-        diagnostics (:psi.extensions/diagnostics state)
-        has-errors? (boolean (some #(= :error (:severity %)) diagnostics))
-        ext-deps    (get-in state [:psi.extensions/effective :extension-deps])
-        last-apply  (when-not has-errors?
-                      {:status (if (seq ext-deps) :restart-required :applied)
-                       :restart-required? (boolean (seq ext-deps))
-                       :summary (if (seq ext-deps)
-                                  (str "extension install manifests validated; restart required to realize "
-                                       (count ext-deps)
-                                       " extension deps")
-                                  "extension install manifests validated; no restart required")
-                       :diagnostic-count (count diagnostics)
-                       :at (str (java.time.Instant/now))})
-        persisted   (assoc state :psi.extensions/last-apply last-apply)]
-    (ss/assoc-state-value-in! ctx (ss/state-path :extension-installs) persisted)
-    {:state persisted
-     :applied? (boolean last-apply)
-     :status (:status last-apply)
+(defn- local-root-source-paths
+  [local-root]
+  (let [deps-file (io/file local-root "deps.edn")]
+    (if (.exists deps-file)
+      (try
+        (let [deps (read-edn-file deps-file)
+              paths (vec (filter string? (:paths deps)))]
+          (if (seq paths) paths ["src"]))
+        (catch Exception _
+          ["src"]))
+      ["src"])))
+
+(defn resolve-local-root-entry
+  [lib {:keys [dep]}]
+  (let [local-root (:local/root dep)
+        init-var   (:psi/init dep)
+        candidates (init-ns->relative-candidates init-var)]
+    (when (and local-root init-var candidates)
+      (let [root          (io/file local-root)
+            source-paths  (local-root-source-paths local-root)
+            files         (for [src source-paths
+                                rel candidates]
+                            (io/file root src rel))
+            existing-file (some #(when (.exists ^java.io.File %) %) files)]
+        (if existing-file
+          {:lib lib
+           :path (.getAbsolutePath ^java.io.File existing-file)
+           :init-var init-var}
+          {:lib lib
+           :path nil
+           :init-var init-var
+           :error (str "Unable to resolve local extension source file for " lib
+                       " from :local/root " local-root
+                       " and :psi/init " init-var)})))))
+
+(defn activation-plan
+  [install-state]
+  (let [entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib])
+        enabled-exts   (into {}
+                             (filter (fn [[_ {:keys [extension? enabled?]}]]
+                                       (and extension? enabled?)))
+                             entries-by-lib)
+        local-entries  (into {}
+                             (filter (fn [[_ {:keys [dep]}]]
+                                       (= :local (coordinate-family dep))))
+                             enabled-exts)
+        unsupported    (into {}
+                             (remove (fn [[_ {:keys [dep]}]]
+                                       (= :local (coordinate-family dep))))
+                             enabled-exts)
+        resolved       (mapv (fn [[lib entry]]
+                               (resolve-local-root-entry lib entry))
+                             local-entries)
+        resolved-ok    (filterv :path resolved)
+        resolved-fail  (filterv :error resolved)
+        diagnostics    (mapv (fn [{:keys [lib init-var error]}]
+                               (diagnostic {:severity :error
+                                            :category :load-failure
+                                            :message error
+                                            :libs [lib]
+                                            :init-var init-var
+                                            :source :effective}))
+                             resolved-fail)]
+    {:extension-paths (mapv :path resolved-ok)
+     :path->lib (into {} (map (juxt :path :lib)) resolved-ok)
+     :unsupported-libs (set (keys unsupported))
+     :resolution-errors resolved-fail
      :diagnostics diagnostics}))
+
+(defn- merge-entry-statuses
+  [entries-by-lib plan reload-result]
+  (let [loaded-paths   (set (:loaded reload-result))
+        errors-by-path (into {} (map (juxt :path :error)) (:errors reload-result))
+        path->lib      (:path->lib plan)
+        failed-libs    (into #{} (concat
+                                  (map second path->lib)
+                                  (map :lib (:resolution-errors plan))))]
+    (into {}
+          (map (fn [[entry-lib entry]]
+                 (let [dep          (:dep entry)
+                       extension?   (:extension? entry)
+                       enabled?     (:enabled? entry)
+                       coord-family (when extension? (coordinate-family dep))
+                       path         (some (fn [[p l]] (when (= l entry-lib) p)) path->lib)
+                       resolution-error (some (fn [{:keys [lib error]}]
+                                                (when (= lib entry-lib) error))
+                                              (:resolution-errors plan))
+                       load-error   (or (get errors-by-path path) resolution-error)
+                       status       (cond
+                                      (not extension?) :not-applicable
+                                      (not enabled?) :disabled
+                                      (= :local coord-family)
+                                      (cond
+                                        (contains? loaded-paths path) :loaded
+                                        load-error :failed
+                                        (contains? failed-libs entry-lib) :failed
+                                        :else :configured)
+                                      :else :restart-required)]
+                   [entry-lib (cond-> (assoc entry :status status)
+                                load-error (assoc :load-error load-error))]))
+          entries-by-lib))))
+
+(defn finalize-apply-state
+  [install-state plan reload-result]
+  (let [reload-errors      (mapv (fn [{:keys [path error]}]
+                                   (diagnostic {:severity :error
+                                                :category :load-failure
+                                                :message error
+                                                :libs [(get (:path->lib plan) path)]
+                                                :source :effective
+                                                :data {:path path}}))
+                                 (:errors reload-result))
+        diagnostics        (vec (concat (:psi.extensions/diagnostics install-state)
+                                        (:diagnostics plan)
+                                        reload-errors
+                                        (when (seq (:unsupported-libs plan))
+                                          [(diagnostic {:severity :info
+                                                        :category :restart-required
+                                                        :message (str "Restart required to realize non-local extension deps: "
+                                                                      (pr-str (sort (:unsupported-libs plan))))
+                                                        :libs (sort (:unsupported-libs plan))
+                                                        :source :effective})])))
+        has-errors?        (boolean (some #(= :error (:severity %)) diagnostics))
+        entries-by-lib     (merge-entry-statuses (get-in install-state [:psi.extensions/effective :entries-by-lib])
+                                                 plan
+                                                 reload-result)
+        status             (cond
+                             has-errors? nil
+                             (seq (:unsupported-libs plan)) :restart-required
+                             :else :applied)
+        last-apply         (when status
+                             {:status status
+                              :restart-required? (= status :restart-required)
+                              :summary (case status
+                                         :restart-required "manifest-backed local extensions applied; restart required for remaining non-local extension deps"
+                                         :applied "manifest-backed extension install state applied")
+                              :diagnostic-count (count diagnostics)
+                              :at (str (java.time.Instant/now))})]
+    (-> install-state
+        (assoc :psi.extensions/diagnostics diagnostics)
+        (assoc-in [:psi.extensions/effective :entries-by-lib] entries-by-lib)
+        (assoc :psi.extensions/last-apply last-apply))))
+
+(defn persist-install-state-in!
+  [ctx state]
+  (ss/assoc-state-value-in! ctx (ss/state-path :extension-installs) state)
+  state)
+
+(defn apply-installs-in!
+  "Compatibility wrapper for the manifest/install projection apply path.
+   Computes install state, derives the activation plan, and persists a
+   conservative last-apply result without executing extension reload. Runtime
+   reload paths should prefer `activation-plan` + `finalize-apply-state`."
+  [ctx cwd]
+  (let [install-state (compute-install-state cwd)
+        plan          (activation-plan install-state)
+        reload-result {:loaded [] :errors []}
+        finalized     (finalize-apply-state install-state plan reload-result)
+        persisted     (persist-install-state-in! ctx finalized)]
+    {:state persisted
+     :applied? (some? (get-in persisted [:psi.extensions/last-apply :status]))
+     :status (get-in persisted [:psi.extensions/last-apply :status])
+     :diagnostics (:psi.extensions/diagnostics persisted)}))

@@ -38,19 +38,28 @@
   "Unregister all extensions and re-discover/load them.
 
    Clears extension-owned prompt contributions before reload so stale
-   fragments do not persist when extension composition changes."
+   fragments do not persist when extension composition changes.
+
+   Apply behavior:
+   - path-discovered legacy extensions still reload as before
+   - manifest-backed enabled `:local/root` extensions are also loaded in-process
+   - manifest-backed git/mvn deps remain `:restart-required` in slice one"
   ([_ctx] (throw (ex-info "reload-extensions-in! requires explicit session-id"
                           {:fn :reload-extensions-in!})))
   ([ctx session-id configured-paths]
    (reload-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
    (dispatch/dispatch! ctx :session/reset-prompt-contributions {:session-id session-id} {:origin :core})
-   (let [runtime-fns*   (runtime-fns/make-extension-runtime-fns ctx session-id nil)
-         result         (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns*
-                                                   configured-paths cwd)
-         _              (installs/apply-installs-in! ctx (or cwd (ss/session-worktree-path-in ctx session-id)))]
+   (let [runtime-fns*    (runtime-fns/make-extension-runtime-fns ctx session-id nil)
+         effective-cwd   (or cwd (ss/session-worktree-path-in ctx session-id))
+         install-state   (installs/compute-install-state effective-cwd)
+         plan            (installs/activation-plan install-state)
+         configured*     (vec (concat configured-paths (:extension-paths plan)))
+         reload-result   (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* configured* effective-cwd)
+         finalized-state (installs/finalize-apply-state install-state plan reload-result)
+         persisted-state (installs/persist-install-state-in! ctx finalized-state)]
      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
-     result)))
+     (assoc reload-result :install-state persisted-state))))
 
 (defn add-extension-in!
   "Load one extension file path into this session's extension registry.
