@@ -17,7 +17,7 @@ Implementation checkpoints:
 - [x] Implement structured result-envelope submission, validation, and advancement logic
 - [x] Implement simple retry behavior for validation failure and execution failure
 - [x] Implement blocked/resume semantics with resume creating a new attempt
-- [ ] Expose workflow definitions and runs through Pathom/EQL, including workflow↔session relationships
+- [x] Expose workflow definitions and runs through Pathom/EQL, including workflow↔session relationships
 - [ ] Extend `psi-tool` with `action: "workflow"` and slice-one ops (`list-definitions`, `create-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
 - [ ] Add focused tests for the sequential workflow lifecycle and introspection surface
 - [ ] Prove a representative chain-like workflow (e.g. plan→build→review) on top of the primitive

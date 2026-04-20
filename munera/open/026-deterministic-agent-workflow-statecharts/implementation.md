@@ -93,11 +93,34 @@ Current status:
   - blocked-run resume
 - Added focused tests in `workflow_progression_test.clj`
 
+2026-04-19 — Pathom/EQL workflow read surface
+- Added `components/agent-session/src/psi/agent_session/resolvers/workflows.clj`
+- Exposed workflow root attrs from session root:
+  - `:psi.workflow/definition-count`
+  - `:psi.workflow/definition-ids`
+  - `:psi.workflow/definitions`
+  - `:psi.workflow/run-count`
+  - `:psi.workflow/run-ids`
+  - `:psi.workflow/run-statuses`
+  - `:psi.workflow/runs`
+- Exposed entity-targeted workflow detail attrs:
+  - `:psi.workflow.definition/detail` from `{:psi.workflow.definition/id ...}`
+  - `:psi.workflow.run/detail` from `{:psi.workflow.run/id ...}`
+- Added session-side workflow linkage attrs in `resolvers/session.clj`:
+  - `:psi.agent-session/workflow-run-id`
+  - `:psi.agent-session/workflow-step-id`
+  - `:psi.agent-session/workflow-attempt-id`
+  - `:psi.agent-session/workflow-owned?`
+  - `:psi.workflow.run/id` as session→workflow reference
+- Wired workflow resolvers into the assembled Pathom surface in `resolvers.clj`
+- Added focused resolver tests in `workflow_resolvers_test.clj`
+- Verified focused workflow + resolver tests are green:
+  - `clojure -M:test --focus psi.agent-session.workflow-resolvers-test --focus psi.agent-session.workflow-attempts-test --focus psi.agent-session.workflow-progression-test --focus psi.agent-session.resolvers-test`
+
 Notes:
-- The canonical deterministic workflow substrate now exists as a pure state/runtime layer covering definitions, runs, attempt session linkage, and result progression.
-- Remaining work is primarily integration and exposure:
-  - Pathom/EQL read surface
+- The deterministic workflow substrate now covers state model, statechart compilation, run creation, attempt/session linkage, result progression, and Pathom/EQL read exposure.
+- Remaining work is primarily:
   - `psi-tool` workflow ops
   - orchestration that combines run creation, attempt creation, and progression into a full executable lifecycle
   - representative chain-like proof and `agent-chain` follow-on
-- Existing extension workflow runtime in `workflows.clj` remains separate from this new deterministic workflow-run substrate.
+- Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
