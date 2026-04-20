@@ -114,3 +114,14 @@
   - verify both startup loading and explicit reload/apply against the migrated structure through the project nREPL
 - Important consequence:
   - this moves the task from purely implementing the install mechanism to also using the repo’s own built-in extensions as the canonical dogfood proof for local-root/project-manifest installs
+
+2026-04-20
+- Follow-on dogfood proof is now completed.
+- Completed proof/results:
+  - repo built-in extensions were migrated away from the legacy shared `extensions/src/extensions` + `.psi/extensions/*.clj` symlink layout
+  - `extensions/` now provides one project per built-in extension used in this repo
+  - project `.psi/extensions.edn` now declares the built-in extension set through the install-manifest model
+  - psi startup was verified against the migrated structure through the project nREPL
+  - psi explicit reload/apply was verified against the migrated structure through the project nREPL
+- Completion consequence:
+  - this task now reflects both the install mechanism implementation and successful repository dogfooding/proof of the manifest-backed built-in extension layout
