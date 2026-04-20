@@ -117,6 +117,28 @@
       (is (= {:task "ship it"} (get-in parsed [:psi-tool/workflow :run :workflow-input])))
       (is (= run-id (get-in @(:state* ctx) [:workflows :run-order 0])))))
 
+  (testing "workflow create-run plus execute-run completes an ad-hoc inline workflow"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          tool          (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          create-result ((:execute tool) {"action" "workflow"
+                                          "op" "create-run"
+                                          "definition" "{:name \"Inline Lambda Build\" :step-order [\"step-1-lambda-compiler\" \"step-2-lambda-decompiler\" \"step-3-lambda-compiler\"] :steps {\"step-1-lambda-compiler\" {:label \"lambda-compiler\" :executor {:type :agent :profile \"lambda-compiler\"} :prompt-template \"compile a lambda for: $INPUT\" :input-bindings {:input {:source :workflow-input :path [:input]}} :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]] :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}} \"step-2-lambda-decompiler\" {:label \"lambda-decompiler\" :executor {:type :agent :profile \"lambda-decompiler\"} :prompt-template \"decompile the lambda expression: $INPUT\" :input-bindings {:input {:source :step-output :path [\"step-1-lambda-compiler\" :outputs :text]}} :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]] :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}} \"step-3-lambda-compiler\" {:label \"lambda-compiler\" :executor {:type :agent :profile \"lambda-compiler\"} :prompt-template \"compile a lambda for: $INPUT\" :input-bindings {:input {:source :step-output :path [\"step-2-lambda-decompiler\" :outputs :text]}} :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]] :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}}}}"
+                                          "workflow-input" "{:input \"refine the scope clearly and collaboratively\"}"})
+          create-parsed (read-string (:content create-result))
+          run-id        (get-in create-parsed [:psi-tool/workflow :run-id])
+          exec-result   ((:execute tool) {"action" "workflow" "op" "execute-run" "run-id" run-id})
+          exec-parsed   (read-string (:content exec-result))]
+      (is (false? (:is-error create-result)))
+      (is (= :create-run (:psi-tool/workflow-op create-parsed)))
+      (is (string? run-id))
+      (is (false? (:is-error exec-result)))
+      (is (= :execute-run (:psi-tool/workflow-op exec-parsed)))
+      (is (= :completed (get-in exec-parsed [:psi-tool/workflow :status])))
+      (is (true? (get-in exec-parsed [:psi-tool/workflow :terminal?])))
+      (is (= :completed (get-in exec-parsed [:psi-tool/workflow :run :status])))
+      (is (= 3 (count (get-in exec-parsed [:psi-tool/workflow :steps-executed]))))
+      (is (= :completed (get-in @(:state* ctx) [:workflows :runs run-id :status])))))
+
   (testing "workflow list-runs and read-run return run summaries"
     (let [[ctx session-id] (create-session-context {:persist? false})
           definition {:definition-id "plan-build-review"
