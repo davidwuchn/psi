@@ -26,3 +26,4 @@ Implementation checkpoints:
 - [x] Decide where compiled chain definitions are registered/launched from in the runtime surface
 - [x] Add runtime registration of compiled agent-chain definitions
 - [x] Add a direct psi-tool launch path for named agent-chain workflows
+- [x] Add execution-time orchestration helpers for current-step attempt creation, prompt materialization, and result recording

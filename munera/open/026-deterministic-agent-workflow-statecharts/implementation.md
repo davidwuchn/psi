@@ -210,5 +210,18 @@ Notes:
   - `clojure -M:test --focus psi.agent-session.workflow-agent-chain-runtime-test --focus psi.agent-session.workflow-agent-chain-test --focus psi.agent-session.tools-test`
 
 - Remaining work is no longer deciding the runtime launch/registration path; that path now exists through `psi-tool` workflow ops.
-- Remaining likely follow-on is execution-time materialization/orchestration so compiled chain definitions can run bounded steps through canonical attempt/session lifecycle rather than stopping at deterministic definition/run creation.
+2026-04-19 — execution-time orchestration helpers
+- Added `components/agent-session/src/psi/agent_session/workflow_execution.clj`
+- Implemented a first execution bridge for canonical workflow runs that can:
+  - materialize step inputs from canonical `:input-bindings`
+  - render legacy-compatible `:prompt-template` strings using `$INPUT` and `$ORIGINAL`
+  - create a canonical step-attempt child session for the current step
+  - prompt that child session
+  - record a canonical `{:outcome :ok :outputs {:text ...}}` result envelope from the child session's assistant output
+  - advance the workflow run through existing pure progression logic
+- Added focused tests in `workflow_execution_test.clj` proving:
+  - step input materialization + prompt rendering
+  - bounded current-step execution that creates an attempt session and advances the workflow
+
+- Remaining likely follow-on is broadening this execution bridge from the current single-step helper into full runtime-owned orchestration across retries, failure handling, and multi-step chain execution loops.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.

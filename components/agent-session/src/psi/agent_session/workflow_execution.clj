@@ -1,0 +1,114 @@
+(ns psi.agent-session.workflow-execution
+  "Impure execution helpers for canonical deterministic workflow runs.
+
+   This slice bridges canonical workflow definitions/runs to actual bounded
+   session execution for the current step attempt. It intentionally keeps
+   orchestration thin:
+   - materialize step inputs from canonical bindings
+   - render legacy-compatible prompt templates
+   - create one attempt child session for the current step
+   - prompt that session
+   - record a canonical structured result envelope back onto the workflow run"
+  (:require
+   [clojure.string :as str]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.workflow-attempts :as workflow-attempts]
+   [psi.agent-session.workflow-progression :as workflow-progression]
+   [psi.agent-session.workflow-runtime :as workflow-runtime]))
+
+(defn- get-path*
+  [m path]
+  (reduce (fn [acc k]
+            (when (some? acc)
+              (get acc k)))
+          m
+          path))
+
+(defn binding-source-value
+  [workflow-run {:keys [source path]}]
+  (case source
+    :workflow-input
+    (get-path* (:workflow-input workflow-run) path)
+
+    :step-output
+    (let [[step-id & more] path
+          accepted-result  (get-in workflow-run [:step-runs step-id :accepted-result])]
+      (get-path* accepted-result more))
+
+    :workflow-runtime
+    (get-path* {:run-id (:run-id workflow-run)
+                :current-step-id (:current-step-id workflow-run)
+                :status (:status workflow-run)}
+               path)
+
+    nil))
+
+(defn materialize-step-inputs
+  [workflow-run step-id]
+  (let [bindings (get-in workflow-run [:effective-definition :steps step-id :input-bindings])]
+    (reduce-kv (fn [acc k ref]
+                 (assoc acc k (binding-source-value workflow-run ref)))
+               {}
+               (or bindings {}))))
+
+(defn render-prompt-template
+  [prompt-template step-inputs]
+  (let [input-text    (or (:input step-inputs) "")
+        original-text (or (:original step-inputs) "")]
+    (-> (or prompt-template "$INPUT")
+        (str/replace "$INPUT" (str input-text))
+        (str/replace "$ORIGINAL" (str original-text)))))
+
+(defn step-prompt
+  [workflow-run step-id]
+  (let [step-def     (get-in workflow-run [:effective-definition :steps step-id])
+        step-inputs  (materialize-step-inputs workflow-run step-id)]
+    {:step-inputs step-inputs
+     :prompt     (render-prompt-template (:prompt-template step-def) step-inputs)}))
+
+(defn execute-current-step! 
+  "Execute the current workflow step as one bounded child-session attempt.
+
+   Returns {:run-id ... :step-id ... :attempt-id ... :execution-session-id ... :status ...}
+   after creating the attempt, prompting the child session, and recording the
+   resulting canonical text envelope.
+
+   Current slice treats the last assistant message text as canonical step output
+   under `{:outcome :ok :outputs {:text ...}}`."
+  [ctx parent-session-id run-id]
+  (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)
+        step-id      (:current-step-id workflow-run)
+        step-def     (get-in workflow-run [:effective-definition :steps step-id])
+        {:keys [prompt]} (step-prompt workflow-run step-id)
+        {:keys [attempt execution-session]}
+        (workflow-attempts/create-step-attempt-session!
+         ctx
+         parent-session-id
+         {:workflow-run-id run-id
+          :workflow-step-id step-id
+          :session-name (str "workflow " step-id " attempt")
+          :tool-defs []
+          :thinking-level :off})]
+    (swap! (:state* ctx)
+           (fn [state]
+             (-> state
+                 (update-in [:workflows :runs run-id]
+                            #(workflow-attempts/append-attempt-to-run % step-id attempt))
+                 (workflow-progression/start-latest-attempt run-id step-id))))
+    (try
+      (session/prompt-in! ctx (:session-id execution-session) prompt)
+      (let [assistant-message (session/last-assistant-message-in ctx (:session-id execution-session))
+            text              (or (:content assistant-message)
+                                  (some-> assistant-message :content first :text)
+                                  "")
+            envelope          {:outcome :ok
+                               :outputs {:text (str text)}}]
+        (swap! (:state* ctx) workflow-progression/submit-result-envelope run-id step-id envelope)
+        {:run-id run-id
+         :step-id step-id
+         :attempt-id (:attempt-id attempt)
+         :execution-session-id (:session-id execution-session)
+         :status (get-in @(:state* ctx) [:workflows :runs run-id :status])})
+      (catch Exception e
+        (swap! (:state* ctx) workflow-progression/record-execution-failure run-id step-id {:message (ex-message e)})
+        (throw e)))))
