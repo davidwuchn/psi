@@ -1,5 +1,5 @@
 *.elc
-.psi/project.edn
+.psi/project.local.edn
 **/.clj-konde/imports.claude/
 **/.clj-kondo/imports/
 **/.clj-kondo/.cache/

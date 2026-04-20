@@ -48,7 +48,8 @@
                       {:phase :config
                        :worktree-path worktree-path
                        :config-paths ["~/.psi/agent/config.edn"
-                                      (str worktree-path "/.psi/project.edn")]})))
+                                      (str worktree-path "/.psi/project.edn")
+                                      (str worktree-path "/.psi/project.local.edn")]})))
     (let [existing (project-nrepl-runtime/instance-in ctx worktree-path)]
       (if (and existing (:readiness existing))
         {:status :present

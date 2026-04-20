@@ -24,7 +24,8 @@
           (is (re-find #"requires a configured start-command" (:message result)))
           (is (re-find #":agent-session :project-nrepl :start-command" (:message result)))
           (is (re-find #"~/.psi/agent/config.edn" (:message result)))
-          (is (re-find #"/.psi/project.edn" (:message result)))))))
+          (is (re-find #"/.psi/project.edn" (:message result)))
+          (is (re-find #"/.psi/project.local.edn" (:message result)))))))
 
   (testing "/project-repl eval routes through shared project nREPL ops helper"
     (let [[ctx session-id] (test-support/create-test-session {:persist? false

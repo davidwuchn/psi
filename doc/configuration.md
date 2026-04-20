@@ -4,13 +4,15 @@ Psi resolves configuration from multiple sources with a fixed precedence order.
 Higher sources win:
 
 ```
-session  (runtime, not persisted)
+session         (runtime, not persisted)
   ↑
-project  — <cwd>/.psi/project.edn
+project-local   — <cwd>/.psi/project.local.edn
   ↑
-user     — ~/.psi/agent/config.edn
+project-shared  — <cwd>/.psi/project.edn
   ↑
-system   (compiled-in defaults)
+user            — ~/.psi/agent/config.edn
+  ↑
+system          (compiled-in defaults)
 ```
 
 Session-level overrides are held in memory for the lifetime of the session and
@@ -20,7 +22,7 @@ are not written to disk unless you specify a scope when setting them.
 
 ## Config files
 
-Both files use the same EDN shape:
+All config files use the same EDN shape:
 
 ```edn
 {:version 1
@@ -29,23 +31,49 @@ Both files use the same EDN shape:
 
 The `:agent-session` map holds the settings described below.
 
-### Project config — `<cwd>/.psi/project.edn`
+### Project shared config — `<cwd>/.psi/project.edn`
 
-Per-project defaults. Checked into source control when you want the whole team
-to share the same model or prompt style.
+Per-project defaults intended to be shared and committed when you want the whole
+team to use the same defaults.
 
 ```edn
 {:version 1
- :agent-session {:model-provider      "anthropic"
-                 :model-id            "claude-sonnet-4-6"
-                 :thinking-level      :medium
-                 :prompt-mode         :lambda
+ :agent-session {:model-provider           "anthropic"
+                 :model-id                 "claude-sonnet-4-6"
+                 :thinking-level           :medium
+                 :prompt-mode              :lambda
                  :nucleus-prelude-override nil}}
 ```
 
+### Project local config — `<cwd>/.psi/project.local.edn`
+
+Per-project local overrides intended to remain uncommitted. This is the writable
+project preference layer used by persisted project-scoped updates such as
+`/model` and `/thinking`.
+
+```edn
+{:version 1
+ :agent-session {:model-provider "openai"
+                 :model-id       "gpt-5.3-codex"
+                 :thinking-level :high}}
+```
+
+Effective project config is computed by deep-merging:
+
+```clojure
+project.edn ← project.local.edn
+```
+
+That means:
+- local overrides shared on overlapping keys
+- nested maps merge recursively
+- non-map values replace earlier values
+- config may live in either file
+
 ### User config — `~/.psi/agent/config.edn`
 
-Personal defaults that apply across all projects. Overridden by project config.
+Personal defaults that apply across all projects. Overridden by both project
+layers.
 
 ```edn
 {:version 1
@@ -102,7 +130,7 @@ optional `:scope` keyword controlling where the change is persisted.
 | `:scope` | Persists to |
 |----------|-------------|
 | `:session` | Memory only — lost when session ends |
-| `:project` | `<cwd>/.psi/project.edn` |
+| `:project` | `<cwd>/.psi/project.local.edn` |
 | `:user` | `~/.psi/agent/config.edn` |
 
 ### `psi.extension/set-model`
@@ -111,7 +139,7 @@ optional `:scope` keyword controlling where the change is persisted.
 ;; runtime only
 {:model {:provider :anthropic :id "claude-sonnet-4-6"} :scope :session}
 
-;; save to project (default when :scope is omitted)
+;; save to project-local overrides (default when :scope is omitted)
 {:model {:provider :anthropic :id "claude-sonnet-4-6"} :scope :project}
 
 ;; save to user config
@@ -139,147 +167,41 @@ explicitly persist them).
 
 ---
 
-## Custom models — `models.edn`
+## Resolution behavior
 
-Define custom providers (local models, proxies, self-hosted endpoints) in EDN
-config files. Both user-global and project-local files are supported:
+When psi resolves effective configuration for a session worktree, it:
 
-| File | Scope |
-|------|-------|
-| `~/.psi/agent/models.edn` | User-global — loaded at startup |
-| `<cwd>/.psi/models.edn` | Project-local — loaded at session bootstrap |
+1. Starts from compiled system defaults
+2. Reads `~/.psi/agent/config.edn` (user config — missing file is silently ignored)
+3. Reads `<cwd>/.psi/project.edn` (shared project config — missing file is silently ignored)
+4. Reads `<cwd>/.psi/project.local.edn` (local project config — missing file is silently ignored)
+5. Applies session runtime overrides held in memory
+6. Merges config with later/higher layers winning
 
-Project models override user models when the same `(provider, id)` pair exists
-in both files. Custom models never shadow built-in models.
+At the project layer specifically, psi deep-merges:
 
-### Format
-
-```edn
-{:version 1
- :providers
- {"local"
-  {:base-url "http://localhost:8080/v1"
-   :api      :openai-completions
-   :auth     {:api-key      "none"       ; literal, or "env:MY_API_KEY"
-              :auth-header? true          ; send Authorization: Bearer (default true)
-              :headers      {}}           ; extra request headers
-   :models
-   [{:id               "llama-3.3-70b"
-     :name             "Llama 3.3 70B"
-     :supports-reasoning false
-     :supports-images  false
-     :context-window   128000
-     :max-tokens       16384}]}}}
+```clojure
+shared project.edn ← local project.local.edn
 ```
 
-### Provider fields
-
-| Key | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `:base-url` | **yes** | — | Base URL for the API endpoint |
-| `:api` | **yes** | — | Wire protocol: `:openai-completions`, `:anthropic-messages`, or `:openai-codex-responses` |
-| `:auth` | no | — | Auth config (see below) |
-| `:models` | **yes** | — | At least one model definition |
-
-### Auth fields
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `:api-key` | `nil` | API key — literal string or `"env:VAR_NAME"` to read from environment |
-| `:auth-header?` | `true` | When true, sends `Authorization: Bearer <key>`. Set to false for servers that reject auth headers |
-| `:headers` | `{}` | Additional headers merged into every request |
-
-### Model fields
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `:id` | **(required)** | Model identifier sent to the API |
-| `:name` | same as `:id` | Human-readable display name |
-| `:supports-reasoning` | `false` | Supports extended thinking |
-| `:supports-images` | `false` | Accepts image input |
-| `:supports-text` | `true` | Accepts text input |
-| `:context-window` | `128000` | Input context window (tokens) |
-| `:max-tokens` | `16384` | Max output tokens |
-| `:input-cost` | `0.0` | Cost per million input tokens |
-| `:output-cost` | `0.0` | Cost per million output tokens |
-| `:cache-read-cost` | `0.0` | Cost per million cache-read tokens |
-| `:cache-write-cost` | `0.0` | Cost per million cache-write tokens |
-
-### Examples
-
-**Ollama on localhost:**
-
-```edn
-{:version 1
- :providers
- {"ollama"
-  {:base-url "http://localhost:11434/v1"
-   :api      :openai-completions
-   :auth     {:api-key "ollama" :auth-header? false}
-   :models
-   [{:id "qwen2.5-coder:32b" :name "Qwen 2.5 Coder 32B" :context-window 32768}
-    {:id "llama3.3:70b"       :name "Llama 3.3 70B"       :context-window 128000}]}}}
-```
-
-**vLLM on a remote server:**
-
-```edn
-{:version 1
- :providers
- {"vllm-dev"
-  {:base-url "http://gpu-server.local:8000/v1"
-   :api      :openai-completions
-   :auth     {:api-key "env:VLLM_API_KEY"}
-   :models
-   [{:id "Qwen/Qwen3-Coder-480B-A35B-Instruct"
-     :name "Qwen3 Coder 480B"
-     :supports-reasoning true
-     :context-window 262144
-     :max-tokens 32768}]}}}
-```
-
-**LM Studio:**
-
-```edn
-{:version 1
- :providers
- {"lm-studio"
-  {:base-url "http://localhost:1234/v1"
-   :api      :openai-completions
-   :auth     {:auth-header? false}
-   :models
-   [{:id "local-model" :name "LM Studio Model"}]}}}
-```
-
-### Validation
-
-Invalid `models.edn` files are logged as warnings and skipped. Built-in models
-remain available. Check `*warn-on-reflection*` output or the session log for
-parse errors.
+Malformed project config files emit warnings and are ignored best-effort:
+- malformed shared + valid local => local still applies
+- malformed local + valid shared => shared still applies
+- both malformed => fall back to lower layers/defaults
 
 ---
 
-## Startup resolution
+## Precedence summary
 
-At bootstrap, psi:
+Effective precedence is:
 
-1. Reads `~/.psi/agent/models.edn` (user models — missing file is silently ignored)
-2. Reads `~/.psi/agent/config.edn` (user config — missing file is silently ignored)
-3. Reads `<cwd>/.psi/models.edn` (project models — missing file is silently ignored)
-4. Reads `<cwd>/.psi/project.edn` (project config — missing file is silently ignored)
-5. Merges custom models: user models ← project models (project wins per key)
-6. Merges model catalog: built-in models + custom models (custom extends, does not shadow)
-7. Merges config: system defaults ← user config ← project config (rightmost wins per key)
-8. Resolves the model — if the merged model spec doesn't match a catalog entry,
-   falls back to the CLI `--model` flag or `PSI_MODEL` env var
-9. Clamps thinking-level to what the resolved model supports
-10. Sets session state from the merged result
-
-CLI flags and environment variables are applied before config-file resolution
-and act as the fallback when no config file specifies a value.
-
-Full precedence for model selection:
-
+```text
+session runtime overrides
+> project local config
+> project shared config
+> user config
+> system defaults
 ```
-project config > user config > --model flag > PSI_MODEL env > compiled default (sonnet-4.6)
-```
+
+For model selection, that means project-local overrides beat project-shared
+committed defaults.

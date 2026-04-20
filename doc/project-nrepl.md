@@ -1,43 +1,14 @@
 # Project nREPL
 
-Direct project REPL support lets psi start, attach to, and interact with a
-worktree-bound project-local nREPL as a first-class runtime capability.
+Project nREPL support lets psi connect to or launch an nREPL for the current
+project worktree, distinct from psi's own runtime nREPL.
 
-This is distinct from psi's own runtime nREPL.
+Project nREPL resolution is session-scoped by worktree path. When a command or
+mutation targets project nREPL, psi resolves the target worktree from explicit
+input first and otherwise from the invoking session worktree-path.
 
-## Two different nREPLs
-
-### Runtime nREPL
-
-The CLI flag:
-
-```bash
-clojure -M:psi --nrepl 7888
-```
-
-starts an nREPL for **psi itself**.
-
-Use that when you want live introspection/debugging of the psi process.
-
-### Project nREPL
-
-`/project-repl ...` targets a **project/worktree runtime** that psi manages for
-actual development work in the current session worktree.
-
-Use that when you want to evaluate code in the target project.
-
-## Targeting semantics
-
-Project nREPL instances are keyed by canonical absolute `worktree-path`.
-
-Target precedence is:
-
-1. explicit target worktree/path when an internal API supplies one
-2. invoking session `:worktree-path`
-3. otherwise: explicit error
-
-Project nREPL targeting does **not** use process cwd fallback or hidden frontend
-focus inference as the primary semantic input.
+This keeps project REPL ownership aligned with the target project rather than
+adapter focus inference as the primary semantic input.
 
 ## Acquisition modes
 
@@ -47,10 +18,11 @@ Psi supports two acquisition modes.
 
 Psi launches a configured start command vector in the target worktree.
 
-Configuration lives in existing psi config files:
+Configuration lives in psi config files under `:agent-session :project-nrepl`:
 
 - user: `~/.psi/agent/config.edn`
-- project: `<worktree>/.psi/project.edn`
+- project shared: `<worktree>/.psi/project.edn`
+- project local: `<worktree>/.psi/project.local.edn`
 
 Canonical shape:
 
@@ -59,6 +31,9 @@ Canonical shape:
  {:project-nrepl
   {:start-command ["bb" "nrepl-server"]}}}
 ```
+
+If both project files exist, psi deep-merges shared then local, so local values
+win.
 
 Rules:
 
@@ -78,116 +53,37 @@ Config shape:
 ```clojure
 {:agent-session
  {:project-nrepl
-  {:attach {:host "127.0.0.1"
+  {:attach {:host "localhost"
             :port 7888}}}}
 ```
 
-Rules:
+You may omit `:host` to use the default host behavior, and you may omit `:port`
+to let psi fall back to `<worktree>/.nrepl-port` discovery.
 
-- `:port` is explicit when provided
-- `:host` is optional and defaults to `127.0.0.1`
-- if explicit port is absent, psi falls back to `<worktree>/.nrepl-port`
-- attach remains explicitly bound to the target worktree in psi state
+## Precedence
 
-## First-slice session model
+Project nREPL config follows the same general config precedence as other
+project-scoped settings:
 
-Current direct project REPL support uses:
-
-- one managed project nREPL instance per worktree
-- one managed nREPL client session per instance
-- single-flight eval per worktree instance
-- interrupt targeted at the active eval operation id
+```text
+session runtime targeting
+> <worktree>/.psi/project.local.edn
+> <worktree>/.psi/project.edn
+> ~/.psi/agent/config.edn
+> system defaults
+```
 
 ## Commands
 
-Current shared command surface:
+- `/project-repl` — show status for the current worktree
+- `/project-repl start` — start configured project nREPL
+- `/project-repl attach` — attach to configured/discovered project nREPL
+- `/project-repl stop` — stop the managed project nREPL instance
+- `/project-repl interrupt` — interrupt active eval if available
+- `/project-repl eval <code>` — evaluate code in the project nREPL
 
-- `/project-repl` — show current project nREPL status for the session worktree
-- `/project-repl start` — start configured project nREPL for the session worktree
-- `/project-repl attach` — attach using configured endpoint or `.nrepl-port`
-- `/project-repl stop` — stop/detach the managed project nREPL for the session worktree
-- `/project-repl eval <code>` — evaluate code in the managed project nREPL
-- `/project-repl interrupt` — interrupt the active eval when one exists
+## Notes
 
-## `psi-tool` machine surface
-
-`psi-tool` also exposes the managed project REPL directly through:
-
-- `action: "project-repl"`
-- `op: "status" | "start" | "attach" | "stop" | "eval" | "interrupt"`
-
-Examples:
-
-```clojure
-psi-tool(action: "project-repl", op: "status")
-psi-tool(action: "project-repl", op: "start")
-psi-tool(action: "project-repl", op: "attach", host: "127.0.0.1", port: 7888)
-psi-tool(action: "project-repl", op: "eval", code: "(+ 1 2)")
-psi-tool(action: "project-repl", op: "interrupt")
-```
-
-Targeting precedence is:
-
-1. explicit `worktree-path`
-2. invoking session `worktree-path`
-3. otherwise explicit error
-
-`/project-repl` remains the human-oriented command layer.
-`psi-tool(action: "project-repl", ...)` is the structured machine-oriented layer.
-Both surfaces should share the same underlying project nREPL behavior.
-
-## Queryable state
-
-The managed project nREPL is queryable through EQL.
-
-Root attrs:
-
-- `:psi.project-nrepl/count`
-- `:psi.project-nrepl/worktree-paths`
-- `:psi.project-nrepl/instances`
-
-Session-scoped attr:
-
-- `:psi.agent-session/project-nrepl`
-
-Projected fields include:
-
-- worktree path
-- acquisition mode
-- transport kind
-- lifecycle state
-- readiness
-- endpoint
-- command vector
-- session mode
-- active session id
-- `can-eval?`
-- `can-interrupt?`
-- `last-error`
-- `last-eval`
-- `last-interrupt`
-- timestamps
-
-## Example query
-
-```clojure
-[{:psi.agent-session/project-nrepl
-  [:psi.project-nrepl/worktree-path
-   :psi.project-nrepl/acquisition-mode
-   :psi.project-nrepl/lifecycle-state
-   :psi.project-nrepl/readiness
-   :psi.project-nrepl/active-session-id
-   :psi.project-nrepl/last-eval
-   :psi.project-nrepl/last-interrupt]}]
-```
-
-## Current limits
-
-Current slice does not yet provide:
-
-- richer transcript-native rendering of streamed eval output
-- broader adapter-specific UI affordances beyond shared text commands
-- full debugger/editor-middleware feature coverage
-
-But it does provide the canonical managed lifecycle + eval + interrupt + query
-surface needed for direct project REPL support.
+- project-local writable overrides belong in `.psi/project.local.edn`
+- shared project defaults belong in `.psi/project.edn`
+- malformed shared/local project config files warn and are ignored best-effort

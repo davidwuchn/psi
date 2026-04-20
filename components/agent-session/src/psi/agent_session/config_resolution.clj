@@ -1,11 +1,12 @@
 (ns psi.agent-session.config-resolution
-  "Unified config resolution: system < user < project.
+  "Unified config resolution: system < user < project-shared < project-local.
 
    Precedence (highest wins):
-     session  — runtime overrides held in session state (not persisted here)
-     project  — <cwd>/.psi/project.edn
-     user     — ~/.psi/agent/config.edn
-     system   — compiled-in defaults
+     session        — runtime overrides held in session state (not persisted here)
+     project-local  — <cwd>/.psi/project.local.edn
+     project-shared — <cwd>/.psi/project.edn
+     user           — ~/.psi/agent/config.edn
+     system         — compiled-in defaults
 
    Callers should use `resolve-config` to obtain a merged view, then
    use the typed accessor functions to extract individual values."
@@ -33,7 +34,10 @@
   "Return a merged config map for `cwd`.
 
    Merges in precedence order (last wins):
-     system-defaults < user-config < project-prefs
+     system-defaults < user-config < layered-project-prefs
+
+   Layered project prefs are themselves resolved as:
+     shared project.edn < local project.local.edn
 
    The returned map has flat keys matching `system-defaults`."
   [cwd]

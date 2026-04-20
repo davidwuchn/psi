@@ -377,25 +377,46 @@
       (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level :medium} {:origin :core})
       (is (= :medium (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
-  (testing "set-model-in! persists project preferences"
-    (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
-          _     (.mkdirs (java.io.File. cwd))
+  (testing "set-model-in! persists project preferences to the local project layer"
+    (let [cwd        (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
+          _          (.mkdirs (java.io.File. cwd))
+          shared-f   (project-prefs/project-preferences-file cwd)
+          local-f    (project-prefs/project-local-preferences-file cwd)
+          _          (.mkdirs (.getParentFile shared-f))
+          _          (spit shared-f (pr-str {:version 1
+                                             :agent-session {:prompt-mode :prose}}))
           [ctx session-id] (create-session-context {:cwd cwd})
-          model {:provider "anthropic" :id "claude-sonnet-4-6" :reasoning true}]
+          model      {:provider "anthropic" :id "claude-sonnet-4-6" :reasoning true}]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [prefs (project-prefs/read-preferences cwd)]
         (is (= "anthropic" (get-in prefs [:agent-session :model-provider])))
         (is (= "claude-sonnet-4-6" (get-in prefs [:agent-session :model-id])))
-        (is (= :off (get-in prefs [:agent-session :thinking-level]))))))
+        (is (= :off (get-in prefs [:agent-session :thinking-level])))
+        (is (= :prose (get-in prefs [:agent-session :prompt-mode]))))
+      (is (= {:version 1
+              :agent-session {:prompt-mode :prose}}
+             (clojure.edn/read-string (slurp shared-f))))
+      (is (.exists local-f))
+      (is (= "anthropic" (get-in (clojure.edn/read-string (slurp local-f)) [:agent-session :model-provider])))))
 
-  (testing "set-thinking-level-in! persists project preferences"
-    (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
-          _   (.mkdirs (java.io.File. cwd))
+  (testing "set-thinking-level-in! persists project preferences to the local project layer"
+    (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
+          _        (.mkdirs (java.io.File. cwd))
+          shared-f (project-prefs/project-preferences-file cwd)
+          local-f  (project-prefs/project-local-preferences-file cwd)
+          _        (.mkdirs (.getParentFile shared-f))
+          _        (spit shared-f (pr-str {:version 1
+                                           :agent-session {:prompt-mode :prose}}))
           [ctx session-id] (create-session-context {:cwd cwd})]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
       (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level :high} {:origin :core})
       (let [prefs (project-prefs/read-preferences cwd)]
-        (is (= :high (get-in prefs [:agent-session :thinking-level]))))))
+        (is (= :high (get-in prefs [:agent-session :thinking-level])))
+        (is (= :prose (get-in prefs [:agent-session :prompt-mode]))))
+      (is (= {:version 1
+              :agent-session {:prompt-mode :prose}}
+             (clojure.edn/read-string (slurp shared-f))))
+      (is (= :high (get-in (clojure.edn/read-string (slurp local-f)) [:agent-session :thinking-level])))))
 
   (testing "cycle-thinking-level-in! advances level for reasoning model"
     (let [[ctx session-id] (create-session-context {:session-defaults {:thinking-level :off}})]

@@ -103,7 +103,7 @@ For prompt lifecycle introspection summaries and normalized prompt-turn attrs, s
 
 ## Configuration
 
-Config file locations, precedence (session > project > user > system), settings
+Config file locations, precedence (session > project-local > project-shared > user > system), settings
 reference, and runtime scoped setters:
 - [`doc/configuration.md`](doc/configuration.md)
 
