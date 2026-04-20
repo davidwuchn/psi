@@ -81,11 +81,12 @@ For cwd-sensitive extensions (e.g. reading `.psi/agents`), wrap with
   ...)
 ```
 
-## Built-in extensions in this repo (`extensions/src`)
+## Built-in extensions in this repo (`extensions/` local-root projects)
 
-These extensions ship with the project and are loaded via extension discovery.
+These extensions ship with the project as per-extension local-root libraries and
+are activated in this repo through `.psi/extensions.edn`.
 
-### `extensions/agent_chain.clj` (`extensions.agent-chain`)
+### `extensions/agent-chain/src/extensions/agent_chain.clj` (`extensions.agent-chain`)
 
 Purpose: run repeatable multi-agent pipelines.
 
@@ -98,7 +99,7 @@ Purpose: run repeatable multi-agent pipelines.
   - `.psi/agents/agent-chain.edn`
   - `.psi/agents/*.md` (agent profiles)
 
-### `extensions/agent.clj` (`extensions.agent`)
+### `extensions/agent/src/extensions/agent.clj` (`extensions.agent`)
 
 Purpose: create/continue/remove/list agents with workflow-backed UI widgets.
 
@@ -113,7 +114,7 @@ Purpose: create/continue/remove/list agents with workflow-backed UI widgets.
   - `/agent-clear`
   - `/agent-list`
 
-### `extensions/mcp_tasks_run.clj` (`extensions.mcp-tasks-run`)
+### `extensions/mcp-tasks-run/src/extensions/mcp_tasks_run.clj` (`extensions.mcp-tasks-run`)
 
 Purpose: run mcp-tasks task/story workflows with sub-agent execution per step.
 
@@ -152,7 +153,7 @@ Current in-repo examples:
 - `extensions.agent-chain` — widget + `action=list` reuse `:chain/display`
 - `extensions.agent` — widget + `agent-list` reuse `:agent/display`
 
-### `extensions/commit_checks.clj` (`extensions.commit-checks`)
+### `extensions/commit-checks/src/extensions/commit_checks.clj` (`extensions.commit-checks`)
 
 Purpose: run project-local external checks after a new local commit and inject failures back into the session as a prompt.
 
@@ -195,7 +196,7 @@ The example project config in this repo defines these bb tasks:
   - fails on dispatch effect parity drift in `agent-session`
   - reports advisory warnings for handler side-effect candidates and direct canonical state writes outside an allowlist
 
-### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
+### `extensions/plan-state-learning/src/extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
 
 Purpose: automate munera + mementum working-memory follow-up after non-PSL commits.
 
@@ -210,7 +211,7 @@ Purpose: automate munera + mementum working-memory follow-up after non-PSL commi
   - `/psl` lists active PSL workflows by rendering that public display through `extensions.workflow-display/text-lines`
 - Widget: shows `⊕ PSL` header with workflow display lines for active runs
 
-### `extensions/hello_ext.clj` (`extensions.hello-ext`)
+### `extensions/hello-ext/src/extensions/hello_ext.clj` (`extensions.hello-ext`)
 
 Purpose: minimal example extension used in docs/tests.
 
@@ -232,22 +233,12 @@ See:
 Current slice-one behavior:
 - manifest-backed `:local/root` extension entries can be applied during explicit reload/apply
 - manifest-backed git/mvn entries are validated and surfaced in introspection, but remain `:restart-required`
-- legacy path discovery from `.psi/extensions/` and `~/.psi/agent/extensions/` still works
+- this repo’s built-in extensions now load from `.psi/extensions.edn` local-root entries rather than `.psi/extensions/` symlinks
 
 ## Discovery
 
-Extensions are discovered from three locations, in order:
-
-1. **Project-local**: `.psi/extensions/` in the current working directory
-2. **User-global**: `~/.psi/agent/extensions/`
-3. **CLI-provided**: `--extension <path>` flags
-
-Within each directory, discovery finds:
-- Direct `.clj` files (e.g. `my_ext.clj`)
-- Subdirectories with an `extension.clj` entry point (e.g. `my-ext/extension.clj`)
-
-Paths are deduplicated — an extension found in project-local is not
-loaded again from user-global.
+Legacy extension file discovery still exists for explicit file-path based extension loading,
+but the canonical install/config surface is now `extensions.edn`.
 
 ## Extension API
 

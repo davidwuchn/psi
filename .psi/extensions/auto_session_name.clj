@@ -1,1 +1,0 @@
-../../extensions/src/extensions/auto_session_name.clj

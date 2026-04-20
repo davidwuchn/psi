@@ -1,1 +1,0 @@
-../../extensions/src/extensions/commit_checks.clj

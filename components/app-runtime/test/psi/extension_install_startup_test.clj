@@ -6,7 +6,12 @@
    [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.skills :as skills]
+   [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.test-support :as test-support]
+   [psi.ai.model-registry :as model-registry]
    [psi.app-runtime :as app-runtime]))
 
 (defn- manifest-file [root rel]
@@ -39,7 +44,14 @@
                                 (spit (installs/project-manifest-file cwd)
                                       (pr-str {:deps {'psi/test-startup-ext {:local/root ext-root
                                                                              :psi/init 'psi.test.startup-ext/init}}}))
-                                (app-runtime/bootstrap-runtime-session! {:provider :anthropic :id "claude-sonnet-4-6" :supports-reasoning true} {:cwd cwd}))]
+                                (with-redefs [oauth/create-context (fn [] nil)
+                                              pt/discover-templates (fn [] [])
+                                              skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                                              sys-prompt/discover-context-files (fn [_] [])
+                                              sys-prompt/build-system-prompt (fn [_] "")]
+                                  (let [result (app-runtime/bootstrap-runtime-session! {:provider :anthropic :id "claude-sonnet-4-6" :supports-reasoning true} {:cwd cwd})]
+                                    (model-registry/init! {:user-models-path nil :project-models-path nil})
+                                    result)))]
       (is (= 1 (:extension-loaded-count summary)))
       (is (some #(re-find #"startup_ext.clj" %)
                 (map str (ext/extensions-in (:extension-registry ctx)))))

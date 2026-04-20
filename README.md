@@ -77,11 +77,11 @@ Note: extension slash commands now route implicit extension query/mutate calls t
 the active session that invoked the command. Explicit `query-session` / `mutate-session`
 helpers remain the preferred surface for cross-session or delayed/background extension work.
 
-For built-in extension docs (`extensions/src`), see:
+For built-in extension docs (`extensions/` per-project local roots), see:
 - [`doc/extensions.md`](doc/extensions.md)
 
 Project-local extension/config examples in this repo include:
-- [`.psi/extensions/commit_checks.clj`](.psi/extensions/commit_checks.clj)
+- [`.psi/extensions.edn`](.psi/extensions.edn)
 - [`.psi/commit-checks.edn`](.psi/commit-checks.edn)
 - `bb commit-check:rama-cc`
 - `bb commit-check:file-lengths`

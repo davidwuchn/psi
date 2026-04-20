@@ -6,7 +6,7 @@ Psi now supports a canonical extension install manifest model based on
 Slice-one behavior is intentionally conservative:
 - manifest-backed `:local/root` extensions can be applied during explicit reload/apply
 - manifest-backed `:git` and `:mvn` extension deps are validated and surfaced in introspection, but currently remain `:restart-required`
-- legacy path-discovered `.psi/extensions/*.clj` loading still works
+- this repo now dogfoods the manifest model for its built-in extensions instead of relying on `.psi/extensions/*.clj` symlinks
 
 ## Manifest locations
 
