@@ -23,4 +23,6 @@ Implementation checkpoints:
 - [x] Prove a representative chain-like workflow (e.g. plan→build→review) on top of the primitive
 - [x] Evaluate follow-on integration path for `agent-chain` once the lower-level primitive is proven
 - [x] Add a pure compiler from legacy `agent-chain` config to canonical workflow definitions
-- [ ] Decide where compiled chain definitions are registered/launched from in the runtime surface
+- [x] Decide where compiled chain definitions are registered/launched from in the runtime surface
+- [x] Add runtime registration of compiled agent-chain definitions
+- [x] Add a direct psi-tool launch path for named agent-chain workflows

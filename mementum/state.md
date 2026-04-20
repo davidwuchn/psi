@@ -114,15 +114,17 @@ Bootstrapped on 2026-04-02.
   - `workflow_lifecycle_test.clj` proves representative `plan -> build -> review` completion and blocked/resume/new-attempt semantics
   - focused workflow set is green when run in the 026 worktree
 - 026 follow-on direction is now clearer:
-  - `agent-chain` is currently only a discovery/config surface from `.psi/agents/agent-chain.edn`
+  - `agent-chain` was only a discovery/config surface from `.psi/agents/agent-chain.edn`, but now also has canonical runtime registration + launch entrypoints
   - existing extension workflow runtime in `workflows.clj` is separate and should not become the execution substrate for canonical deterministic workflow runs
   - pure chain compilation now exists in `workflow_agent_chain.clj`
+  - runtime registration now exists in `workflow_agent_chain_runtime.clj`
   - compiled chain definitions preserve legacy prompt text as `:prompt-template` plus explicit bindings for workflow input, prior-step output, and original request
-  - next 026 slice is no longer "invent the compiler"; it is choosing and implementing the runtime launch/registration path for compiled chain definitions
+  - `psi-tool` workflow ops now include `register-agent-chains` and `create-run-from-agent-chain`
+  - next 026 slice is no longer deciding launch/registration; it is wiring execution-time orchestration so named chain runs move through canonical attempt/session/result progression
 
 ## Suggested next step
 - Next active threads are now:
-  1. **026 deterministic workflows**: decide and implement where compiled `agent-chain` definitions are registered/launched from in the runtime surface
+  1. **026 deterministic workflows**: wire execution-time orchestration for named chain runs so canonical workflow runs advance through attempts/sessions/results rather than stopping at run creation
   2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
   3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
   4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests

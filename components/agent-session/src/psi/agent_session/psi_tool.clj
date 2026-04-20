@@ -24,7 +24,7 @@
                      "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
                      "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
                      "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`; "
-                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|register-agent-chains|create-run|read-run|list-runs|resume-run|cancel-run`. "
+                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|register-agent-chains|create-run|create-run-from-agent-chain|read-run|list-runs|resume-run|cancel-run`. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
@@ -46,6 +46,7 @@
                               :definition    {:type "string" :description "For `action: \"workflow\"`: inline workflow definition as EDN."}
                               :workflow-input {:type "string" :description "For `action: \"workflow\"`: workflow input map as EDN."}
                               :run-id        {:type "string" :description "For `action: \"workflow\"`: workflow run id."}
+                              :chain-name    {:type "string" :description "For `action: \"workflow\"`, `op: \"create-run-from-agent-chain\"`: legacy agent-chain name to compile/register and run."}
                               :reason        {:type "string" :description "For `action: \"workflow\"`: optional cancel reason."}}
                  :required   []}})
 
@@ -85,10 +86,10 @@
   ["status" "start" "attach" "stop" "eval" "interrupt"])
 
 (def ^:private workflow-supported-ops
-  ["list-definitions" "register-agent-chains" "create-run" "read-run" "list-runs" "resume-run" "cancel-run"])
+  ["list-definitions" "register-agent-chains" "create-run" "create-run-from-agent-chain" "read-run" "list-runs" "resume-run" "cancel-run"])
 
 (defn- validate-psi-tool-request
-  [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id reason] :as args}]
+  [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason] :as args}]
   (let [effective-action (psi-tool-action args)]
     (cond
       (nil? effective-action)
@@ -168,6 +169,9 @@
         (when (and (= op "create-run") (nil? definition-id) (nil? definition))
           (throw (ex-info "psi-tool workflow create-run requires `definition-id` or `definition`"
                           {:phase :validate :action effective-action :op op})))
+        (when (and (= op "create-run-from-agent-chain") (not (string? chain-name)))
+          (throw (ex-info "psi-tool workflow create-run-from-agent-chain requires `chain-name`"
+                          {:phase :validate :action effective-action :op op})))
         (when (and ((set ["read-run" "resume-run" "cancel-run"]) op)
                    (not (string? run-id)))
           (throw (ex-info "psi-tool workflow op requires `run-id`"
@@ -178,6 +182,7 @@
          :definition     definition
          :workflow-input workflow-input
          :run-id         run-id
+         :chain-name     chain-name
          :reason         reason}))))
 
 (defn- sanitize-psi-tool-data
@@ -202,7 +207,7 @@
    :is-error true})
 
 (defn telemetry-args
-  [{:strs [action query ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id reason]}]
+  [{:strs [action query ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason]}]
   (cond-> (ordered-map)
     action (assoc "action" action)
     query (assoc "query" query)
@@ -218,6 +223,7 @@
     definition (assoc "definition" definition)
     workflow-input (assoc "workflow-input" workflow-input)
     run-id (assoc "run-id" run-id)
+    chain-name (assoc "chain-name" chain-name)
     reason (assoc "reason" reason)))
 
 (defn- execute-psi-tool-query
@@ -602,7 +608,7 @@
    :terminal-outcome     (:terminal-outcome workflow-run)})
 
 (defn- execute-psi-tool-workflow-report
-  [{:keys [ctx]} {:keys [op definition-id definition workflow-input run-id reason]}]
+  [{:keys [ctx]} {:keys [op definition-id definition workflow-input run-id chain-name reason]}]
   (let [started-at (System/nanoTime)]
     (try
       (when-not ctx
@@ -649,6 +655,35 @@
                  :psi-tool/overall-status :ok
                  :psi-tool/workflow       {:run-id created-run-id
                                            :run (workflow-run-summary workflow-run)}})
+
+              "create-run-from-agent-chain"
+              (let [register-report (workflow-agent-chain-runtime/register-agent-chain-definitions! ctx)]
+                (when (:error register-report)
+                  (throw (ex-info "Agent-chain registration failed"
+                                  {:phase :workflow
+                                   :action "workflow"
+                                   :op op
+                                   :chain-name chain-name
+                                   :registration-report register-report})))
+                (when-not (some #{chain-name} (:definition-ids register-report))
+                  (throw (ex-info "Agent-chain definition not found"
+                                  {:phase :validate
+                                   :action "workflow"
+                                   :op op
+                                   :chain-name chain-name
+                                   :available-definition-ids (:definition-ids register-report)})))
+                (let [[new-state created-run-id workflow-run]
+                      (workflow-runtime/create-run @(:state* ctx)
+                                                   {:definition-id chain-name
+                                                    :workflow-input (or (parse-workflow-input-string workflow-input) {})})]
+                  ((:apply-root-state-update-fn ctx) ctx (constantly new-state))
+                  {:psi-tool/action         :workflow
+                   :psi-tool/workflow-op    :create-run-from-agent-chain
+                   :psi-tool/overall-status :ok
+                   :psi-tool/workflow       {:chain-name chain-name
+                                             :registration register-report
+                                             :run-id created-run-id
+                                             :run (workflow-run-summary workflow-run)}}))
 
               "read-run"
               (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]

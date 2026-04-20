@@ -188,5 +188,27 @@ Current status:
 
 Notes:
 - The deterministic workflow substrate now covers state model, statechart compilation, run creation, attempt/session linkage, result progression, Pathom/EQL read exposure, `psi-tool` control operations, a representative chain-like proof, and pure `agent-chain` compilation into canonical workflow definitions.
-- Remaining work is primarily deciding and implementing the runtime launch/registration path for compiled chain definitions.
+2026-04-19 — runtime registration + direct launch path for compiled agent chains
+- Added `components/agent-session/src/psi/agent_session/workflow_agent_chain_runtime.clj`
+- Implemented runtime registration helpers that:
+  - read `.psi/agents/agent-chain.edn`
+  - compile legacy chains into canonical workflow definitions
+  - register those definitions into canonical workflow root state
+  - return a structured registration report (`config-path`, `definition-ids`, `registered-count`, `error`)
+- Extended `psi-tool` workflow ops with:
+  - `register-agent-chains`
+  - `create-run-from-agent-chain`
+- `create-run-from-agent-chain` now:
+  - registers compiled chain definitions into canonical root state
+  - validates the requested `chain-name`
+  - creates a canonical workflow run from the registered definition id
+  - returns both the registration report and workflow run summary
+- Added focused tests in:
+  - `workflow_agent_chain_runtime_test.clj`
+  - `tools_test.clj`
+- Verified focused green set:
+  - `clojure -M:test --focus psi.agent-session.workflow-agent-chain-runtime-test --focus psi.agent-session.workflow-agent-chain-test --focus psi.agent-session.tools-test`
+
+- Remaining work is no longer deciding the runtime launch/registration path; that path now exists through `psi-tool` workflow ops.
+- Remaining likely follow-on is execution-time materialization/orchestration so compiled chain definitions can run bounded steps through canonical attempt/session lifecycle rather than stopping at deterministic definition/run creation.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.

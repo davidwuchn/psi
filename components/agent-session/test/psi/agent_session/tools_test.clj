@@ -126,6 +126,11 @@
             parsed (read-string (:content result))]
         (is (= :workflow (:psi-tool/action parsed)))))
 
+    (testing "workflow create-run-from-agent-chain requires chain-name"
+      (let [result ((:execute tool) {"action" "workflow" "op" "create-run-from-agent-chain"})]
+        (is (true? (:is-error result)))
+        (is (re-find #"requires `chain-name`" (:content result)))))
+
     (testing "workflow create-run rejects both definition-id and definition"
       (let [result ((:execute tool) {"action" "workflow"
                                      "op" "create-run"
@@ -425,6 +430,38 @@
           (is (= ["plan-build"] (get-in parsed [:psi-tool/workflow :definition-ids])))
           (is (= "plan-build"
                  (:definition-id (get-in @(:state* ctx) [:workflows :definitions "plan-build"])))))
+        (finally
+          (doseq [f (reverse (file-seq (io/file tmp)))]
+            (.delete f))))))
+
+  (testing "workflow create-run-from-agent-chain registers then creates a run from named chain"
+    (let [tmp    (str (java.nio.file.Files/createTempDirectory
+                       "psi-tool-agent-chain-run-test-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+          cfg    (io/file tmp ".psi" "agents" "agent-chain.edn")]
+      (try
+        (io/make-parents cfg)
+        (spit cfg (pr-str [{:name "plan-build"
+                            :description "Plan and build"
+                            :steps [{:agent "planner" :prompt "$INPUT"}
+                                    {:agent "builder" :prompt "Execute: $INPUT"}]}]))
+        (let [[ctx session-id] (create-session-context {:persist? false :cwd tmp})
+              tool   (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+              result ((:execute tool) {"action" "workflow"
+                                       "op" "create-run-from-agent-chain"
+                                       "chain-name" "plan-build"
+                                       "workflow-input" "{:input \"ship it\" :original \"build this feature\"}"})
+              parsed (read-string (:content result))
+              run-id (get-in parsed [:psi-tool/workflow :run-id])]
+          (is (false? (:is-error result)))
+          (is (= :create-run-from-agent-chain (:psi-tool/workflow-op parsed)))
+          (is (= :ok (:psi-tool/overall-status parsed)))
+          (is (= "plan-build" (get-in parsed [:psi-tool/workflow :chain-name])))
+          (is (= ["plan-build"] (get-in parsed [:psi-tool/workflow :registration :definition-ids])))
+          (is (= :pending (get-in parsed [:psi-tool/workflow :run :status])))
+          (is (= {:input "ship it" :original "build this feature"}
+                 (get-in parsed [:psi-tool/workflow :run :workflow-input])))
+          (is (= run-id (get-in @(:state* ctx) [:workflows :run-order 0]))))
         (finally
           (doseq [f (reverse (file-seq (io/file tmp)))]
             (.delete f))))))
