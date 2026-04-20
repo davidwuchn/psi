@@ -221,6 +221,19 @@ Purpose: minimal example extension used in docs/tests.
   - `hello-upper`
   - `hello-wrap`
 
+## Install manifests
+
+Psi now also supports `extensions.edn` install manifests for explicit
+user/project extension configuration.
+
+See:
+- [`doc/extensions-install.md`](extensions-install.md)
+
+Current slice-one behavior:
+- manifest-backed `:local/root` extension entries can be applied during explicit reload/apply
+- manifest-backed git/mvn entries are validated and surfaced in introspection, but remain `:restart-required`
+- legacy path discovery from `.psi/extensions/` and `~/.psi/agent/extensions/` still works
+
 ## Discovery
 
 Extensions are discovered from three locations, in order:

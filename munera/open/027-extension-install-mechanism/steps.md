@@ -15,14 +15,16 @@
 - [x] Convert the agreed design into implementation slices
 
 Implementation checklist:
-- [ ] Add manifest schemas and validation rules for user/project `extensions.edn`
-- [ ] Implement manifest reading from `~/.psi/agent/extensions.edn` and `.psi/extensions.edn`
-- [ ] Implement effective merge with project-over-user precedence and provenance capture
-- [ ] Implement duplicate-init validation on the effective extension set
-- [ ] Implement git-sha validation for git extension deps
-- [ ] Implement structured diagnostics production
-- [ ] Implement dependency realization and extension activation for local/git/mvn deps
-- [ ] Implement per-extension load status tracking
-- [ ] Implement explicit reload/apply with `:applied` / `:restart-required` results
-- [ ] Implement canonical read-surface projection for raw manifests, effective state, diagnostics, and last-apply result
+- [x] Add manifest schemas and validation rules for user/project `extensions.edn`
+- [x] Implement manifest reading from `~/.psi/agent/extensions.edn` and `.psi/extensions.edn`
+- [x] Implement effective merge with project-over-user precedence and provenance capture
+- [x] Implement duplicate-init validation on the effective extension set
+- [x] Implement git-sha validation for git extension deps
+- [x] Implement structured diagnostics production
+- [~] Implement dependency realization and extension activation for local/git/mvn deps
+  - [x] manifest-backed `:local/root` apply during explicit reload/apply
+  - [ ] manifest-backed git/mvn realization beyond restart-required reporting
+- [x] Implement per-extension load status tracking
+- [x] Implement explicit reload/apply with `:applied` / `:restart-required` results
+- [x] Implement canonical read-surface projection for raw manifests, effective state, diagnostics, and last-apply result
 - [ ] Document manifest format and developer workflow

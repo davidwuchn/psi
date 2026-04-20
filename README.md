@@ -67,6 +67,12 @@ For extension-facing runtime/query details (including memory durability operatio
 This includes the preferred workflow public-data display convention for
 workflow-backed extensions.
 
+### Extension install manifests
+
+For the deps-shaped `extensions.edn` install model, apply semantics, and
+introspection fields, see:
+- [`doc/extensions-install.md`](doc/extensions-install.md)
+
 Note: extension slash commands now route implicit extension query/mutate calls through
 the active session that invoked the command. Explicit `query-session` / `mutate-session`
 helpers remain the preferred surface for cross-session or delayed/background extension work.

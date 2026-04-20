@@ -33,6 +33,16 @@ Examples:
  :entity "{:psi.agent-session/session-id \"sid\"}"}
 ```
 
+Extension install introspection example:
+
+```clojure
+{:action "query"
+ :query  "[:psi.extensions/effective
+           :psi.extensions/diagnostics
+           :psi.extensions/last-apply]"
+ :entity "{:psi.agent-session/session-id \"sid\"}"}
+```
+
 Canonical discovery flow:
 1. Query `:psi.graph/resolver-syms`
 2. Query discovered attrs directly
