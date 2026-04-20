@@ -256,6 +256,21 @@ Notes:
 - Full suite is green after the cycle fix: `1373 tests, 10055 assertions, 0 failures`.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
 
+2026-04-20 — live workflow execution fixups after hot reload
+- Exercised the new `lambda-build` workflow end-to-end through the live 026 runtime and found three real integration issues beyond the original load-cycle work:
+  1. old live ctx maps could still lack the newly injected workflow callbacks
+  2. workflow child sessions could inherit legacy `:developer-prompt-source :fallback`, which no longer satisfies the current session schema
+  3. workflow result extraction was returning assistant content blocks directly instead of normalized text strings, causing step result-schema validation failure even when the model output itself was correct
+- Added live-compatible fallback behavior in `components/agent-session/src/psi/agent_session/psi_tool_workflow.clj`:
+  - patch older ctx maps on demand with resolved workflow execution callbacks
+  - derive a fallback invoking `session-id` from `ctx` when the wrapper path does not provide one explicitly
+- Updated `components/agent-session/src/psi/agent_session/dispatch_handlers/session_state.clj` so child-session initialization normalizes legacy `:developer-prompt-source :fallback` to `nil`
+- Updated `components/agent-session/src/psi/agent_session/workflow_execution.clj` so assistant message content is normalized to a plain text string before building the canonical result envelope
+- Verified live behavior in the running branch:
+  - top-level `psi-tool(action: "workflow", op: "execute-run", ...)` now works for freshly created runs
+  - `lambda-build` now executes to terminal `:completed` status through the canonical workflow runtime
+  - representative successful run: `72c63519-94a3-44ea-8aa6-352ce9aab862`
+
 2026-04-20 — graph-surface-test StackOverflow fix
 - Nested join specs in `::pco/output` for `workflow-definitions-root` and `workflow-runs-root` caused StackOverflowError during Pathom graph introspection. Replaced with flat top-level key lists — the `->eql` helpers already pre-project nested data as plain maps.
 - `agent-session-workflow-run-ref` resolver was excluded from the root resolver list. It made `:psi.workflow.run/id` root-reachable which chained into `workflow-run-detail` and caused a StackOverflow in the `root-queryable-attrs-contract-test` (which queries all ~272 root attrs simultaneously). Entity-targeted workflow run detail queries use `{:psi.workflow.run/id id}` as an explicit entity seed.
