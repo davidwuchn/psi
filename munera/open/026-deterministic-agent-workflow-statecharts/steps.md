@@ -21,4 +21,6 @@ Implementation checkpoints:
 - [x] Extend `psi-tool` with `action: "workflow"` and slice-one ops (`list-definitions`, `create-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
 - [x] Add focused tests for the sequential workflow lifecycle and introspection surface
 - [x] Prove a representative chain-like workflow (e.g. plan→build→review) on top of the primitive
-- [ ] Evaluate follow-on integration path for `agent-chain` once the lower-level primitive is proven
+- [x] Evaluate follow-on integration path for `agent-chain` once the lower-level primitive is proven
+- [x] Add a pure compiler from legacy `agent-chain` config to canonical workflow definitions
+- [ ] Decide where compiled chain definitions are registered/launched from in the runtime surface

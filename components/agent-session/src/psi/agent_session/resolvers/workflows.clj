@@ -9,6 +9,7 @@
    :psi.workflow.step/label
    :psi.workflow.step/description
    :psi.workflow.step/executor
+   :psi.workflow.step/prompt-template
    :psi.workflow.step/input-bindings
    :psi.workflow.step/result-schema
    :psi.workflow.step/retry-policy
@@ -93,6 +94,7 @@
    :psi.workflow.step/label             (:label step-def)
    :psi.workflow.step/description       (:description step-def)
    :psi.workflow.step/executor          (:executor step-def)
+   :psi.workflow.step/prompt-template   (:prompt-template step-def)
    :psi.workflow.step/input-bindings    (:input-bindings step-def)
    :psi.workflow.step/result-schema     (:result-schema step-def)
    :psi.workflow.step/retry-policy      (:retry-policy step-def)

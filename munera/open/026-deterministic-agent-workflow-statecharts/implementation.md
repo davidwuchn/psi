@@ -167,12 +167,26 @@ Current status:
   - the existing `:psi.agent-chain/*` discovery surface can remain for adapter continuity, but should eventually expose compiled workflow-definition identity alongside legacy chain summary data
   - avoid migrating the old extension workflow runtime into this path; `agent-chain` should target the canonical `:workflows` state introduced for 026
 - Expected next implementation slice:
-  1. add a pure compiler from `agent-chain.edn` chain maps to canonical workflow definitions
-  2. add tests proving chain config compilation preserves step order, agent profile, and `$INPUT`/`$ORIGINAL` semantics as explicit bindings / derived execution materialization metadata
-  3. decide whether chain runs are launched through `agent-chain` tooling by delegating to workflow `create-run`, or by first registering compiled definitions in canonical root state
-  4. keep adapter/UI changes minimal until run creation and readback are working against canonical workflow runs
+  1. decide whether chain runs are launched through `agent-chain` tooling by delegating to workflow `create-run`, or by first registering compiled definitions in canonical root state
+  2. keep adapter/UI changes minimal until run creation and readback are working against canonical workflow runs
+
+2026-04-19 — `agent-chain` compiler groundwork
+- Added `components/agent-session/src/psi/agent_session/workflow_agent_chain.clj`
+- Implemented a pure compiler from legacy `agent-chain` maps to canonical workflow definitions:
+  - stable step ids derived from step order + agent name
+  - workflow `:step-order` + step-id keyed `:steps`
+  - agent-backed `:executor` with `:profile`
+  - preserved legacy prompt text under `:prompt-template`
+  - explicit `:input-bindings` for first-step workflow input and later-step prior-step output
+  - explicit `:original` binding from workflow input for legacy `$ORIGINAL` semantics
+  - default canonical result schema + retry policy for compiled chain steps
+- Added `components/agent-session/test/psi/agent_session/workflow_agent_chain_test.clj`
+- Extended canonical workflow model/resolver surfaces to include step `:prompt-template` for introspection of compiled chain definitions
+- Updated workflow model/resolver tests to cover the new field
+- Verified focused chain-compiler coverage is green in the 026 worktree:
+  - `clojure -M:test --focus psi.agent-session.workflow-agent-chain-test --focus psi.agent-session.workflow-model-test --focus psi.agent-session.workflow-resolvers-test`
 
 Notes:
-- The deterministic workflow substrate now covers state model, statechart compilation, run creation, attempt/session linkage, result progression, Pathom/EQL read exposure, `psi-tool` control operations, and a representative chain-like proof.
-- Remaining work is primarily implementing the `agent-chain` compilation/delegation slice rather than resolving major ambiguity.
+- The deterministic workflow substrate now covers state model, statechart compilation, run creation, attempt/session linkage, result progression, Pathom/EQL read exposure, `psi-tool` control operations, a representative chain-like proof, and pure `agent-chain` compilation into canonical workflow definitions.
+- Remaining work is primarily deciding and implementing the runtime launch/registration path for compiled chain definitions.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.

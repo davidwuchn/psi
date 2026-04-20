@@ -9,18 +9,21 @@
    :step-order ["plan" "build" "review"]
    :steps {"plan" {:label "Plan"
                     :executor {:type :agent :profile "planner" :mode :sync}
+                    :prompt-template "$INPUT"
                     :input-bindings {:task {:source :workflow-input :path [:task]}}
                     :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
                     :retry-policy {:max-attempts 2 :retry-on #{:execution-failed :validation-failed}}
                     :capability-policy {:tools #{"read" "bash"}}}
            "build" {:label "Build"
                      :executor {:type :agent :profile "builder" :mode :async}
+                     :prompt-template "Execute this plan: $INPUT"
                      :input-bindings {:plan {:source :step-output :path ["plan" :outputs :plan]}}
                      :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
                      :retry-policy {:max-attempts 2 :retry-on #{:execution-failed}}
                      :capability-policy {:tools #{"read" "edit" "write" "bash"}}}
            "review" {:label "Review"
                       :executor {:type :agent :profile "reviewer" :mode :sync}
+                      :prompt-template "Review this implementation: $INPUT"
                       :input-bindings {:build-result {:source :step-output :path ["build" :outputs]}}
                       :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
                       :retry-policy {:max-attempts 1 :retry-on #{:validation-failed}}}}})
@@ -50,7 +53,8 @@
       (is (workflow-model/valid-workflow-state? state))))
 
   (testing "workflow definition schema accepts sequential agent-backed slice-one shape"
-    (is (workflow-model/valid-workflow-definition? valid-definition)))
+    (is (workflow-model/valid-workflow-definition? valid-definition))
+    (is (= "$INPUT" (get-in valid-definition [:steps "plan" :prompt-template]))))
 
   (testing "workflow run schema accepts canonical run nesting"
     (is (workflow-model/valid-workflow-run? valid-run))))

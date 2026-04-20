@@ -77,6 +77,7 @@
    [:label {:optional true} [:maybe :string]]
    [:description {:optional true} [:maybe :string]]
    [:executor workflow-executor-schema]
+   [:prompt-template {:optional true} [:maybe :string]]
    [:input-bindings {:optional true} [:map-of :keyword workflow-binding-ref-schema]]
    [:result-schema :any]
    [:retry-policy workflow-retry-policy-schema]

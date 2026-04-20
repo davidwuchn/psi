@@ -23,6 +23,7 @@
    :steps {"plan" {:label "Plan"
                     :description "Create a plan"
                     :executor {:type :agent :profile "planner" :mode :sync}
+                    :prompt-template "$INPUT"
                     :input-bindings {:task {:source :workflow-input :path [:task]}}
                     :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
                     :retry-policy {:max-attempts 2 :retry-on #{:execution-failed :validation-failed}}
@@ -30,6 +31,7 @@
            "build" {:label "Build"
                      :description "Implement the plan"
                      :executor {:type :agent :profile "builder" :mode :async}
+                     :prompt-template "Execute this plan:\n\n$INPUT\n\nOriginal request: $ORIGINAL"
                      :input-bindings {:plan {:source :step-output :path ["plan" :outputs :plan]}}
                      :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
                      :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}
@@ -84,6 +86,7 @@
                                        [:psi.workflow.step/id
                                         :psi.workflow.step/label
                                         :psi.workflow.step/executor
+                                        :psi.workflow.step/prompt-template
                                         :psi.workflow.step/input-bindings
                                         :psi.workflow.step/retry-policy
                                         :psi.workflow.step/capability-policy]}]}
@@ -116,6 +119,8 @@
       (is (= "Plan" (:psi.workflow.step/label plan-step)))
       (is (= {:type :agent :profile "planner" :mode :sync}
              (:psi.workflow.step/executor plan-step)))
+      (is (= "$INPUT"
+             (:psi.workflow.step/prompt-template plan-step)))
       (is (= #{"read" "bash"}
              (get-in plan-step [:psi.workflow.step/capability-policy :tools])))
       (is (= run-id (:psi.workflow.run/id workflow-run)))
@@ -141,6 +146,10 @@
       (is (= :running (:psi.workflow.run/status run-detail)))
       (is (= "plan-build-review"
              (get-in run-detail [:psi.workflow.run/effective-definition :psi.workflow.definition/id])))
+      (is (= "$INPUT"
+             (get-in run-detail [:psi.workflow.run/effective-definition
+                                 :psi.workflow.definition/steps 0
+                                 :psi.workflow.step/prompt-template])))
       (is (= 2 (count (:psi.workflow.run/step-runs run-detail))))
       (is (= [(:session-id execution-session)]
              (:psi.workflow.run/execution-session-ids run-detail)))

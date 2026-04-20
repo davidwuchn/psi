@@ -116,11 +116,13 @@ Bootstrapped on 2026-04-02.
 - 026 follow-on direction is now clearer:
   - `agent-chain` is currently only a discovery/config surface from `.psi/agents/agent-chain.edn`
   - existing extension workflow runtime in `workflows.clj` is separate and should not become the execution substrate for canonical deterministic workflow runs
-  - next 026 slice should compile `agent-chain` config into canonical workflow definitions and keep `agent-chain` as a thin compatibility surface over `:workflows`
+  - pure chain compilation now exists in `workflow_agent_chain.clj`
+  - compiled chain definitions preserve legacy prompt text as `:prompt-template` plus explicit bindings for workflow input, prior-step output, and original request
+  - next 026 slice is no longer "invent the compiler"; it is choosing and implementing the runtime launch/registration path for compiled chain definitions
 
 ## Suggested next step
 - Next active threads are now:
-  1. **026 deterministic workflows**: implement the `agent-chain` compilation/delegation slice on top of canonical workflow definitions/runs
+  1. **026 deterministic workflows**: decide and implement where compiled `agent-chain` definitions are registered/launched from in the runtime surface
   2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
   3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
   4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
