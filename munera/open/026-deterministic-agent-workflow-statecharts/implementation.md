@@ -242,6 +242,11 @@ Notes:
 - Decision taken: keep `workflow_execution` as an internal orchestration layer for now rather than forcing it through the current `psi_tool` load graph. Revisit once execution control surfaces can be introduced without creating a cyclic dependency.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
 
+2026-04-20 — graph-surface-test StackOverflow fix
+- Nested join specs in `::pco/output` for `workflow-definitions-root` and `workflow-runs-root` caused StackOverflowError during Pathom graph introspection. Replaced with flat top-level key lists — the `->eql` helpers already pre-project nested data as plain maps.
+- `agent-session-workflow-run-ref` resolver was excluded from the root resolver list. It made `:psi.workflow.run/id` root-reachable which chained into `workflow-run-detail` and caused a StackOverflow in the `root-queryable-attrs-contract-test` (which queries all ~272 root attrs simultaneously). Entity-targeted workflow run detail queries use `{:psi.workflow.run/id id}` as an explicit entity seed.
+- Full suite now matches refactor baseline: 1360 tests, 6 errors, 18 failures — all pre-existing (LSP tests + agent-chain global-state pollution test).
+
 2026-04-19 — worktree mixup cleanup
 - Diagnosed mixed-worktree edits after the aborted `psi-tool` execute/resume exposure attempt.
 - Restored the only uncommitted 026 stray edit in `components/agent-session/test/psi/agent_session/tools_test.clj` back to `HEAD`.
