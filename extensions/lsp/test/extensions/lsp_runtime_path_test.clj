@@ -18,7 +18,7 @@
 
 (def ^:private lsp-fixture-command
   [(or (System/getenv "BB") "bb")
-   (str (.getCanonicalPath (java.io.File. "extensions/test/extensions/lsp_fixture_bb.clj")))])
+   (str (.getCanonicalPath (java.io.File. "extensions/lsp/test/extensions/lsp_fixture_bb.clj")))])
 
 (defn- create-temp-worktree []
   (let [dir (io/file (test-support/temp-cwd))

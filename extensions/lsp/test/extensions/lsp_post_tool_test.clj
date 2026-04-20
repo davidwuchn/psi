@@ -169,7 +169,7 @@
                                                :enrichments []}
                                  :worktree-path root
                                  :config {:command [(or (System/getenv "BB") "bb")
-                                                    (str (.getCanonicalPath (java.io.File. "extensions/test/extensions/lsp_fixture_bb.clj")))]
+                                                    (str (.getCanonicalPath (java.io.File. "extensions/lsp/test/extensions/lsp_fixture_bb.clj")))]
                                           :startup-timeout-ms 2000
                                           :diagnostics-timeout-ms 2000}})
           svc (services/service-in ctx (sut/workspace-key root))]
