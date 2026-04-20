@@ -1,0 +1,24 @@
+- [x] Refine the problem statement and intended outcome with the user
+- [x] Choose the primary abstraction framing and naming
+- [x] Decide first-slice scope boundaries and explicit non-goals
+- [x] Define execution unit and step output contract
+- [x] Define workflow-run ↔ agent-session relationship
+- [x] Define failure, retry, cancel, and blocked-on-user semantics
+- [x] Define minimum introspection/query surface
+- [x] Decide initial consumer/migration target
+- [x] Convert the agreed design into `plan.md`
+
+Implementation checkpoints:
+- [ ] Define canonical root-state placement, entity names, and linkage attrs for workflow definitions, runs, step runs, and step attempts
+- [ ] Add malli schemas for workflow definitions, step definitions, runs, attempts, result envelopes, retry policy, and capability policy
+- [ ] Define the workflow→statechart compilation boundary and explicit event/status model for slice one
+- [ ] Implement workflow run creation and effective-definition snapshot capture
+- [ ] Implement one execution session per step attempt, with workflow linkage written into canonical sessions
+- [ ] Implement structured result-envelope submission, validation, and advancement logic
+- [ ] Implement simple retry behavior for validation failure and execution failure
+- [ ] Implement blocked/resume semantics with resume creating a new attempt
+- [ ] Expose workflow definitions and runs through Pathom/EQL, including workflow↔session relationships
+- [ ] Extend `psi-tool` with `action: "workflow"` and slice-one ops (`list-definitions`, `create-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
+- [ ] Add focused tests for the sequential workflow lifecycle and introspection surface
+- [ ] Prove a representative chain-like workflow (e.g. plan→build→review) on top of the primitive
+- [ ] Evaluate follow-on integration path for `agent-chain` once the lower-level primitive is proven
