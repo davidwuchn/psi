@@ -73,5 +73,36 @@
                  (get-in run [:step-runs "step-1-planner" :accepted-result])))
           (is (= [{:session-id (:execution-session-id result)
                    :prompt "ship it"}]
-                 @prompted*)))))
-    ))
+                 @prompted*)))))))
+
+(deftest execute-run-test
+  (testing "execute-run! drives a sequential workflow through all steps to completion"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[state1 _ _] (workflow-runtime/register-definition state definition)
+                           [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "plan-build"
+                                                                            :run-id "run-1"
+                                                                            :workflow-input {:input "ship it"
+                                                                                             :original "build this feature"}})]
+                       state2)))
+          prompts*   (atom [])
+          responses* (atom ["planner output" "builder output"])]
+      (with-redefs [psi.agent-session.core/prompt-in! (fn [_ctx child-session-id prompt]
+                                                        (swap! prompts* conj {:session-id child-session-id :prompt prompt})
+                                                        nil)
+                    psi.agent-session.core/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                       (let [resp (first @responses*)]
+                                                                         (swap! responses* subvec 1)
+                                                                         {:content resp}))]
+        (let [result (workflow-execution/execute-run! ctx session-id "run-1")
+              run    (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")]
+          (is (= :completed (:status result)))
+          (is (true? (:terminal? result)))
+          (is (= 2 (count (:steps-executed result))))
+          (is (= :completed (:status run)))
+          (is (= {:outcome :ok :outputs {:text "builder output"}}
+                 (get-in run [:step-runs "step-2-builder" :accepted-result])))
+          (is (= ["ship it"
+                  "Execute this plan:\n\nplanner output\n\nOriginal request: build this feature"]
+                 (mapv :prompt @prompts*))))))))

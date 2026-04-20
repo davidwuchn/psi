@@ -2,13 +2,13 @@
   "Impure execution helpers for canonical deterministic workflow runs.
 
    This slice bridges canonical workflow definitions/runs to actual bounded
-   session execution for the current step attempt. It intentionally keeps
-   orchestration thin:
+   session execution for workflow attempts. It now provides:
    - materialize step inputs from canonical bindings
    - render legacy-compatible prompt templates
    - create one attempt child session for the current step
    - prompt that session
-   - record a canonical structured result envelope back onto the workflow run"
+   - record a canonical structured result envelope back onto the workflow run
+   - loop execution across sequential steps until terminal or blocked state"
   (:require
    [clojure.string :as str]
    [psi.agent-session.core :as session]
@@ -66,7 +66,17 @@
     {:step-inputs step-inputs
      :prompt     (render-prompt-template (:prompt-template step-def) step-inputs)}))
 
-(defn execute-current-step! 
+(defn- assistant-message-text
+  [assistant-message]
+  (or (:content assistant-message)
+      (some->> (:content assistant-message)
+               (filter map?)
+               (some (fn [block]
+                       (when (= :text (:type block))
+                         (:text block)))))
+      ""))
+
+(defn execute-current-step!
   "Execute the current workflow step as one bounded child-session attempt.
 
    Returns {:run-id ... :step-id ... :attempt-id ... :execution-session-id ... :status ...}
@@ -98,11 +108,8 @@
     (try
       (session/prompt-in! ctx (:session-id execution-session) prompt)
       (let [assistant-message (session/last-assistant-message-in ctx (:session-id execution-session))
-            text              (or (:content assistant-message)
-                                  (some-> assistant-message :content first :text)
-                                  "")
             envelope          {:outcome :ok
-                               :outputs {:text (str text)}}]
+                               :outputs {:text (assistant-message-text assistant-message)}}]
         (swap! (:state* ctx) workflow-progression/submit-result-envelope run-id step-id envelope)
         {:run-id run-id
          :step-id step-id
@@ -112,3 +119,30 @@
       (catch Exception e
         (swap! (:state* ctx) workflow-progression/record-execution-failure run-id step-id {:message (ex-message e)})
         (throw e)))))
+
+(defn execute-run!
+  "Execute a sequential workflow run until it reaches a terminal or blocked status.
+
+   Returns {:run-id ... :status ... :steps-executed [...] :terminal? bool :blocked? bool}."
+  [ctx parent-session-id run-id]
+  (loop [steps-executed []]
+    (let [run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)
+          status (:status run)]
+      (cond
+        (contains? #{:completed :failed :cancelled} status)
+        {:run-id run-id
+         :status status
+         :steps-executed steps-executed
+         :terminal? true
+         :blocked? false}
+
+        (= :blocked status)
+        {:run-id run-id
+         :status status
+         :steps-executed steps-executed
+         :terminal? false
+         :blocked? true}
+
+        :else
+        (let [step-result (execute-current-step! ctx parent-session-id run-id)]
+          (recur (conj steps-executed (select-keys step-result [:step-id :attempt-id :execution-session-id :status]))))))))

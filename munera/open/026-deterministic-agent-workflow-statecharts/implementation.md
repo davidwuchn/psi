@@ -223,5 +223,14 @@ Notes:
   - step input materialization + prompt rendering
   - bounded current-step execution that creates an attempt session and advances the workflow
 
-- Remaining likely follow-on is broadening this execution bridge from the current single-step helper into full runtime-owned orchestration across retries, failure handling, and multi-step chain execution loops.
+- Added `execute-run!` to `workflow_execution.clj`
+- `execute-run!` now loops canonical sequential workflow execution until the run becomes:
+  - `:completed`
+  - `:failed`
+  - `:cancelled`
+  - `:blocked`
+- Added focused tests proving:
+  - multi-step sequential execution reaches terminal completion
+  - downstream prompts consume prior-step canonical outputs
+- Remaining likely follow-on is broadening this orchestration from the current happy-path sequential loop into richer runtime-owned retry, blocked, and resumable execution control surfaces.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
