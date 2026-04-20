@@ -1,0 +1,15 @@
+- [x] Add explicit helpers for `.psi/project.edn` and `.psi/project.local.edn`
+- [x] Make project preference reads deep-merge shared then local
+- [x] Define and implement deep-merge replacement semantics for non-map values
+- [x] Emit warnings for malformed shared/local project config files while preserving best-effort fallback
+- [x] Make agent-session project preference writes target `.psi/project.local.edn`
+- [x] If existing local config is malformed during write, warn and treat it as empty input
+- [x] Preserve unrelated local keys during local-file writes
+- [x] Ensure all project config consumers use the same shared-then-local deep-merge rule
+- [x] Ensure project nREPL config uses layered project config resolution
+- [x] Ensure `/model` persists to the local project config file
+- [x] Ensure `/thinking` persists to the local project config file
+- [x] Update user-facing path/help text where writable project config is referenced
+- [x] Update project nREPL help/error text for the layered project-config model
+- [x] Gitignore `.psi/project.local.edn`
+- [x] Add focused tests for precedence, deep merge, warnings/fallback, malformed-local-on-write behavior, project nREPL consumer adoption, and write-target behavior
