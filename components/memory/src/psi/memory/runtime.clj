@@ -385,7 +385,6 @@
          git-ctx          (or (:git-ctx opts) (git/create-context cwd*))
          memory-ctx       (or (:memory-ctx opts) (memory/global-context))
          git-head         (current-head git-ctx)
-         _                (cache-head-for-cwd! cwd* git-head)
          _                (when (or (some? (:retention-snapshots runtime-config*))
                                     (some? (:retention-deltas runtime-config*)))
                             (memory/set-retention-in! memory-ctx

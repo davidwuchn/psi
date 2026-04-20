@@ -1,4 +1,7 @@
-- [ ] Inspect current request preparation and skill-prelude composition
+- [x] Inspect current request preparation and skill-prelude composition
 - [ ] Implement intended cache-breakpoint shaping
-- [ ] Remove/simplify residual prompt-path seams and hooks
-- [ ] Add or tighten focused proof
+- [x] Remove/simplify residual prompt-path seams and hooks
+- [x] Add or tighten focused proof
+  - [x] prove `prompt-in!` owns post-turn git-head sync
+  - [x] prove `sync-memory-layer!` does not clobber git-head baseline detection
+  - [x] prove app-runtime prompt wrapper path resolves to a single sync owner

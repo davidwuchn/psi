@@ -137,6 +137,12 @@ Bootstrapped on 2026-04-02.
 - Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes.
 - `008-model-selection-hierarchy` is now closed in `munera/closed/008-model-selection-hierarchy/`.
 - Model selection hierarchy is now available as shared infrastructure and already adopted by auto-session-name; remaining work is downstream adoption/refinement rather than core resolver invention.
+- Prompt/git-head-sync debugging outcome now established:
+  - canonical prompt-turn sync ownership should live in `psi.agent-session.prompt-control/prompt-in!`
+  - app-runtime and RPC prompt wrappers must not duplicate post-turn git-head sync once they route through `prompt-in!`
+  - `psi.memory.runtime/sync-memory-layer!` must not mutate the per-cwd git-head baseline cache; only `maybe-sync-on-git-head-change!` should advance that baseline
+  - live project-nREPL validation confirmed that after the fixes the app-runtime prompt path emits `git_commit_created` and reaches `extensions.commit-checks`
+  - absence of visible commit-check follow-up can simply mean configured checks passed/skipped; it is no longer evidence that the event path failed
 
 ## Notes for future ψ
 - `munera/plan.md` is now the main active-work tracker, with the active threads split into task directories under `munera/open/`.

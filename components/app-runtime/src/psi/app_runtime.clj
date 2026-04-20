@@ -178,9 +178,7 @@ Available: " (str/join ", " (map name (keys all))))
         prepared  (session/prompt-in! ctx session-id text images
                                      (cond-> {}
                                        progress-queue
-                                       (assoc :progress-queue progress-queue)))
-        _         (when sync-on-git-head-change?
-                    (runtime/safe-maybe-sync-on-git-head-change! ctx session-id))]
+                                       (assoc :progress-queue progress-queue)))]
     {:assistant-message (session/last-assistant-message-in ctx session-id)
      :prepared-request (:prepared-request prepared)
      :ai-model ai-model}))

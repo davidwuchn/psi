@@ -8,6 +8,7 @@
    [psi.agent-session.prompt-chain]
    [psi.agent-session.prompt-request]
    [psi.agent-session.prompt-runtime]
+   [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [clojure.java.io :as io]
@@ -148,6 +149,29 @@
       (is (= :idle (ss/sc-phase-in ctx session-id)))
       (is (false? (:is-streaming (ss/get-session-data-in ctx session-id))))
       (is (= ["user" "assistant"] (mapv :role msgs))))))
+
+(deftest prompt-in-runs-git-head-sync-after-turn-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        sync-calls       (atom [])]
+    (dispatch/clear-event-log!)
+    (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
+                  (fn [_ctx sid]
+                    (swap! sync-calls conj sid)
+                    {:ok? true})
+                  psi.agent-session.prompt-runtime/execute-prepared-request!
+                  (fn [_ai-ctx _ctx sid prepared _pq]
+                    {:execution-result/turn-id (:prepared-request/id prepared)
+                     :execution-result/session-id sid
+                     :execution-result/assistant-message {:role "assistant"
+                                                          :content [{:type :text :text "hello back"}]
+                                                          :stop-reason :stop
+                                                          :timestamp (java.time.Instant/now)}
+                     :execution-result/turn-outcome :turn.outcome/stop
+                     :execution-result/tool-calls []
+                     :execution-result/stop-reason :stop})]
+      (session/prompt-in! ctx session-id "hello")
+      (is (= [session-id] @sync-calls)
+          "prompt-in! should run git-head sync after a normal prompt turn"))))
 
 (deftest abort-cancels-active-prompt-runtime-test
   (let [[ctx session-id] (create-session-context {:persist? false})

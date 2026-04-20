@@ -12,6 +12,7 @@
    [psi.app-runtime.transcript]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-runtime]
+   [psi.agent-session.runtime :as runtime]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.project-preferences :as project-prefs]
@@ -208,6 +209,54 @@
               (is (some #(= :session/prompt-record-response (:event-type %)) entries))
               (is (some #(= :session/prompt-finish (:event-type %)) entries))
               (is (= ["user" "assistant" "user"] roles))))))
+      (finally
+        (reset! app-runtime/session-state orig-state)))))
+
+(deftest submit-prompt-in-runs-git-head-sync-after-successful-turn-test
+  (let [orig-state @app-runtime/session-state
+        sync-calls (atom [])]
+    (try
+      (with-main-bootstrap-stubs
+        (fn []
+          (dispatch/clear-event-log!)
+          (with-redefs [clojure.core/read-line
+                        (let [calls (atom 0)]
+                          (fn []
+                            (case (swap! calls inc)
+                              1 "/quit"
+                              nil)))
+                        runtime/safe-maybe-sync-on-git-head-change!
+                        (fn [_ctx sid]
+                          (swap! sync-calls conj sid)
+                          {:ok? true})
+                        psi.agent-session.prompt-runtime/execute-prepared-request!
+                        (fn [_ai-ctx _ctx sid prepared _progress-queue]
+                          {:execution-result/turn-id (:prepared-request/id prepared)
+                           :execution-result/session-id sid
+                           :execution-result/prepared-request-id (:prepared-request/id prepared)
+                           :execution-result/assistant-message {:role "assistant"
+                                                                :content [{:type :text :text "hello from app-runtime sync"}]
+                                                                :stop-reason :stop
+                                                                :timestamp (java.time.Instant/now)}
+                           :execution-result/turn-outcome :turn.outcome/stop
+                           :execution-result/tool-calls []
+                           :execution-result/stop-reason :stop})]
+            (app-runtime/run-session :ignored)
+            (let [ctx (:ctx @app-runtime/session-state)
+                  session-id (-> @app-runtime/session-state
+                                 :ctx
+                                 ss/list-context-sessions-in
+                                 first
+                                 :session-id)]
+              (#'app-runtime/submit-prompt-in!
+               ctx
+               session-id
+               (:ai-model @app-runtime/session-state)
+               "hello"
+               nil
+               {:sync-on-git-head-change? true})
+              (is (= [session-id] @sync-calls)
+                  "submit-prompt-in! runs git-head sync once after a successful prompt turn")))))
       (finally
         (reset! app-runtime/session-state orig-state)))))
 

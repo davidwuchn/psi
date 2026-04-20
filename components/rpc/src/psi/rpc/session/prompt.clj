@@ -107,8 +107,6 @@
                                                                   :session-id session-id})
                                     (when assistant
                                       (emit/emit-assistant-message! emit! session-id assistant))
-                                    (when sync-on-git-head-change?
-                                      (runtime/safe-maybe-sync-on-git-head-change! ctx session-id))
                                     (emit/emit-session-snapshots! emit! ctx state session-id))))
                               (catch Throwable t
                                 (emit! "error" {:error-code "runtime/failed"

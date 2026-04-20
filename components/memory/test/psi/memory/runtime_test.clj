@@ -137,6 +137,60 @@
         (is (= 1 (count @sync-calls)))
         (is (= cwd (:cwd (first @sync-calls))))))))
 
+(deftest sync-memory-layer-does-not-clobber-git-head-baseline-test
+  (let [cwd        (str "/tmp/psi-runtime-test-sync-cache-" (random-uuid))
+        git-ctx    {:repo-dir cwd}
+        memory-ctx (memory/create-context)
+        heads      (atom ["sha-1" "sha-2" "sha-2"])]
+    (reset! @#'runtime/git-head-cache {})
+    (with-redefs [git/create-context (fn
+                                       ([] git-ctx)
+                                       ([_] git-ctx))
+                  git/current-commit (fn [_]
+                                       (let [head (first @heads)]
+                                         (swap! heads subvec 1)
+                                         head))
+                  git/log (fn [_ _] [])
+                  git/operation-state (fn [_]
+                                        {:merge? false
+                                         :rebase? false
+                                         :cherry-pick? false
+                                         :revert? false
+                                         :bisect? false
+                                         :transient? false})
+                  git/head-reflog-latest (fn [_]
+                                           {:head "sha-2"
+                                            :selector "HEAD@{0}"
+                                            :subject "commit: normal commit"})
+                  git/commit-parent-count (fn [_ _] 1)
+                  runtime/current-capability-graph (fn [] {:status :stable})
+                  runtime/maybe-register-store-provider! (fn [_ _] {:ok? true})
+                  memory/activate-in! (fn [_ _] {:ready? true})
+                  memory/capture-graph-change-in! (fn [_ _] {:ok? true :changed? false})]
+      (let [baseline (runtime/maybe-sync-on-git-head-change! {:cwd cwd
+                                                              :git-ctx git-ctx
+                                                              :memory-ctx memory-ctx
+                                                              :query-ctx :query})]
+        (is (= :head-baseline-established (:reason baseline)))
+        (is (= "sha-1" (#'runtime/cached-head-for-cwd cwd))))
+
+      (runtime/sync-memory-layer! {:cwd cwd
+                                   :git-ctx git-ctx
+                                   :memory-ctx memory-ctx
+                                   :query-ctx :query})
+
+      (is (= "sha-1" (#'runtime/cached-head-for-cwd cwd))
+          "standalone sync-memory-layer! should not advance git-head baseline")
+
+      (let [result (runtime/maybe-sync-on-git-head-change! {:cwd cwd
+                                                            :git-ctx git-ctx
+                                                            :memory-ctx memory-ctx
+                                                            :query-ctx :query})]
+        (is (= :head-changed (:reason result)))
+        (is (true? (:changed? result)))
+        (is (= "sha-1" (:previous-head result)))
+        (is (= "sha-2" (:head result)))))))
+
 (deftest maybe-sync-on-git-head-change-classifies-rebase-without-extension-notify
   (let [cwd     (str "/tmp/psi-runtime-test-rebase-" (random-uuid))
         git-ctx {:repo-dir cwd}

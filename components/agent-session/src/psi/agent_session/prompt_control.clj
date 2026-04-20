@@ -5,6 +5,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-runtime :as prompt-runtime]
+   [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]))
 
 (defn- extract-text-from-content-blocks
@@ -58,15 +59,17 @@
                                       {:origin :core})
          turn-id  (:turn-id submit-r)
          _        (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :core})]
-     (dispatch/dispatch! ctx :session/prompt-prepare-request
-                         (cond-> {:session-id session-id
-                                  :turn-id    turn-id
-                                  :user-msg   user-msg}
-                           (:progress-queue opts)
-                           (assoc :progress-queue (:progress-queue opts))
-                           (:runtime-opts opts)
-                           (assoc :runtime-opts (:runtime-opts opts)))
-                         {:origin :core}))))
+     (let [result (dispatch/dispatch! ctx :session/prompt-prepare-request
+                                      (cond-> {:session-id session-id
+                                               :turn-id    turn-id
+                                               :user-msg   user-msg}
+                                        (:progress-queue opts)
+                                        (assoc :progress-queue (:progress-queue opts))
+                                        (:runtime-opts opts)
+                                        (assoc :runtime-opts (:runtime-opts opts)))
+                                      {:origin :core})]
+       (runtime/safe-maybe-sync-on-git-head-change! ctx session-id)
+       result))))
 
 (defn last-assistant-message-in
   "Return the last assistant message from the session journal, or nil."
