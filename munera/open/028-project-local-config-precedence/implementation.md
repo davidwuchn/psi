@@ -1,33 +1,54 @@
 2026-04-20
-- Task created from user request to support `.psi/project.local.edn` as a higher-precedence writable project config layer.
-- Requested baseline semantics captured:
-  - `.psi/project.local.edn` takes priority over `.psi/project.edn`
-  - `/model` writes to `.psi/project.local.edn`
-  - `/thinking` writes to `.psi/project.local.edn`
-- Initial likely implementation surfaces identified:
-  - `components/agent-session/src/psi/agent_session/project_preferences.clj`
-  - `components/agent-session/src/psi/agent_session/config_resolution.clj`
-  - command/help text and any project-config path reporting that currently names `.psi/project.edn`
+- Implemented layered project preferences in `components/agent-session/src/psi/agent_session/project_preferences.clj`.
+- Added explicit helpers for:
+  - shared project config: `.psi/project.edn`
+  - local project config: `.psi/project.local.edn`
+- Effective project prefs now deep-merge:
+  - defaults
+  - shared project config
+  - local project config
+- Merge semantics are explicit:
+  - map + map => recursive merge
+  - any non-map collision => later/local value replaces earlier/shared value
+- Malformed shared/local files now emit warnings to stderr and are ignored best-effort.
+- Local writes now target only `.psi/project.local.edn`.
+- If local config is malformed during write, the write path warns and treats local content as empty input.
+- Added focused proof in `components/agent-session/test/psi/agent_session/project_preferences_test.clj` covering:
+  - shared/local path helpers
+  - deep merge behavior
+  - non-map replacement semantics
+  - shared-only fallback
+  - local-only fallback
+  - malformed local fallback
+  - malformed shared fallback
+  - both-invalid fallback
+  - local-only write target
+  - unrelated local key preservation
+  - malformed-local-on-write behavior
+- Committed as:
+  - `63bb10c` — `⚒ config: add layered project-local prefs`
 
 2026-04-20
-- Scope refined collaboratively to remove ambiguity.
-- Confirmed design decisions:
-  - project config layering is general, not special-cased to `/model` and `/thinking`
-  - effective project config deep-merges `.psi/project.edn` then `.psi/project.local.edn`
-  - `.psi/project.local.edn` takes precedence for overlapping keys and nested paths
-  - config may live in either file
-  - persisted project preference writes target only `.psi/project.local.edn`
-  - malformed shared/local config files should use best-effort fallback and emit warnings
-  - `.psi/project.local.edn` should be gitignored
-- Important consequence:
-  - this task must check all project-config consumers, not just the command write path
-
-2026-04-20
-- Follow-on forgotten-consumer/edge-case pass completed.
-- Additional concrete scope now captured:
-  - project nREPL config is a definite project-config consumer and must adopt the layered model
-  - docs/help paths currently mentioning only `.psi/project.edn` need review, especially configuration and project nREPL docs/messages
-  - deep-merge semantics must be explicit: maps recurse; non-map values are replaced by the later/local value
-  - malformed shared + malformed local falls back to defaults with warnings
-  - if `.psi/project.local.edn` is malformed during a write, warn and treat its existing content as empty input for the write path
-  - warning/fallback behavior should not by itself rewrite or normalize malformed files
+- Adopted layered project-local precedence in consumers and docs.
+- Updated config-resolution docs/comments to reflect:
+  - session > project-local > project-shared > user > system
+- Confirmed the main general consumer path still goes through `project-prefs/read-preferences`, so layered resolution is shared rather than duplicated.
+- Updated project nREPL help/error text and exception metadata to mention both:
+  - `.psi/project.edn`
+  - `.psi/project.local.edn`
+- Updated tests proving project nREPL command guidance names the local override file.
+- Strengthened model/thinking persistence proof in `model_dispatch_test.clj` to show:
+  - persisted project updates land in `.psi/project.local.edn`
+  - shared `.psi/project.edn` is not rewritten
+  - effective reads still include shared config merged under local overrides
+- Updated `.gitignore` to ignore `.psi/project.local.edn` instead of `.psi/project.edn`, aligning repo ergonomics with the shared-vs-local model.
+- Updated user-facing docs:
+  - `README.md`
+  - `doc/configuration.md`
+  - `doc/project-nrepl.md`
+- Focused test proof run:
+  - `clojure -M:test --focus psi.agent-session.project-preferences-test --focus psi.agent-session.config-resolution-test --focus psi.agent-session.project-nrepl-config-test --focus psi.agent-session.project-nrepl-commands-test --focus psi.agent-session.model-dispatch-test`
+  - result: `24 tests, 194 assertions, 0 failures`
+- Full unit task was not used as final proof because the repository currently has unrelated pre-existing failures in `psi.agent-session.resolvers-test` around authenticated provider expectations including local providers.
+- Committed as:
+  - `15d09e2` — `⚒ config: adopt project-local precedence`
