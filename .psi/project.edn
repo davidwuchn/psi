@@ -1,0 +1,4 @@
+{:version 1
+ :agent-session
+ {:project-nrepl
+  {:start-command ["clojure" "-M:run:dev:test-paths" "--nrepl"]}}}

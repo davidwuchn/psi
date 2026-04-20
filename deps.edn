@@ -32,7 +32,18 @@
                         "components/query/src"
                         "components/tui/src"
                         "components/rpc/src"
-                        "extensions/src"]
+                        "extensions/agent/src"
+                        "extensions/agent-chain/src"
+                        "extensions/auto-session-name/src"
+                        "extensions/commit-checks/src"
+                        "extensions/hello-ext/src"
+                        "extensions/lsp/src"
+                        "extensions/mcp-tasks-run/src"
+                        "extensions/mementum/src"
+                        "extensions/munera/src"
+                        "extensions/plan-state-learning/src"
+                        "extensions/work-on/src"
+                        "extensions/workflow-display/src"]
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "psi.main"]}
@@ -45,7 +56,18 @@
                         "components/query/src"
                         "components/tui/src"
                         "components/rpc/src"
-                        "extensions/src"]
+                        "extensions/agent/src"
+                        "extensions/agent-chain/src"
+                        "extensions/auto-session-name/src"
+                        "extensions/commit-checks/src"
+                        "extensions/hello-ext/src"
+                        "extensions/lsp/src"
+                        "extensions/mcp-tasks-run/src"
+                        "extensions/mementum/src"
+                        "extensions/munera/src"
+                        "extensions/plan-state-learning/src"
+                        "extensions/work-on/src"
+                        "extensions/workflow-display/src"]
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "psi.main"]}
@@ -92,7 +114,16 @@
                              "components/rpc/test"
                              "components/agent-core/test"
                              "components/agent-session/test"
-                             "extensions/test"
+                             "extensions/agent/test"
+                             "extensions/agent-chain/test"
+                             "extensions/auto-session-name/test"
+                             "extensions/commit-checks/test"
+                             "extensions/hello-ext/test"
+                             "extensions/lsp/test"
+                             "extensions/mcp-tasks-run/test"
+                             "extensions/plan-state-learning/test"
+                             "extensions/work-on/test"
+                             "extensions/workflow-display/test"
                              "components/extension-test-helpers/src"]
                :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}
                              nrepl/nrepl         {:mvn/version "1.5.1"}}
@@ -112,7 +143,16 @@
                         "components/rpc/test"
                         "components/agent-core/test"
                         "components/agent-session/test"
-                        "extensions/test"
+                        "extensions/agent/test"
+                        "extensions/agent-chain/test"
+                        "extensions/auto-session-name/test"
+                        "extensions/commit-checks/test"
+                        "extensions/hello-ext/test"
+                        "extensions/lsp/test"
+                        "extensions/mcp-tasks-run/test"
+                        "extensions/plan-state-learning/test"
+                        "extensions/work-on/test"
+                        "extensions/workflow-display/test"
                         "components/ai/src"
                         "components/engine/src"
                         "components/query/src"
@@ -126,7 +166,18 @@
                         "components/agent-session/src"
                         "components/ui-state/src"
                         "components/system-bootstrap/src"
-                        "extensions/src"
+                        "extensions/agent/src"
+                        "extensions/agent-chain/src"
+                        "extensions/auto-session-name/src"
+                        "extensions/commit-checks/src"
+                        "extensions/hello-ext/src"
+                        "extensions/lsp/src"
+                        "extensions/mcp-tasks-run/src"
+                        "extensions/mementum/src"
+                        "extensions/munera/src"
+                        "extensions/plan-state-learning/src"
+                        "extensions/work-on/src"
+                        "extensions/workflow-display/src"
                         "components/extension-test-helpers/src"]
           :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}
                         nrepl/nrepl         {:mvn/version "1.5.1"}}

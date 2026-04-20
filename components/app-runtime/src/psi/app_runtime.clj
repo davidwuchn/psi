@@ -55,6 +55,7 @@
    [psi.agent-session.mutations :as mutations]
 
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.runtime :as runtime]
@@ -351,7 +352,11 @@ Available: " (str/join ", " (map name (keys all))))
          base-prompt      (sys-prompt/build-system-prompt base-prompt-opts)
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt base-prompt} {:origin :core})
-         ext-paths        (ext/discover-extension-paths [] cwd)
+         install-state    (installs/compute-install-state cwd)
+         _                (installs/persist-install-state-in! ctx install-state)
+         install-plan     (installs/activation-plan install-state)
+         ext-paths        (vec (concat (ext/discover-extension-paths [] cwd)
+                                       (:extension-paths install-plan)))
          psi-tool         (tools/make-psi-tool (fn
                                                  ([q] (session/query-in ctx session-id q))
                                                  ([q entity] (session/query-in ctx q entity)))

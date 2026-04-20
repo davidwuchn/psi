@@ -1,13 +1,36 @@
-{:paths ["src"]
- :deps {org.clojure/clojure         {:mvn/version "1.12.0"}
+{:deps {org.clojure/clojure         {:mvn/version "1.12.0"}
         com.fulcrologic/statecharts {:mvn/version "1.2.25"}
         babashka/process            {:mvn/version "0.6.23"}
         psi/ai                      {:local/root "../components/ai"}
         psi/agent-core              {:local/root "../components/agent-core"}
         psi/agent-session           {:local/root "../components/agent-session"}
-        psi/extension-test-helpers  {:local/root "../components/extension-test-helpers"}}
+        psi/history                 {:local/root "../components/history"}
+        psi/query                   {:local/root "../components/query"}
+        psi/ui-state                {:local/root "../components/ui-state"}
+        psi/extension-test-helpers  {:local/root "../components/extension-test-helpers"}
+        psi/agent                   {:local/root "agent"}
+        psi/agent-chain             {:local/root "agent-chain"}
+        psi/auto-session-name       {:local/root "auto-session-name"}
+        psi/commit-checks           {:local/root "commit-checks"}
+        psi/hello-ext               {:local/root "hello-ext"}
+        psi/lsp                     {:local/root "lsp"}
+        psi/mcp-tasks-run           {:local/root "mcp-tasks-run"}
+        psi/mementum                {:local/root "mementum"}
+        psi/munera                  {:local/root "munera"}
+        psi/plan-state-learning     {:local/root "plan-state-learning"}
+        psi/work-on                 {:local/root "work-on"}
+        psi/workflow-display        {:local/root "workflow-display"}}
 
  :aliases
- {:test {:extra-paths ["test" "../test-support"]
+ {:test {:extra-paths ["agent/test"
+                       "agent-chain/test"
+                       "auto-session-name/test"
+                       "commit-checks/test"
+                       "hello-ext/test"
+                       "lsp/test"
+                       "mcp-tasks-run/test"
+                       "plan-state-learning/test"
+                       "work-on/test"
+                       "workflow-display/test"]
          :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
          :main-opts   ["-m" "kaocha.runner"]}}}

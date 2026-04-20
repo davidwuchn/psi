@@ -1,0 +1,28 @@
+{:deps
+ {psi/agent
+  {:local/root "extensions/agent"
+   :psi/init extensions.agent/init}
+
+  psi/agent-chain
+  {:local/root "extensions/agent-chain"
+   :psi/init extensions.agent-chain/init}
+
+  psi/auto-session-name
+  {:local/root "extensions/auto-session-name"
+   :psi/init extensions.auto-session-name/init}
+
+  psi/commit-checks
+  {:local/root "extensions/commit-checks"
+   :psi/init extensions.commit-checks/init}
+
+  psi/mementum
+  {:local/root "extensions/mementum"
+   :psi/init extensions.mementum/init}
+
+  psi/munera
+  {:local/root "extensions/munera"
+   :psi/init extensions.munera/init}
+
+  psi/work-on
+  {:local/root "extensions/work-on"
+   :psi/init extensions.work-on/init}}}
