@@ -46,9 +46,9 @@
 (defn- run-work-command! [state command]
   ((get-in @state [:commands command :handler]) ""))
 
-(defn- notify-texts [calls]
+(defn- appended-message-texts [calls]
   (->> calls
-       (filter #(= 'psi.extension/notify (first %)))
+       (filter #(= 'psi.extension/append-message (first %)))
        (map (comp :content second))
        vec))
 
@@ -115,7 +115,7 @@
         (is (nil? (handler {:reason :new})))))))
 
 (deftest work-on-command-happy-path-test
-  (testing "/work-on creates worktree, updates session worktree-path, and emits one visible summary via transcript"
+  (testing "/work-on creates worktree, updates session worktree-path, and appends one AI-visible assistant summary"
     (let [created-session (atom nil)
           mutate-calls    (atom [])
           printed         (atom nil)
@@ -144,7 +144,7 @@
                                                                   :branch "fix-footer-not-displayed"
                                                                   :head "abc123"}
                                                psi.extension/set-worktree-path {:psi.agent-session/worktree-path (:worktree-path params)}
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                psi.extension/create-session {:psi.agent-session/session-id "s-created"
                                                                              :psi.agent-session/session-name (:session-name params)
                                                                              :psi.agent-session/worktree-path (:worktree-path params)}
@@ -168,7 +168,7 @@
           (is (= ['git.worktree/add!
                   'psi.extension/set-worktree-path
                   'psi.extension/create-session
-                  'psi.extension/notify]
+                  'psi.extension/append-message]
                  (mapv first @mutate-calls)))
           (is (= {:session-id "s-main"
                   :worktree-path "/repo/fix-footer-not-displayed"
@@ -214,7 +214,7 @@
                                                                   :branch "fix-footer-not-displayed"
                                                                   :head "abc123"}
                                                psi.extension/set-worktree-path {:psi.agent-session/worktree-path (:worktree-path params)}
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                psi.extension/create-session {:psi.agent-session/session-id "s-created"
                                                                              :psi.agent-session/session-name (:session-name params)
                                                                              :psi.agent-session/worktree-path (:worktree-path params)}
@@ -276,7 +276,7 @@
                @create-calls))
         (is (nil? @printed)))))
 
-  (testing "/work-on reuses an existing worktree, updates worktree-path, switches session, and emits one visible summary"
+  (testing "/work-on reuses an existing worktree, updates worktree-path, switches session, and appends one AI-visible assistant summary"
     (let [printed      (atom nil)
           switched     (atom [])
           mutate-calls (atom [])
@@ -306,7 +306,7 @@
                                                git.worktree/add! {:success false
                                                                   :error "worktree path already exists"}
                                                psi.extension/set-worktree-path {:psi.agent-session/worktree-path (:worktree-path params)}
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                psi.extension/switch-session (do (swap! switched conj "s-existing")
                                                                                 {:psi.agent-session/session-id "s-existing"})
                                                nil))})]
@@ -317,7 +317,7 @@
         (is (= ['git.worktree/add!
                 'psi.extension/set-worktree-path
                 'psi.extension/switch-session
-                'psi.extension/notify]
+                'psi.extension/append-message]
                (mapv first @mutate-calls)))
         (is (= {:session-id "s-main"
                 :worktree-path "/repo/fix-repeated-thinking-output"
@@ -330,21 +330,21 @@
         (is (nil? @printed))))))
 
 (deftest work-on-command-usage-error-test
-  (testing "/work-on without description emits usage once via transcript path"
+  (testing "/work-on without description appends usage once into AI-visible conversation"
     (let [mutate-calls (atom [])
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
                                 :mutate-fn (fn [op params]
                                              (swap! mutate-calls conj [op params])
                                              (case op
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})
           printed (atom nil)]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
         ((get-in @state [:commands "work-on" :handler]) "   ")
         (is (nil? @printed))
-        (is (= [['psi.extension/notify
+        (is (= [['psi.extension/append-message
                  {:role "assistant"
                   :content "usage: /work-on <description>"
                   :ext-path "/test/work_on.clj"}]]
@@ -407,7 +407,7 @@
                                    :psi.agent-session/session-name (:session-name params)
                                    :psi.agent-session/worktree-path (:worktree-path params)}
 
-                                  (= op 'psi.extension/notify)
+                                  (= op 'psi.extension/append-message)
                                   {:psi.extension/message params}
 
                                   :else nil))
@@ -452,7 +452,7 @@
                                                git.branch/rebase! {:success true}
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
                                                                                 {:psi.agent-session/session-id (:session-id params)})
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (with-redefs [git/branch-tip-merged-into-current? (worktree-ff-state nil)
                     git/current-branch (fn [_ctx] "main")
@@ -463,8 +463,8 @@
       (is (= ["main-s"] @switched))
       (is (= "/repo/main" (get-in @merge-params [:git/context :cwd]))
           "merge must execute in the main worktree context")
-      (is (re-find #"Fast-forwarded `feature-x` into `main`" (first (notify-texts @mutate-calls))))
-      (is (re-find #"Rebased `feature-x` onto `main`" (second (notify-texts @mutate-calls))))))
+      (is (re-find #"Fast-forwarded `feature-x` into `main`" (first (appended-message-texts @mutate-calls))))
+      (is (re-find #"Rebased `feature-x` onto `main`" (second (appended-message-texts @mutate-calls))))))
 
   (testing "/work-done creates a main-worktree session when none exists"
     (let [mutate-calls (atom [])
@@ -497,7 +497,7 @@
                                                                               sd)
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
                                                                                 {:psi.agent-session/session-id (:session-id params)})
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (with-redefs [git/branch-tip-merged-into-current? (worktree-ff-state nil)
                     git/current-branch (fn [_ctx] "main")
@@ -509,7 +509,7 @@
                :psi.agent-session/worktree-path "/repo/main"}]
              @created))
       (is (= ["s-main-created"] @switched))
-      (is (re-find #"Fast-forwarded `feature-x` into `main`" (first (notify-texts @mutate-calls)))))))
+      (is (re-find #"Fast-forwarded `feature-x` into `main`" (first (appended-message-texts @mutate-calls)))))))
 
 (deftest work-done-auto-rebase-success-test
   (testing "/work-done auto-rebases with a forked sync agent when ff is not yet possible"
@@ -547,7 +547,7 @@
                                                                         {:success true})
                                                git.branch/delete! {:deleted true}
                                                psi.extension/switch-session {:psi.agent-session/session-id "main-s"}
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (with-redefs [git/branch-tip-merged-into-current? (worktree-ff-state ff-state)
                     git/current-branch (fn [_ctx] "main")
@@ -560,7 +560,7 @@
       (is (= "sync" (get-in (first @chain-calls) [:steps 0 :args "mode"])))
       (is (= true (get-in (first @chain-calls) [:steps 0 :args "fork_session"])))
       (is (= 1 @remove-calls))
-      (is (re-find #"after automatic rebase" (first (notify-texts @mutate-calls)))))))
+      (is (re-find #"after automatic rebase" (first (appended-message-texts @mutate-calls)))))))
 
 (deftest work-done-auto-rebase-failure-test
   (testing "/work-done stops with an informative message when automatic rebase fails"
@@ -588,14 +588,14 @@
                                                                                                                      :is-error true}}]}
                                                git.worktree/remove! (do (swap! remove-calls inc)
                                                                         {:success true})
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (with-redefs [git/branch-tip-merged-into-current? (fn [_ctx _branch] false)]
         (sut/init api)
         (run-work-command! state "work-done"))
       (is (= 0 @remove-calls))
       (is (= "automatic rebase onto `main` failed: agent failed"
-             (first (notify-texts @mutate-calls)))))))
+             (first (appended-message-texts @mutate-calls)))))))
 
 (deftest work-done-merge-verification-failure-test
   (testing "/work-done preserves the worktree when merge verification fails"
@@ -623,7 +623,7 @@
                                                git.worktree/remove! (do (swap! remove-calls inc)
                                                                         {:success true})
                                                git.branch/delete! {:deleted true}
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (with-redefs [git/branch-tip-merged-into-current? (fn [ctx branch]
                                                           (cond
@@ -641,7 +641,7 @@
         (sut/init api)
         (run-work-command! state "work-done"))
       (is (= 0 @remove-calls) "worktree removal must not run when merge is not verified")
-      (let [msg (first (notify-texts @mutate-calls))]
+      (let [msg (first (appended-message-texts @mutate-calls))]
         (is (re-find #"merge did not update main; worktree preserved for safety" msg))
         (is (re-find #"source=feature-x" msg))
         (is (re-find #"merge-reported=true" msg))
@@ -668,12 +668,12 @@
                                 :mutate-fn (fn [op params]
                                              (swap! mutate-calls conj [op params])
                                              (case op
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (sut/init api)
       (run-work-command! state "work-done")
       (is (= "already on main worktree; nothing to do"
-             (first (notify-texts @mutate-calls)))))))
+             (first (appended-message-texts @mutate-calls)))))))
 
 (deftest work-main-worktree-guards-and-status-test
   (testing "/work-rebase rejects execution on the main worktree"
@@ -691,12 +691,12 @@
                                 :mutate-fn (fn [op params]
                                              (swap! mutate-calls conj [op params])
                                              (case op
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (sut/init api)
       ((get-in @state [:commands "work-rebase" :handler]) "")
       (is (= "already on main worktree; nothing to rebase"
-             (first (notify-texts @mutate-calls))))))
+             (first (appended-message-texts @mutate-calls))))))
 
   (testing "/work-status renders linked worktrees and marks the current linked worktree"
     (let [mutate-calls (atom [])
@@ -717,11 +717,11 @@
                                 :mutate-fn (fn [op params]
                                              (swap! mutate-calls conj [op params])
                                              (case op
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (sut/init api)
       ((get-in @state [:commands "work-status" :handler]) "")
-      (let [msg (first (notify-texts @mutate-calls))]
+      (let [msg (first (appended-message-texts @mutate-calls))]
         (is (re-find #"Active worktrees:" msg))
         (is (re-find #"- /repo/feature-x \[feature-x\] \(current\)" msg))
         (is (re-find #"- /repo/bug-y \[bug-y\]" msg))
@@ -742,8 +742,8 @@
                                 :mutate-fn (fn [op params]
                                              (swap! mutate-calls conj [op params])
                                              (case op
-                                               psi.extension/notify {:psi.extension/message params}
+                                               psi.extension/append-message {:psi.extension/message params}
                                                nil))})]
       (sut/init api)
       ((get-in @state [:commands "work-status" :handler]) "")
-      (is (= "Active worktrees:\n(none)" (first (notify-texts @mutate-calls)))))))
+      (is (= "Active worktrees:\n(none)" (first (appended-message-texts @mutate-calls)))))))

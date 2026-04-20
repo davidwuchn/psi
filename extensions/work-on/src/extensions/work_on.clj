@@ -10,6 +10,7 @@
          :switch-session-fn nil
          :set-worktree-path-fn nil
          :notify-fn nil
+         :append-message-fn nil
          :path nil
          :default-branch nil
          :default-branch-source nil}))
@@ -139,13 +140,17 @@
   [text]
   (println (str text)))
 
-(defn- emit-visible-message!
+(defn- append-assistant-message!
   [text]
-  (if-let [f (:notify-fn @state)]
+  (if-let [f (:append-message-fn @state)]
     (try
-      (f (str text) {:role "assistant"})
+      (f "assistant" (str text))
       (catch Exception _ nil))
-    (print-line text)))
+    (if-let [f (:notify-fn @state)]
+      (try
+        (f (str text) {:role "assistant"})
+        (catch Exception _ nil))
+      (print-line text))))
 
 (defn- set-current-session-worktree-path!
   [session-id worktree-path]
@@ -480,12 +485,12 @@
                   (str "Working in `" (:worktree-path result)
                        "` on branch `" (:branch-name result) "`")
                   (:error result))]
-    (emit-visible-message! message)))
+    (append-assistant-message! message)))
 
 (defn- handle-work-done-command
   [_args]
   (let [result (work-done!)]
-    (emit-visible-message!
+    (append-assistant-message!
      (if (:ok? result)
        (str "Fast-forwarded `" (:branch result)
             "` into `" (:into-branch result) "`"
@@ -499,14 +504,14 @@
 (defn- handle-work-rebase-command
   [_args]
   (let [result (work-rebase!)]
-    (emit-visible-message!
+    (append-assistant-message!
      (if (:ok? result)
        (str "Rebased `" (:branch result) "` onto `" (:onto result) "`")
        (:error result)))))
 
 (defn- handle-work-status-command
   [_args]
-  (emit-visible-message! (work-status-text)))
+  (append-assistant-message! (work-status-text)))
 
 (defn init
   [api]
@@ -517,6 +522,7 @@
          :switch-session-fn (:switch-session api)
          :set-worktree-path-fn (:set-worktree-path api)
          :notify-fn (:notify api)
+         :append-message-fn (:append-message api)
          :path (:path api))
   ((:on api) "session_switch"
              (fn [_]
