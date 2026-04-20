@@ -1,7 +1,12 @@
 (ns psi.agent-session.project-preferences
-  "Project-local AgentSession preferences.
+  "Layered project AgentSession preferences.
 
-   Stored at: <cwd>/.psi/project.edn
+   Stored at:
+   - shared: <cwd>/.psi/project.edn
+   - local:  <cwd>/.psi/project.local.edn
+
+   Effective project preferences are computed by deep-merging shared then local,
+   so local values take precedence.
 
    Shape:
    {:version 1
@@ -9,7 +14,8 @@
                     :model-id string?
                     :thinking-level keyword?
                     :prompt-mode keyword?
-                    :nucleus-prelude-override string?}}"
+                    :nucleus-prelude-override string?
+                    ...}}"
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]))
@@ -24,34 +30,81 @@
   [cwd]
   (io/file (str cwd) ".psi" "project.edn"))
 
-(defn read-preferences
-  "Best-effort read. Returns default map on missing/invalid file."
+(defn project-local-preferences-file
   [cwd]
-  (let [f (project-preferences-file cwd)]
-    (try
-      (if (and (.exists f) (.isFile f))
-        (let [v (edn/read-string (slurp f))]
-          (if (map? v)
-            (merge default-prefs v)
-            default-prefs))
-        default-prefs)
-      (catch Exception _
-        default-prefs))))
+  (io/file (str cwd) ".psi" "project.local.edn"))
+
+(defn deep-merge
+  [& maps]
+  (apply merge-with (fn [a b]
+                      (if (and (map? a) (map? b))
+                        (deep-merge a b)
+                        b))
+         maps))
+
+(defn- warn-malformed-file!
+  [file e]
+  (binding [*out* *err*]
+    (println (str "WARNING: ignoring malformed project preferences file "
+                  (.getAbsolutePath file)
+                  ": "
+                  (.getMessage e)))))
+
+(defn- read-preferences-file*
+  [file]
+  (try
+    (if (and (.exists file) (.isFile file))
+      (let [v (edn/read-string (slurp file))]
+        (if (map? v)
+          v
+          (do
+            (warn-malformed-file! file (ex-info "expected EDN map" {:value-type (type v)}))
+            nil)))
+      nil)
+    (catch Exception e
+      (warn-malformed-file! file e)
+      nil)))
+
+(defn read-shared-preferences
+  "Best-effort read of <cwd>/.psi/project.edn. Returns nil on missing/invalid file."
+  [cwd]
+  (read-preferences-file* (project-preferences-file cwd)))
+
+(defn read-local-preferences
+  "Best-effort read of <cwd>/.psi/project.local.edn. Returns nil on missing/invalid file."
+  [cwd]
+  (read-preferences-file* (project-local-preferences-file cwd)))
+
+(defn read-preferences
+  "Best-effort layered read.
+
+   Effective preferences are computed as:
+     defaults < shared project.edn < local project.local.edn
+
+   Missing or malformed files are ignored with a warning."
+  [cwd]
+  (deep-merge default-prefs
+              (or (read-shared-preferences cwd) {})
+              (or (read-local-preferences cwd) {})))
 
 (defn- write-preferences!
-  [cwd prefs]
-  (let [f (project-preferences-file cwd)
-        parent (.getParentFile f)]
+  [file prefs]
+  (let [parent (.getParentFile file)]
     (when parent
       (.mkdirs parent))
-    (spit f (pr-str prefs))
+    (spit file (pr-str prefs))
     prefs))
 
 (defn update-agent-session!
-  "Merge `m` into :agent-session and write to disk."
+  "Merge `m` into the local project override layer (:agent-session in
+   <cwd>/.psi/project.local.edn) and write to disk.
+
+   Existing malformed local config is treated as empty input with a warning."
   [cwd m]
-  (let [prefs (read-preferences cwd)]
-    (write-preferences! cwd (update prefs :agent-session merge m))))
+  (let [local-file (project-local-preferences-file cwd)
+        prefs      (deep-merge default-prefs
+                               (or (read-local-preferences cwd) {}))]
+    (write-preferences! local-file (update prefs :agent-session merge m))))
 
 (defn project-model
   [prefs]
