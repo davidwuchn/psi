@@ -510,26 +510,55 @@
       (is (= "run-1" (get-in read-parsed [:psi-tool/workflow :run-id])))
       (is (= :pending (get-in read-parsed [:psi-tool/workflow :run :status])))))
 
-  (testing "workflow resume-run resumes blocked runs"
+  (testing "workflow resume-run resumes blocked runs and continues execution"
     (let [[ctx session-id] (create-session-context {:persist? false})
           definition {:definition-id "plan-build-review"
                       :name "Plan Build Review"
                       :step-order ["plan"]
                       :steps {"plan" {:executor {:type :agent :profile "planner" :mode :sync}
+                                       :prompt-template "Return exactly {:outcome :ok :outputs {}}"
                                        :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
                                        :retry-policy {:max-attempts 1 :retry-on #{:validation-failed}}}}}
           _ (swap! (:state* ctx)
                    (fn [state]
                      (let [[state1 definition-id _] (psi.agent-session.workflow-runtime/register-definition state definition)
                            [state2 run-id _] (psi.agent-session.workflow-runtime/create-run state1 {:definition-id definition-id :run-id "run-1"})]
-                       (assoc-in state2 [:workflows :runs run-id :status] :blocked))))
+                       (-> state2
+                           (assoc-in [:workflows :runs run-id :status] :blocked)
+                           (assoc-in [:workflows :runs run-id :blocked] {:reason "needs resume"})))))
           tool   (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           result ((:execute tool) {"action" "workflow" "op" "resume-run" "run-id" "run-1"})
           parsed (read-string (:content result))]
       (is (false? (:is-error result)))
       (is (= :resume-run (:psi-tool/workflow-op parsed)))
-      (is (= :running (get-in parsed [:psi-tool/workflow :run :status])))
-      (is (= :running (get-in @(:state* ctx) [:workflows :runs "run-1" :status])))))
+      (is (= :completed (get-in parsed [:psi-tool/workflow :run :status])))
+      (is (true? (get-in parsed [:psi-tool/workflow :terminal?])))
+      (is (false? (get-in parsed [:psi-tool/workflow :blocked?])))
+      (is (= :completed (get-in @(:state* ctx) [:workflows :runs "run-1" :status])))))
+
+  (testing "workflow execute-run executes pending runs to completion"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          definition {:definition-id "plan-build-review"
+                      :name "Plan Build Review"
+                      :step-order ["plan"]
+                      :steps {"plan" {:executor {:type :agent :profile "planner" :mode :sync}
+                                       :prompt-template "Return exactly {:outcome :ok :outputs {}}"
+                                       :result-schema [:map [:outcome [:= :ok]] [:outputs :map]]
+                                       :retry-policy {:max-attempts 1 :retry-on #{:validation-failed}}}}}
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[state1 definition-id _] (psi.agent-session.workflow-runtime/register-definition state definition)
+                           [state2 _ _] (psi.agent-session.workflow-runtime/create-run state1 {:definition-id definition-id :run-id "run-1"})]
+                       state2)))
+          tool   (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          result ((:execute tool) {"action" "workflow" "op" "execute-run" "run-id" "run-1"})
+          parsed (read-string (:content result))]
+      (is (false? (:is-error result)))
+      (is (= :execute-run (:psi-tool/workflow-op parsed)))
+      (is (= :completed (get-in parsed [:psi-tool/workflow :status])))
+      (is (true? (get-in parsed [:psi-tool/workflow :terminal?])))
+      (is (= :completed (get-in parsed [:psi-tool/workflow :run :status])))
+      (is (= :completed (get-in @(:state* ctx) [:workflows :runs "run-1" :status])))))
 
   (testing "workflow cancel-run cancels non-terminal runs"
     (let [[ctx session-id] (create-session-context {:persist? false})

@@ -22,6 +22,9 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.tool-plan :as tool-plan]
+   [psi.agent-core.core :as agent-core]
+   [psi.agent-session.session-runtime :as session-runtime]
+   [psi.agent-session.workflow-execution :as workflow-execution]
    [psi.agent-session.workflow-model :as workflow-model]
    [psi.agent-session.workflows :as wf]
    [psi.history.resolvers :as history-resolvers]
@@ -129,6 +132,65 @@
         nil)))
   nil)
 
+(defn- create-workflow-child-session!
+  "Create a child session for workflow step attempt execution.
+   Extracted from mutations/session to avoid a load cycle through
+   context → workflow-execution → workflow-attempts → mutations/session → core → context."
+  [ctx parent-session-id {:keys [child-session-id session-name system-prompt tool-defs thinking-level
+                                  developer-prompt developer-prompt-source preloaded-messages
+                                  cache-breakpoints prompt-component-selection
+                                  workflow-run-id workflow-step-id workflow-attempt-id workflow-owned?]}]
+  (dispatch/dispatch! ctx
+                      :session/create-child
+                      (cond-> {:session-id       parent-session-id
+                                :child-session-id child-session-id
+                                :session-name     session-name
+                                :system-prompt    system-prompt
+                                :tool-defs        tool-defs
+                                :thinking-level   thinking-level}
+                        (some? preloaded-messages)
+                        (assoc :preloaded-messages preloaded-messages)
+
+                        (some? cache-breakpoints)
+                        (assoc :cache-breakpoints cache-breakpoints)
+
+                        (some? prompt-component-selection)
+                        (assoc :prompt-component-selection prompt-component-selection)
+
+                        (some? developer-prompt)
+                        (assoc :developer-prompt developer-prompt)
+
+                        (some? developer-prompt-source)
+                        (assoc :developer-prompt-source developer-prompt-source)
+
+                        (some? workflow-run-id)
+                        (assoc :workflow-run-id workflow-run-id)
+
+                        (some? workflow-step-id)
+                        (assoc :workflow-step-id workflow-step-id)
+
+                        (some? workflow-attempt-id)
+                        (assoc :workflow-attempt-id workflow-attempt-id)
+
+                        (contains? {:workflow-owned? workflow-owned?} :workflow-owned?)
+                        (assoc :workflow-owned? workflow-owned?))
+                      {:origin :mutations})
+  (let [sd       (ss/get-session-data-in ctx child-session-id)
+        messages (vec (or preloaded-messages []))
+        fresh    (session-runtime/create-runtime!
+                  ctx child-session-id
+                  {:session-data  sd
+                   :messages      messages
+                   :agent-initial (:agent-initial ctx)})]
+    (swap! (:state* ctx)
+           (fn [state]
+             (-> state
+                 (assoc-in [:agent-session :sessions child-session-id :agent-ctx] (:agent-ctx fresh))
+                 (assoc-in [:agent-session :sessions child-session-id :sc-session-id] (:sc-session-id fresh)))))
+    (when (seq messages)
+      (agent-core/replace-messages-in! (:agent-ctx fresh) messages)))
+  {:psi.agent-session/session-id child-session-id})
+
 (defn- callback-fns
   "Build the indirection table of callback/strategy fns for ctx.
    These allow dispatch handlers and extensions to call back into the
@@ -155,6 +217,9 @@
    :notify-extension-fn                            #'ext-rt/notify-extension-in!
    :register-resolvers-fn                          (fn [qctx rebuild?] (register-resolvers-in! qctx rebuild?))
    :register-mutations-fn                          (fn [qctx mutations rebuild?] (register-mutations-in! qctx mutations rebuild?))
+   :create-workflow-child-session-fn               create-workflow-child-session!
+   :execute-workflow-run-fn                        workflow-execution/execute-run!
+   :resume-and-execute-workflow-run-fn             workflow-execution/resume-and-execute-run!
    :mark-workflow-jobs-terminal-fn                 bg-rt/maybe-mark-workflow-jobs-terminal!
    :emit-background-job-terminal-messages-fn       bg-rt/maybe-emit-background-job-terminal-messages!
    :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!

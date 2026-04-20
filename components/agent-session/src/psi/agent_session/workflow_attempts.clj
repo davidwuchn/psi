@@ -2,9 +2,11 @@
   "Workflow step-attempt session orchestration for deterministic workflows.
 
    This slice owns creation of one canonical execution session per workflow step attempt,
-   with explicit workflow linkage written onto the child session data."
+   with explicit workflow linkage written onto the child session data.
+
+   Child-session creation is delegated via :create-workflow-child-session-fn on ctx
+   to avoid a load cycle through mutations/session → core → context."
   (:require
-   [psi.agent-session.mutations.session :as session-mutations]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as session-state]))
 
@@ -47,25 +49,26 @@
 
    The created session is marked as workflow-owned and linked by run/step/attempt ids."
   [ctx parent-session-id {:keys [workflow-run-id workflow-step-id attempt-id session-name system-prompt tool-defs thinking-level developer-prompt developer-prompt-source preloaded-messages cache-breakpoints prompt-component-selection]}]
-  (let [attempt-id' (normalize-attempt-id attempt-id)
-        result      (session-mutations/create-child-session
-                     nil
-                     {:psi/agent-session-ctx ctx
-                      :session-id parent-session-id
-                      :session-name session-name
-                      :system-prompt system-prompt
-                      :tool-defs tool-defs
-                      :thinking-level thinking-level
-                      :developer-prompt developer-prompt
-                      :developer-prompt-source developer-prompt-source
-                      :preloaded-messages preloaded-messages
-                      :cache-breakpoints cache-breakpoints
-                      :prompt-component-selection prompt-component-selection
-                      :workflow-run-id workflow-run-id
-                      :workflow-step-id workflow-step-id
-                      :workflow-attempt-id attempt-id'
-                      :workflow-owned? true})
-        child-session-id (:psi.agent-session/session-id result)
+  (let [attempt-id'      (normalize-attempt-id attempt-id)
+        child-session-id (str (java.util.UUID/randomUUID))
+        result           ((:create-workflow-child-session-fn ctx)
+                          ctx
+                          parent-session-id
+                          {:child-session-id           child-session-id
+                           :session-name               session-name
+                           :system-prompt              system-prompt
+                           :tool-defs                  tool-defs
+                           :thinking-level             thinking-level
+                           :developer-prompt           developer-prompt
+                           :developer-prompt-source    developer-prompt-source
+                           :preloaded-messages         preloaded-messages
+                           :cache-breakpoints          cache-breakpoints
+                           :prompt-component-selection prompt-component-selection
+                           :workflow-run-id            workflow-run-id
+                           :workflow-step-id           workflow-step-id
+                           :workflow-attempt-id        attempt-id'
+                           :workflow-owned?            true})
+        _                result
         child-sd         (session-state/get-session-data-in ctx child-session-id)
         attempt          (new-attempt {:attempt-id attempt-id'
                                        :status :pending

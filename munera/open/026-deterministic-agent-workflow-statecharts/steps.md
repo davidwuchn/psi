@@ -30,4 +30,5 @@ Implementation checkpoints:
 - [x] Add sequential run-loop orchestration for multi-step workflow execution
 - [x] Add blocked-status orchestration proof for the sequential execution loop
 - [x] Add retry-aware and resume-and-continue orchestration proofs for the sequential execution loop
+- [x] Expose workflow execution controls through `psi-tool` without introducing a namespace load cycle
 - [x] Reconcile worktree with claimed state: fix StackOverflow in graph-surface-test caused by nested join specs in workflow resolver ::pco/output and root-reachable :psi.workflow.run/id

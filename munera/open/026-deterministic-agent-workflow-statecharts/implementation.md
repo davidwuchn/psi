@@ -239,7 +239,21 @@ Notes:
   - retryable execution failure can be followed by a successful later attempt within the sequential loop
   - blocked runs can be resumed and then continued to completion with a fresh attempt
 - Attempted to expose execution controls directly through `psi-tool`, but that introduced a namespace load cycle because `psi_tool` sits on a load path that would pull in `workflow_execution -> prompt_control -> context/core`.
-- Decision taken: keep `workflow_execution` as an internal orchestration layer for now rather than forcing it through the current `psi_tool` load graph. Revisit once execution control surfaces can be introduced without creating a cyclic dependency.
+- Follow-on fix landed in the 026 worktree without direct `psi_tool -> workflow_execution` coupling:
+  - `context.clj` now injects workflow execution callbacks (`:execute-workflow-run-fn`, `:resume-and-execute-workflow-run-fn`) into `ctx`
+  - `psi_tool.clj` now calls those injected functions instead of requiring `workflow_execution` directly
+  - `workflow_attempts.clj` no longer depends on `mutations/session`; workflow child-session creation is delegated through `ctx` via `:create-workflow-child-session-fn`
+  - this breaks both the original `psi_tool -> workflow_execution -> ... -> psi_tool` cycle and the follow-on `context -> workflow_execution -> workflow_attempts -> mutations/session -> core -> context` cycle
+- `psi-tool` workflow ops now include canonical execution control exposure:
+  - `execute-run`
+  - `resume-run` now resumes blocked runs and continues execution rather than only applying the pure resume transition
+- Updated workflow tool tests to match the canonical execution semantics and added direct `execute-run` coverage.
+- Verified green focused suites:
+  - `psi.agent-session.tools-test/make-psi-tool-workflow-test`
+  - `psi.agent-session.workflow-execution-test`
+  - `psi.agent-session.workflow-lifecycle-test`
+  - `psi.agent-session.graph-surface-test`
+- Full suite is green after the cycle fix: `1373 tests, 10055 assertions, 0 failures`.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
 
 2026-04-20 — graph-surface-test StackOverflow fix

@@ -24,7 +24,7 @@
                      "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
                      "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
                      "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`; "
-                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|register-agent-chains|create-run|create-run-from-agent-chain|read-run|list-runs|resume-run|cancel-run`. "
+                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|register-agent-chains|create-run|create-run-from-agent-chain|execute-run|read-run|list-runs|resume-run|cancel-run`. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
@@ -86,7 +86,7 @@
   ["status" "start" "attach" "stop" "eval" "interrupt"])
 
 (def ^:private workflow-supported-ops
-  ["list-definitions" "register-agent-chains" "create-run" "create-run-from-agent-chain" "read-run" "list-runs" "resume-run" "cancel-run"])
+  ["list-definitions" "register-agent-chains" "create-run" "create-run-from-agent-chain" "execute-run" "read-run" "list-runs" "resume-run" "cancel-run"])
 
 (defn- validate-psi-tool-request
   [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason] :as args}]
@@ -172,7 +172,7 @@
         (when (and (= op "create-run-from-agent-chain") (not (string? chain-name)))
           (throw (ex-info "psi-tool workflow create-run-from-agent-chain requires `chain-name`"
                           {:phase :validate :action effective-action :op op})))
-        (when (and ((set ["read-run" "resume-run" "cancel-run"]) op)
+        (when (and ((set ["execute-run" "read-run" "resume-run" "cancel-run"]) op)
                    (not (string? run-id)))
           (throw (ex-info "psi-tool workflow op requires `run-id`"
                           {:phase :validate :action effective-action :op op})))
@@ -608,7 +608,7 @@
    :terminal-outcome     (:terminal-outcome workflow-run)})
 
 (defn- execute-psi-tool-workflow-report
-  [{:keys [ctx]} {:keys [op definition-id definition workflow-input run-id chain-name reason]}]
+  [{:keys [ctx session-id]} {:keys [op definition-id definition workflow-input run-id chain-name reason]}]
   (let [started-at (System/nanoTime)]
     (try
       (when-not ctx
@@ -685,6 +685,26 @@
                                              :run-id created-run-id
                                              :run (workflow-run-summary workflow-run)}}))
 
+              "execute-run"
+              (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]
+                (when-not workflow-run
+                  (throw (ex-info "Workflow run not found"
+                                  {:phase :validate :action "workflow" :op op :run-id run-id})))
+                (when (contains? #{:completed :failed :cancelled} (:status workflow-run))
+                  (throw (ex-info "Workflow run is already terminal"
+                                  {:phase :validate :action "workflow" :op op :run-id run-id :status (:status workflow-run)})))
+                (let [exec-result ((:execute-workflow-run-fn ctx) ctx session-id run-id)
+                      final-run         (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]
+                  {:psi-tool/action         :workflow
+                   :psi-tool/workflow-op    :execute-run
+                   :psi-tool/overall-status (if (:terminal? exec-result) :ok :blocked)
+                   :psi-tool/workflow       {:run-id          run-id
+                                             :status          (:status exec-result)
+                                             :steps-executed  (:steps-executed exec-result)
+                                             :terminal?       (:terminal? exec-result)
+                                             :blocked?        (:blocked? exec-result)
+                                             :run             (workflow-run-summary final-run)}}))
+
               "read-run"
               (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]
                 (when-not workflow-run
@@ -713,14 +733,17 @@
                 (when-not (= :blocked (:status workflow-run))
                   (throw (ex-info "Workflow run is not blocked"
                                   {:phase :validate :action "workflow" :op op :run-id run-id :status (:status workflow-run)})))
-                (let [new-state (workflow-progression/resume-blocked-run @(:state* ctx) run-id)
-                      resumed-run (workflow-runtime/workflow-run-in new-state run-id)]
-                  ((:apply-root-state-update-fn ctx) ctx (constantly new-state))
+                (let [exec-result ((:resume-and-execute-workflow-run-fn ctx) ctx session-id run-id)
+                      final-run         (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]
                   {:psi-tool/action         :workflow
                    :psi-tool/workflow-op    :resume-run
-                   :psi-tool/overall-status :ok
-                   :psi-tool/workflow       {:run-id run-id
-                                             :run (workflow-run-summary resumed-run)}}))
+                   :psi-tool/overall-status (if (:terminal? exec-result) :ok :blocked)
+                   :psi-tool/workflow       {:run-id         run-id
+                                             :status         (:status exec-result)
+                                             :steps-executed (:steps-executed exec-result)
+                                             :terminal?      (:terminal? exec-result)
+                                             :blocked?       (:blocked? exec-result)
+                                             :run            (workflow-run-summary final-run)}}))
 
               "cancel-run"
               (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]
@@ -807,7 +830,7 @@
                      :is-error (not= :ok (:psi-tool/overall-status report))))
 
             "workflow"
-            (let [report (execute-psi-tool-workflow-report {:ctx (:ctx opts)} request)
+            (let [report (execute-psi-tool-workflow-report {:ctx (:ctx opts) :session-id (:session-id opts)} request)
                   safe-report (sanitize-psi-tool-data report)
                   output (pr-str safe-report)]
               (assoc (serialize-operation-output opts request output "Use a narrower workflow result to reduce output size.")
