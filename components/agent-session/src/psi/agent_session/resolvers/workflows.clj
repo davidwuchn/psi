@@ -4,67 +4,11 @@
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
 
-(def ^:private workflow-step-output
-  [:psi.workflow.step/id
-   :psi.workflow.step/label
-   :psi.workflow.step/description
-   :psi.workflow.step/executor
-   :psi.workflow.step/prompt-template
-   :psi.workflow.step/input-bindings
-   :psi.workflow.step/result-schema
-   :psi.workflow.step/retry-policy
-   :psi.workflow.step/capability-policy])
-
-(def ^:private workflow-definition-output
-  [:psi.workflow.definition/id
-   :psi.workflow.definition/name
-   :psi.workflow.definition/summary
-   :psi.workflow.definition/description
-   :psi.workflow.definition/step-order
-   :psi.workflow.definition/step-count
-   {:psi.workflow.definition/steps workflow-step-output}])
-
-(def ^:private workflow-history-output
-  [:psi.workflow.history/event
-   :psi.workflow.history/timestamp
-   :psi.workflow.history/data])
-
-(declare workflow-run-output)
-
-(def ^:private workflow-attempt-output
-  [:psi.workflow.attempt/id
-   :psi.workflow.attempt/status
-   :psi.workflow.attempt/execution-session-id
-   :psi.workflow.attempt/result-envelope
-   :psi.workflow.attempt/validation-outcome
-   :psi.workflow.attempt/execution-error
-   :psi.workflow.attempt/blocked
-   :psi.workflow.attempt/created-at
-   :psi.workflow.attempt/updated-at
-   :psi.workflow.attempt/finished-at])
-
-(def ^:private workflow-step-run-output
-  [:psi.workflow.step-run/id
-   :psi.workflow.step-run/status
-   :psi.workflow.step-run/attempt-count
-   :psi.workflow.step-run/accepted-result
-   {:psi.workflow.step-run/attempts workflow-attempt-output}])
-
-(def ^:private workflow-run-output
-  [:psi.workflow.run/id
-   :psi.workflow.run/status
-   :psi.workflow.run/source-definition-id
-   :psi.workflow.run/workflow-input
-   :psi.workflow.run/current-step-id
-   :psi.workflow.run/blocked
-   :psi.workflow.run/terminal-outcome
-   :psi.workflow.run/created-at
-   :psi.workflow.run/updated-at
-   :psi.workflow.run/finished-at
-   {:psi.workflow.run/effective-definition workflow-definition-output}
-   {:psi.workflow.run/step-runs workflow-step-run-output}
-   {:psi.workflow.run/history workflow-history-output}
-   :psi.workflow.run/execution-session-ids])
+;; NOTE: resolver ::pco/output declarations use flat key lists only.
+;; Nested join shapes are pre-projected by the ->eql helpers and returned
+;; as plain maps — Pathom does not need to walk into them for graph analysis.
+;; Using deeply nested join specs in ::pco/output caused StackOverflowErrors
+;; during graph introspection (root-queryable-attrs-contract-test).
 
 (defn- root-workflow-state
   [agent-session-ctx]
@@ -182,7 +126,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.workflow/definition-count
                  :psi.workflow/definition-ids
-                 {:psi.workflow/definitions workflow-definition-output}]}
+                 :psi.workflow/definitions]}
   (let [definitions (ordered-definitions agent-session-ctx)]
     {:psi.workflow/definition-count (count definitions)
      :psi.workflow/definition-ids   (mapv :definition-id definitions)
@@ -202,7 +146,7 @@
    ::pco/output [:psi.workflow/run-count
                  :psi.workflow/run-ids
                  :psi.workflow/run-statuses
-                 {:psi.workflow/runs workflow-run-output}]}
+                 :psi.workflow/runs]}
   (let [runs (ordered-runs agent-session-ctx)]
     {:psi.workflow/run-count    (count runs)
      :psi.workflow/run-ids      (mapv :run-id runs)

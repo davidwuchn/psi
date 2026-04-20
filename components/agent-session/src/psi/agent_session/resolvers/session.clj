@@ -538,7 +538,13 @@
    agent-session-context-usage
    agent-session-cwd
    agent-session-workflow-linkage
-   agent-session-workflow-run-ref
+   ;; agent-session-workflow-run-ref is intentionally excluded from the root
+   ;; resolver list. It produces :psi.workflow.run/id from a session, which
+   ;; makes :psi.workflow.run/id root-reachable and then causes a StackOverflow
+   ;; in graph introspection (root-queryable-attrs-contract-test) via the chain:
+   ;; session → :psi.workflow.run/id → workflow-run-detail → :psi.workflow.run/detail.
+   ;; Entity-targeted workflow run detail queries should use {:psi.workflow.run/id id}
+   ;; as an explicit entity seed instead.
    agent-session-git-branch
    runtime-nrepl-info
    agent-session-git-context
