@@ -12,6 +12,7 @@
    resolver registration). Caching would require invalidation on every
    registration change."
   (:require
+   [clojure.repl.deps :as repl.deps]
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-installs :as installs]
@@ -34,6 +35,22 @@
      (ext/load-extensions-in! (:extension-registry ctx) runtime-fns*
                               configured-paths cwd))))
 
+(defn- sync-non-local-extension-deps!
+  [deps-to-realize]
+  (if (seq deps-to-realize)
+    (try
+      (repl.deps/sync-deps :aliases [] :deps deps-to-realize)
+      {:deps-realized? true}
+      (catch Throwable t
+        (let [message (.getMessage t)]
+          (if (and (string? message)
+                   (.contains message "only available at the REPL"))
+            {:deps-realized? false
+             :deps-restart-required? true}
+            {:deps-realized? false
+             :deps-realize-error (str "Failed to realize non-local extension deps in-process: " message)}))))
+    {:deps-realized? false}))
+
 (defn reload-extensions-in!
   "Unregister all extensions and re-discover/load them.
 
@@ -43,21 +60,28 @@
    Apply behavior:
    - path-discovered legacy extensions still reload as before
    - manifest-backed enabled `:local/root` extensions are also loaded in-process
-   - manifest-backed git/mvn deps remain `:restart-required` in slice one"
+   - manifest-backed git/mvn deps are synced in-process when the current runtime
+     can safely preserve already-realized non-local deps; otherwise they remain
+     `:restart-required`"
   ([_ctx] (throw (ex-info "reload-extensions-in! requires explicit session-id"
                           {:fn :reload-extensions-in!})))
   ([ctx session-id configured-paths]
    (reload-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
    (dispatch/dispatch! ctx :session/reset-prompt-contributions {:session-id session-id} {:origin :core})
-   (let [runtime-fns*    (runtime-fns/make-extension-runtime-fns ctx session-id nil)
-         effective-cwd   (or cwd (ss/session-worktree-path-in ctx session-id))
-         install-state   (installs/compute-install-state effective-cwd)
-         plan            (installs/activation-plan install-state)
-         configured*     (vec (concat configured-paths (:extension-paths plan)))
-         reload-result   (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* configured* effective-cwd)
-         finalized-state (installs/finalize-apply-state install-state plan reload-result)
-         persisted-state (installs/persist-install-state-in! ctx finalized-state)]
+   (let [runtime-fns*      (runtime-fns/make-extension-runtime-fns ctx session-id nil)
+         effective-cwd     (or cwd (ss/session-worktree-path-in ctx session-id))
+         previous-state    (installs/extension-installs-state-in ctx)
+         install-state     (installs/compute-install-state effective-cwd)
+         plan              (installs/activation-plan install-state previous-state)
+         deps-result       (if (:deps-apply-safe? plan)
+                             (sync-non-local-extension-deps! (:deps-to-realize plan))
+                             {:deps-realized? false})
+         configured*       (vec (concat configured-paths (:extension-paths plan)))
+         reload-base       (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* configured* effective-cwd)
+         reload-result     (merge reload-base deps-result)
+         finalized-state   (installs/finalize-apply-state install-state plan reload-result)
+         persisted-state   (installs/persist-install-state-in! ctx finalized-state)]
      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
      (assoc reload-result :install-state persisted-state))))
 

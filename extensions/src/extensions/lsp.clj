@@ -89,11 +89,12 @@
         (str/starts-with? p (str root "/")))))
 
 (defn stop-lsp-service!
-  [api {:keys [workspace-root]}]
+  [api {:keys [workspace-root preserve-sync-kind?]}]
   ((:stop-service api) (workspace-key workspace-root))
   (swap! state update :initialized-workspaces disj workspace-root)
   (swap! state update :document-diagnostic-support dissoc workspace-root)
-  (swap! state update :workspace-sync-kinds dissoc workspace-root)
+  (when-not preserve-sync-kind?
+    (swap! state update :workspace-sync-kinds dissoc workspace-root))
   (swap! state update :documents
          (fn [docs]
            (into {}
@@ -160,7 +161,7 @@
     (case change
       2 :incremental
       1 :full
-      :full)))
+      nil)))
 
 (defn ensure-lsp-initialized!
   [api {:keys [workspace-root startup-timeout-ms dispatch-id] :as _opts}]
@@ -177,7 +178,8 @@
                         {:response (:psi.extension.service/response response)})
                        (service-protocol/await-jsonrpc-result response)
                        {})]
-      (mark-workspace-sync-kind! workspace-root (sync-kind-from-initialize-result result)))
+      (when-let [sync-kind (sync-kind-from-initialize-result result)]
+        (mark-workspace-sync-kind! workspace-root sync-kind)))
     (jsonrpc-notify! api
                      (dispatch/assoc-dispatch-id
                       {:workspace-root workspace-root
@@ -251,18 +253,49 @@
            (contains? diagnostics-by-path path))
          paths)))
 
+(defn- diagnostics-response->items
+  [response]
+  (let [response*       (or response {})
+        direct-result   (:psi.extension.service/response response*)
+        nested-result   (service-protocol/await-jsonrpc-result {:response direct-result})
+        awaited-result  (service-protocol/await-jsonrpc-result response*)
+        result          (or nested-result
+                            awaited-result
+                            direct-result
+                            response*
+                            {})
+        result*         (if (map? result) result {})]
+    (when (contains? result* "items")
+      (vec (or (get result* "items") [])))))
+
 (defn request-diagnostics!
-  [api {:keys [workspace-root paths diagnostics-timeout-ms]}]
-  (let [deadline (+ (System/currentTimeMillis)
-                    (long (or diagnostics-timeout-ms 1000)))]
-    (loop []
-      (let [diagnostics-by-path (diagnostics-from-published-cache api workspace-root paths)]
-        (if (or (diagnostics-known? diagnostics-by-path paths)
-                (>= (System/currentTimeMillis) deadline))
-          diagnostics-by-path
-          (do
-            (Thread/sleep 50)
-            (recur)))))))
+  [api {:keys [workspace-root paths diagnostics-timeout-ms dispatch-id]}]
+  (let [timeout-ms (long (or diagnostics-timeout-ms 1000))
+        deadline   (+ (System/currentTimeMillis) timeout-ms)]
+    (loop [remaining          (seq paths)
+           diagnostics-by-path {}]
+      (if-let [path (first remaining)]
+        (let [response (jsonrpc-request! api
+                                         (dispatch/assoc-dispatch-id
+                                          {:workspace-root workspace-root
+                                           :id (str "diagnostic-" (hash path))
+                                           :method "textDocument/diagnostic"
+                                           :params (document-diagnostics-request path)
+                                           :timeout-ms timeout-ms}
+                                          dispatch-id))
+              items    (diagnostics-response->items response)]
+          (recur (next remaining)
+                 (cond-> diagnostics-by-path
+                   (some? items) (assoc path items))))
+        (loop [published diagnostics-by-path]
+          (let [merged (merge published
+                              (diagnostics-from-published-cache api workspace-root paths))]
+            (if (or (diagnostics-known? merged paths)
+                    (>= (System/currentTimeMillis) deadline))
+              merged
+              (do
+                (Thread/sleep 50)
+                (recur merged)))))))))
 
 (defn- changed-paths
   [{:keys [tool-result]}]
@@ -393,10 +426,10 @@
                                              :path path
                                              :text (read-text path)
                                              :dispatch-id dispatch-id})))
-    (Thread/sleep (long (:sync-timeout-ms cfg)))
     (let [diagnostics-by-path (request-diagnostics! api {:workspace-root root
                                                          :paths paths
-                                                         :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)})]
+                                                         :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)
+                                                         :dispatch-id dispatch-id})]
       {:workspace-root root
        :changed-paths paths
        :document-syncs @syncs
@@ -433,10 +466,12 @@
                                 :data sync}]
                               diagnostic-enrichments)})
         (catch Throwable t
-          {:details/merge {:lsp {:error (ex-message t)}}
+          {:details/merge {:lsp {:error (ex-message t)
+                                 :stage :sync-tool-result}}
            :enrichments [(diagnostics-failure-enrichment
                           "LSP diagnostics unavailable"
                           {:error (ex-message t)
+                           :stage :sync-tool-result
                            :tool-call-id (:tool-call-id input)
                            :tool-name (:tool-name input)})]})))))
 
@@ -503,9 +538,18 @@
 
 (defn restart-workspace!
   [api {:keys [worktree-path path cwd config]}]
-  (let [root (workspace-root {:worktree-path worktree-path :path path :cwd cwd})]
+  (let [root     (workspace-root {:worktree-path worktree-path :path path :cwd cwd})
+        services (or ((:list-services api)) [])]
+    (doseq [service services
+            :let [svc-key (or (:psi.service/key service)
+                              (:key service))]
+            :when (and (vector? svc-key)
+                       (= :lsp (first svc-key))
+                       (not= root (second svc-key)))]
+      (stop-lsp-service! api {:workspace-root (second svc-key)}))
     (close-workspace-documents! api root)
-    (stop-lsp-service! api {:workspace-root root})
+    (stop-lsp-service! api {:workspace-root root
+                            :preserve-sync-kind? true})
     (ensure-lsp-service! api {:worktree-path worktree-path :path path :cwd cwd :config config})
     (println (str "Restarted LSP workspace " root))
     root))

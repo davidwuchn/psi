@@ -287,109 +287,167 @@
                        " from :local/root " local-root
                        " and :psi/init " init-var)})))))
 
-(defn activation-plan
+(defn- non-local-effective-raw-deps
   [install-state]
-  (let [entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib])
-        enabled-exts   (into {}
-                             (filter (fn [[_ {:keys [extension? enabled?]}]]
-                                       (and extension? enabled?)))
-                             entries-by-lib)
-        local-entries  (into {}
-                             (filter (fn [[_ {:keys [dep]}]]
-                                       (= :local (coordinate-family dep))))
-                             enabled-exts)
-        unsupported    (into {}
-                             (remove (fn [[_ {:keys [dep]}]]
-                                       (= :local (coordinate-family dep))))
-                             enabled-exts)
-        resolved       (mapv (fn [[lib entry]]
-                               (resolve-local-root-entry lib entry))
-                             local-entries)
-        resolved-ok    (filterv :path resolved)
-        resolved-fail  (filterv :error resolved)
-        diagnostics    (mapv (fn [{:keys [lib init-var error]}]
-                               (diagnostic {:severity :error
-                                            :category :load-failure
-                                            :message error
-                                            :libs [lib]
-                                            :init-var init-var
-                                            :source :effective}))
-                             resolved-fail)]
-    {:extension-paths (mapv :path resolved-ok)
-     :path->lib (into {} (map (juxt :path :lib)) resolved-ok)
-     :unsupported-libs (set (keys unsupported))
-     :resolution-errors resolved-fail
-     :diagnostics diagnostics}))
+  (->> (get-in install-state [:psi.extensions/effective :raw-deps])
+       (keep (fn [[lib dep]]
+               (when (and (map? dep)
+                          (not= :local (coordinate-family dep)))
+                 [lib dep])))
+       (into {})))
+
+(defn- safe-inprocess-deps-apply?
+  [previous-install-state install-state]
+  (let [previous-deps (non-local-effective-raw-deps previous-install-state)
+        current-deps  (non-local-effective-raw-deps install-state)]
+    (and (seq current-deps)
+         (seq previous-deps)
+         (every? (fn [[lib _dep]]
+                   (contains? current-deps lib))
+                 previous-deps))))
+
+(defn activation-plan
+  ([install-state]
+   (activation-plan install-state nil))
+  ([install-state previous-install-state]
+   (let [entries-by-lib      (get-in install-state [:psi.extensions/effective :entries-by-lib])
+         enabled-exts        (into {}
+                                    (filter (fn [[_ {:keys [extension? enabled?]}]]
+                                              (and extension? enabled?)))
+                                    entries-by-lib)
+         local-entries       (into {}
+                                    (filter (fn [[_ {:keys [dep]}]]
+                                              (= :local (coordinate-family dep))))
+                                    enabled-exts)
+         deps-extension-libs (into #{}
+                                   (keep (fn [[lib {:keys [dep]}]]
+                                           (when (not= :local (coordinate-family dep))
+                                             lib)))
+                                   enabled-exts)
+         deps-to-realize     (non-local-effective-raw-deps install-state)
+         deps-apply-safe?    (safe-inprocess-deps-apply? previous-install-state install-state)
+         resolved            (mapv (fn [[lib entry]]
+                                     (resolve-local-root-entry lib entry))
+                                   local-entries)
+         resolved-ok         (filterv :path resolved)
+         resolved-fail       (filterv :error resolved)
+         diagnostics         (mapv (fn [{:keys [lib init-var error]}]
+                                     (diagnostic {:severity :error
+                                                  :category :load-failure
+                                                  :message error
+                                                  :libs [lib]
+                                                  :init-var init-var
+                                                  :source :effective}))
+                                   resolved-fail)]
+     {:extension-paths (mapv :path resolved-ok)
+      :path->lib (into {} (map (juxt :path :lib)) resolved-ok)
+      :deps-to-realize deps-to-realize
+      :deps-extension-libs deps-extension-libs
+      :deps-apply-safe? deps-apply-safe?
+      :restart-required-libs (if deps-apply-safe? #{} deps-extension-libs)
+      :resolution-errors resolved-fail
+      :diagnostics diagnostics})))
 
 (defn- merge-entry-statuses
   [entries-by-lib plan reload-result]
-  (let [loaded-paths   (set (:loaded reload-result))
-        errors-by-path (into {} (map (juxt :path :error)) (:errors reload-result))
-        path->lib      (:path->lib plan)
-        failed-libs    (into #{} (concat
-                                  (map second path->lib)
-                                  (map :lib (:resolution-errors plan))))]
+  (let [loaded-paths       (set (:loaded reload-result))
+        errors-by-path     (into {} (map (juxt :path :error)) (:errors reload-result))
+        path->lib          (:path->lib plan)
+        failed-libs        (into #{} (concat
+                                      (map second path->lib)
+                                      (map :lib (:resolution-errors plan))))
+        deps-extension-libs (:deps-extension-libs plan)
+        restart-required-libs (:restart-required-libs plan)
+        deps-realized?     (boolean (:deps-realized? reload-result))]
     (into {}
           (map (fn [[entry-lib entry]]
-                 (let [dep          (:dep entry)
-                       extension?   (:extension? entry)
-                       enabled?     (:enabled? entry)
-                       coord-family (when extension? (coordinate-family dep))
-                       path         (some (fn [[p l]] (when (= l entry-lib) p)) path->lib)
+                 (let [dep              (:dep entry)
+                       extension?       (:extension? entry)
+                       enabled?         (:enabled? entry)
+                       coord-family     (when extension? (coordinate-family dep))
+                       path             (some (fn [[p l]] (when (= l entry-lib) p)) path->lib)
                        resolution-error (some (fn [{:keys [lib error]}]
                                                 (when (= lib entry-lib) error))
                                               (:resolution-errors plan))
-                       load-error   (or (get errors-by-path path) resolution-error)
-                       status       (cond
-                                      (not extension?) :not-applicable
-                                      (not enabled?) :disabled
-                                      (= :local coord-family)
-                                      (cond
-                                        (contains? loaded-paths path) :loaded
-                                        load-error :failed
-                                        (contains? failed-libs entry-lib) :failed
-                                        :else :configured)
-                                      :else :restart-required)]
+                       load-error       (or (get errors-by-path path) resolution-error)
+                       status           (cond
+                                          (not extension?) :not-applicable
+                                          (not enabled?) :disabled
+                                          (= :local coord-family)
+                                          (cond
+                                            (contains? loaded-paths path) :loaded
+                                            load-error :failed
+                                            (contains? failed-libs entry-lib) :failed
+                                            :else :configured)
+                                          (contains? restart-required-libs entry-lib) :restart-required
+                                          (and (contains? deps-extension-libs entry-lib)
+                                               deps-realized?) :loaded
+                                          :else :configured)]
                    [entry-lib (cond-> (assoc entry :status status)
                                 load-error (assoc :load-error load-error))]))
           entries-by-lib))))
 
 (defn finalize-apply-state
   [install-state plan reload-result]
-  (let [reload-errors      (mapv (fn [{:keys [path error]}]
-                                   (diagnostic {:severity :error
-                                                :category :load-failure
-                                                :message error
-                                                :libs [(get (:path->lib plan) path)]
-                                                :source :effective
-                                                :data {:path path}}))
-                                 (:errors reload-result))
-        diagnostics        (vec (concat (:psi.extensions/diagnostics install-state)
-                                        (:diagnostics plan)
-                                        reload-errors
-                                        (when (seq (:unsupported-libs plan))
-                                          [(diagnostic {:severity :info
-                                                        :category :restart-required
-                                                        :message (str "Restart required to realize non-local extension deps: "
-                                                                      (pr-str (sort (:unsupported-libs plan))))
-                                                        :libs (sort (:unsupported-libs plan))
-                                                        :source :effective})])))
-        has-errors?        (boolean (some #(= :error (:severity %)) diagnostics))
-        entries-by-lib     (merge-entry-statuses (get-in install-state [:psi.extensions/effective :entries-by-lib])
-                                                 plan
-                                                 reload-result)
-        status             (cond
-                             has-errors? nil
-                             (seq (:unsupported-libs plan)) :restart-required
-                             :else :applied)
-        last-apply         (when status
-                             {:status status
-                              :restart-required? (= status :restart-required)
-                              :summary (case status
-                                         :restart-required "manifest-backed local extensions applied; restart required for remaining non-local extension deps"
-                                         :applied "manifest-backed extension install state applied")
-                              :diagnostic-count (count diagnostics)
-                              :at (str (java.time.Instant/now))})]
+  (let [reload-errors          (mapv (fn [{:keys [path error]}]
+                                       (diagnostic {:severity :error
+                                                    :category :load-failure
+                                                    :message error
+                                                    :libs [(get (:path->lib plan) path)]
+                                                    :source :effective
+                                                    :data {:path path}}))
+                                     (:errors reload-result))
+        deps-realize-error     (:deps-realize-error reload-result)
+        deps-restart-required? (boolean (:deps-restart-required? reload-result))
+        restart-required-libs  (cond-> (:restart-required-libs plan)
+                                 deps-restart-required?
+                                 (into (:deps-extension-libs plan)))
+        deps-realize-diag      (when deps-realize-error
+                                 (diagnostic {:severity :error
+                                              :category :load-failure
+                                              :message deps-realize-error
+                                              :libs (sort (:deps-extension-libs plan))
+                                              :source :effective}))
+        diagnostics            (vec (concat (:psi.extensions/diagnostics install-state)
+                                            (:diagnostics plan)
+                                            reload-errors
+                                            (when deps-realize-diag [deps-realize-diag])
+                                            (when (seq restart-required-libs)
+                                              [(diagnostic {:severity :info
+                                                            :category :restart-required
+                                                            :message (str "Restart required to realize non-local extension deps: "
+                                                                          (pr-str (sort restart-required-libs)))
+                                                            :libs (sort restart-required-libs)
+                                                            :source :effective})])))
+        has-errors?            (boolean (some #(= :error (:severity %)) diagnostics))
+        reload-result*         (cond-> reload-result
+                                 (seq restart-required-libs)
+                                 (assoc :deps-realized? false))
+        entries-by-lib         (merge-entry-statuses (get-in install-state [:psi.extensions/effective :entries-by-lib])
+                                                     (assoc plan :restart-required-libs restart-required-libs)
+                                                     reload-result*)
+        status                 (cond
+                                 has-errors? nil
+                                 (seq restart-required-libs) :restart-required
+                                 :else :applied)
+        summary                (cond
+                                 (= status :restart-required)
+                                 "manifest-backed local extensions applied; restart required for remaining non-local extension deps"
+
+                                 (and (= status :applied)
+                                      (seq (:deps-extension-libs plan)))
+                                 "manifest-backed extension install state applied, including non-local deps"
+
+                                 (= status :applied)
+                                 "manifest-backed extension install state applied"
+
+                                 :else nil)
+        last-apply             (when status
+                                 {:status status
+                                  :restart-required? (= status :restart-required)
+                                  :summary summary
+                                  :diagnostic-count (count diagnostics)
+                                  :at (str (java.time.Instant/now))})]
     (-> install-state
         (assoc :psi.extensions/diagnostics diagnostics)
         (assoc-in [:psi.extensions/effective :entries-by-lib] entries-by-lib)
@@ -406,11 +464,12 @@
    conservative last-apply result without executing extension reload. Runtime
    reload paths should prefer `activation-plan` + `finalize-apply-state`."
   [ctx cwd]
-  (let [install-state (compute-install-state cwd)
-        plan          (activation-plan install-state)
-        reload-result {:loaded [] :errors []}
-        finalized     (finalize-apply-state install-state plan reload-result)
-        persisted     (persist-install-state-in! ctx finalized)]
+  (let [previous-state (extension-installs-state-in ctx)
+        install-state  (compute-install-state cwd)
+        plan           (activation-plan install-state previous-state)
+        reload-result  {:loaded [] :errors [] :deps-realized? false}
+        finalized      (finalize-apply-state install-state plan reload-result)
+        persisted      (persist-install-state-in! ctx finalized)]
     {:state persisted
      :applied? (some? (get-in persisted [:psi.extensions/last-apply :status]))
      :status (get-in persisted [:psi.extensions/last-apply :status])

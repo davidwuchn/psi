@@ -80,3 +80,27 @@
   - explicit reload/apply should be included in slice one because it matters for extension development
   - restart remains the guaranteed fallback apply path
   - reload/apply should remain conservative about runtime mutation guarantees and may degrade to restart-oriented apply when necessary
+
+2026-04-19
+- Follow-on implementation landed for non-local install apply behavior.
+- Current behavior now is:
+  - manifest-backed local-root extensions still resolve to source files and load in-process
+  - non-local deps (git/mvn/support deps) are realized via `clojure.repl.deps/sync-deps` when the runtime can safely preserve already-realized non-local deps
+  - the safety gate is conservative: in-process apply is allowed only when previously realized non-local deps are still present in the new effective deps set
+  - if the runtime reports that deps sync is REPL-only in the current environment, apply degrades cleanly to `:restart-required` rather than surfacing a hard failure
+  - hard dependency realization exceptions still surface as load-failure diagnostics
+  - effective per-lib statuses now mark non-local extension entries as `:loaded` when deps sync succeeds in-process
+
+2026-04-20
+- Wider-suite regression follow-on landed after the non-local apply work.
+- Root causes/fixes:
+  - extension API `get-service` now falls back to `list-services` instead of failing when no direct `service-fn` is present
+  - agent-chain sub-agent execution now uses an explicit agent API/mutate path rather than relying on `extensions.agent` global extension state
+  - chain workflow invoke params now carry the API through correctly to the future runner
+  - LSP sync no longer spends post-tool timeout budget on a pre-diagnostics sleep; diagnostic request waiting now owns that budget directly
+  - LSP diagnostics request handling now accepts both live runtime service response shapes and nullable test-fixture response shapes
+  - LSP restart preserves prior sync-kind knowledge when initialize responses do not restate it in a parseable shape
+  - nullable extension API now exposes service functions needed by LSP post-tool tests without enabling warm-start-by-default behavior
+- Verification:
+  - focused extension runtime/LSP/agent-chain suites were repaired incrementally
+  - full suite is green again (`1345 tests, 9738 assertions, 0 failures`)

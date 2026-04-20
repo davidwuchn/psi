@@ -470,12 +470,13 @@
   "Run a sub-agent step via agent-ext/run-agent.
   Manages session persistence through agent-sessions atom.
   Returns {:output string :success boolean :elapsed long}."
-  [agent-name task agent-sessions ai-model get-api-key-fn agents-dir base-system-prompt]
+  [api agent-name task agent-sessions ai-model get-api-key-fn agents-dir base-system-prompt]
   (let [agent-key  (str/lower-case (str/replace (or agent-name "") #"\s+" "-"))
         existing   (get @agent-sessions agent-key)
         config     (agent-ext/resolve-agent-config agent-name agents-dir base-system-prompt)
-        result     (agent-ext/run-agent
-                    {:config              config
+        result     (agent-ext/run-agent-with-api
+                    {:api                 api
+                     :config              config
                      :prompt              task
                      :model               ai-model
                      :get-api-key-fn      get-api-key-fn
@@ -491,8 +492,8 @@
 (defn- run-chain!
   "Execute a chain sequentially. Each step's output feeds into the next.
   `on-step-update` is called with (step-index status elapsed last-work).
-  Returns {:output string :success boolean :elapsed long :step-results [...]}."
-  [chain all-agents agent-sessions ai-model original-prompt on-step-update
+  Returns {:output string :success boolean :elapsed long :step-results [...]} ."
+  [api chain all-agents agent-sessions ai-model original-prompt on-step-update
    get-api-key-fn agents-dir base-system-prompt]
   (let [chain-start  (System/currentTimeMillis)
         steps        (:steps chain)
@@ -514,7 +515,7 @@
             (let [prompt (-> (:prompt step)
                              (str/replace "$INPUT" (or input ""))
                              (str/replace "$ORIGINAL" (or original-prompt "")))
-                  result (run-sub-agent! (:agent step) prompt agent-sessions
+                  result (run-sub-agent! api (:agent step) prompt agent-sessions
                                          ai-model get-api-key-fn
                                          agents-dir base-system-prompt)]
               (swap! step-results conj
@@ -571,6 +572,7 @@
    :agent-sessions      (:chain/agent-sessions data)
    :ai-model            (:chain/model data)
    :task                (:chain/task data)
+   :api                 (:chain/api data)
    :agents-dir          (:chain/agents-dir data)
    :base-system-prompt  (:chain/base-system-prompt data)})
 
@@ -606,7 +608,8 @@
 
 (defn- run-chain-workflow-job
   [{:keys [run-id chain agents agent-sessions ai-model task
-           agents-dir base-system-prompt]}]
+           agents-dir base-system-prompt]
+    :as workflow-data}]
   (let [run-id*         (str (or run-id (str "run-" (java.util.UUID/randomUUID))))
         started-ms      (now-ms)
         steps           (:steps chain)
@@ -642,7 +645,7 @@
                                  (pos? (long (or elapsed 0)))
                                  (assoc :step-elapsed-ms (long elapsed)))))))]
     (try
-      (let [result  (run-chain! chain agents agent-sessions ai-model* task on-step
+      (let [result  (run-chain! (:api workflow-data) chain agents agent-sessions ai-model* task on-step
                                 get-api-key-fn agents-dir base-system-prompt)
             success (:success result)
             summary (chain-summary chain success (:elapsed result))
@@ -773,6 +776,7 @@
                                           :chain/all-agents          (:agents input)
                                           :chain/agent-sessions      agent-sessions
                                           :chain/on-finished         on-finished
+                                          :chain/api                 (:api @state)
                                           :chain/agents-dir          (concat (agent-ext/global-agents-dirs)
                                                                              [(str (System/getProperty "user.dir") "/.psi/agents")])
                                           :chain/base-system-prompt  (when qf

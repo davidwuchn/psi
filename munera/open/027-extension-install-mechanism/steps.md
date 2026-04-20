@@ -21,9 +21,9 @@ Implementation checklist:
 - [x] Implement duplicate-init validation on the effective extension set
 - [x] Implement git-sha validation for git extension deps
 - [x] Implement structured diagnostics production
-- [~] Implement dependency realization and extension activation for local/git/mvn deps
+- [x] Implement dependency realization and extension activation for local/git/mvn deps
   - [x] manifest-backed `:local/root` apply during explicit reload/apply
-  - [ ] manifest-backed git/mvn realization beyond restart-required reporting
+  - [x] manifest-backed git/mvn realization beyond restart-required reporting
 - [x] Implement per-extension load status tracking
 - [x] Implement explicit reload/apply with `:applied` / `:restart-required` results
 - [x] Implement canonical read-surface projection for raw manifests, effective state, diagnostics, and last-apply result

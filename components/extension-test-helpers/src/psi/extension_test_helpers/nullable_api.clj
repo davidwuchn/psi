@@ -248,7 +248,8 @@
    :psi.extension.service/request-id (:request-id params)
    :psi.extension.service/payload (:payload params)
    :psi.extension.service/timeout-ms (:timeout-ms params)
-   :psi.extension.service/response (:response params)})
+   :psi.extension.service/response (:response params)
+   :response (:response params)})
 
 (defn- service-notify! [state params]
   (swap! state update :service-notifications (fnil conj []) params)
@@ -389,6 +390,31 @@
                                         (mutate* 'psi.extension/append-message
                                                  {:role role
                                                   :content content}))
+                      :register-post-tool-processor (fn [{:keys [name match timeout-ms handler]}]
+                                                      (mutate* 'psi.extension/register-post-tool-processor
+                                                               {:name name
+                                                                :match match
+                                                                :timeout-ms timeout-ms
+                                                                :handler handler}))
+                      :ensure-service (fn [{:keys [key type spec]}]
+                                        (mutate* 'psi.extension/ensure-service
+                                                 {:key key :type type :spec spec}))
+                      :stop-service (fn [key]
+                                      (mutate* 'psi.extension/stop-service {:key key}))
+                      :service-request (fn [opts]
+                                         (mutate* 'psi.extension/service-request opts))
+                      :service-notify (fn [opts]
+                                        (mutate* 'psi.extension/service-notify opts))
+                      :list-services (fn []
+                                       (mapv (fn [svc]
+                                               {:psi.service/key (:key svc)
+                                                :psi.service/type (:type svc)
+                                                :psi.service/status :running
+                                                :psi.service/command (get-in svc [:spec :command])
+                                                :psi.service/cwd (get-in svc [:spec :cwd])
+                                                :psi.service/transport (get-in svc [:spec :transport])
+                                                :psi.service/published-diagnostics []})
+                                             (:services @state)))
                       :get-api-key get-key*
                       :ui-type (or (:ui-type opts*) :console)
                       :register-tool (fn [tool] (add-tool! state tool))

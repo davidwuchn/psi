@@ -79,6 +79,21 @@
         (is (= :restart-required (get-in state [:psi.extensions/last-apply :status])))
         (is (= state (installs/extension-installs-state-in ctx)))))))
 
+(deftest activation-plan-allows-inprocess-non-local-apply-when-not-removing-prior-deps
+  (let [install-state {:psi.extensions/effective {:raw-deps {'foo/ext {:mvn/version "1.1.0"
+                                                                       :psi/init 'foo.ext/init}}
+                                                  :entries-by-lib {'foo/ext {:dep {:mvn/version "1.1.0"
+                                                                                    :psi/init 'foo.ext/init}
+                                                                             :extension? true
+                                                                             :enabled? true}}}}
+        previous-state {:psi.extensions/effective {:raw-deps {'foo/ext {:mvn/version "1.0.0"
+                                                                        :psi/init 'foo.ext/init}}}}
+        plan (installs/activation-plan install-state previous-state)]
+    (is (true? (:deps-apply-safe? plan)))
+    (is (= {'foo/ext {:mvn/version "1.1.0" :psi/init 'foo.ext/init}}
+           (:deps-to-realize plan)))
+    (is (empty? (:restart-required-libs plan)))))
+
 (deftest eql-query-exposes-extension-install-config
   (let [cwd (test-support/temp-cwd)
         home (tmp-dir)

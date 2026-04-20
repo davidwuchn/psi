@@ -76,3 +76,28 @@
                (get-in result [:install-state :psi.extensions/last-apply :status])))
         (is (some #(= :restart-required (:category %))
                   (get-in result [:install-state :psi.extensions/diagnostics])))))))
+
+(deftest reload-extensions-realizes-non-local-deps-when-safe-test
+  (let [cwd       (test-support/temp-cwd)
+        home      (tmp-dir)
+        [ctx sid] (test-support/create-test-session {:persist? false :cwd cwd})]
+    (with-redefs [installs/user-manifest-file (fn [] (manifest-file home ".psi/agent/extensions.edn"))
+                  installs/project-manifest-file (fn [_] (manifest-file cwd ".psi/extensions.edn"))
+                  clojure.repl.deps/sync-deps (fn [& _] :ok)]
+      (spit (installs/project-manifest-file cwd)
+            (pr-str {:deps {'psi/test-remote-ext {:git/url "https://example.com/ext"
+                                                  :git/sha "abc123"
+                                                  :psi/init 'psi.test.remote-ext/init}}}))
+      (installs/persist-install-state-in!
+       ctx
+       {:psi.extensions/effective
+        {:raw-deps
+         {'psi/test-remote-ext {:git/url "https://example.com/ext"
+                                :git/sha "abc123"
+                                :psi/init 'psi.test.remote-ext/init}}}})
+      (let [result (ext-rt/reload-extensions-in! ctx sid [] cwd)]
+        (is (true? (:deps-realized? result)))
+        (is (= :loaded
+               (get-in result [:install-state :psi.extensions/effective :entries-by-lib 'psi/test-remote-ext :status])))
+        (is (= :applied
+               (get-in result [:install-state :psi.extensions/last-apply :status])))))))

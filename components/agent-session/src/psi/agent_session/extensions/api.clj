@@ -217,7 +217,8 @@
         (fn [service-key]
           (if service-fn
             (service-fn service-key)
-            (runtime-not-initialized :get-service)))
+            (some #(when (= service-key (:psi.service/key %)) %)
+                  (list-services))))
         register-prompt-contribution!
         (fn [id contribution]
           (mutate-ext-required :register-prompt-contribution

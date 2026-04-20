@@ -300,13 +300,11 @@
      :thinking-level          :off
      :fork-messages           nil}))
 
-(defn run-agent
-  "Run an agent to completion via core child session.
-  Creates a child session via mutation, runs the agent loop, returns result.
-  Returns {:ok? :text :elapsed-ms :error-message :session-id}."
-  [{:keys [config prompt model get-api-key-fn existing-session-id]}]
+(defn- run-agent*
+  [{:keys [api config prompt model get-api-key-fn existing-session-id]}]
   (let [started    (now-ms)
-        mutate-fn  (some-> @state :api :mutate)
+        mutate-fn  (or (:mutate api)
+                       (some-> @state :api :mutate))
         session-id (or existing-session-id
                        (when mutate-fn
                          (:psi.agent-session/session-id
@@ -352,6 +350,18 @@
                             (- (now-ms) started))
          :error-message (:psi.agent-session/agent-run-error-message result)
          :session-id    session-id}))))
+
+(defn run-agent
+  "Run an agent to completion via core child session.
+  Creates a child session via mutation, runs the agent loop, returns result.
+  Returns {:ok? :text :elapsed-ms :error-message :session-id}."
+  [{:keys [config prompt model get-api-key-fn existing-session-id] :as opts}]
+  (run-agent* (assoc opts :api nil)))
+
+(defn run-agent-with-api
+  "Run an agent using an explicit extension API instead of the extension-global state."
+  [{:keys [api] :as opts}]
+  (run-agent* opts))
 
 (defn- current-session-messages [query-fn]
   (when query-fn
