@@ -122,11 +122,12 @@ Bootstrapped on 2026-04-02.
   - `psi-tool` workflow ops now include `register-agent-chains` and `create-run-from-agent-chain`
   - an execution bridge now exists in `workflow_execution.clj` for current-step attempt/session creation, prompt materialization, prompt submission, result-envelope recording, and step advancement
   - `execute-run!` now provides a first sequential loop for multi-step workflow execution to terminal/blocking status
-  - next 026 slice is broadening this loop with richer retry, blocked, and resumable runtime control rather than inventing the basic sequential runner
+  - blocked-status behavior is now explicitly proven in `workflow_execution_test.clj`
+  - next 026 slice is broadening this loop with richer retry and resume-aware runtime control rather than inventing the basic sequential runner
 
 ## Suggested next step
 - Next active threads are now:
-  1. **026 deterministic workflows**: extend `execute-run!`/workflow orchestration with retry, blocked, and resume-aware control paths
+  1. **026 deterministic workflows**: extend `execute-run!`/workflow orchestration with retry and resume-aware control paths
   2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
   3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
   4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests

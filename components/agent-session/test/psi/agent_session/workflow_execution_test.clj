@@ -30,6 +30,16 @@
                               :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
                               :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}}}})
 
+(def blocked-definition
+  {:definition-id "blocked-review"
+   :name "Blocked Review"
+   :step-order ["step-1-review"]
+   :steps {"step-1-review" {:executor {:type :agent :profile "reviewer" :mode :sync}
+                             :prompt-template "$INPUT"
+                             :input-bindings {:input {:source :workflow-input :path [:input]}}
+                             :result-schema [:map [:outcome [:= :blocked]] [:blocked :map]]
+                             :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}})
+
 (deftest materialize-step-inputs-and-prompt-test
   (let [[state1 _ _] (workflow-runtime/register-definition {:workflows {:definitions {} :runs {} :run-order []}} definition)
         [state2 run-id _] (workflow-runtime/create-run state1 {:definition-id "plan-build"
@@ -106,3 +116,41 @@
           (is (= ["ship it"
                   "Execute this plan:\n\nplanner output\n\nOriginal request: build this feature"]
                  (mapv :prompt @prompts*))))))))
+
+(deftest execute-run-blocked-test
+  (testing "execute-run! stops and reports blocked runs"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[state1 _ _] (workflow-runtime/register-definition state blocked-definition)
+                           [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "blocked-review"
+                                                                            :run-id "run-b1"
+                                                                            :workflow-input {:input "need approval"}})]
+                       state2)))]
+      (with-redefs [psi.agent-session.core/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
+                    psi.agent-session.core/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                       {:content "reviewer needs approval"})
+                    psi.agent-session.workflow-execution/execute-current-step! (fn [_ctx _sid _run-id]
+                                                                                 (swap! (:state* ctx)
+                                                                                        update-in
+                                                                                        [:workflows :runs "run-b1"]
+                                                                                        #(-> %
+                                                                                             (assoc :status :blocked
+                                                                                                    :blocked {:question "approve?"})
+                                                                                             (assoc-in [:step-runs "step-1-review" :attempts]
+                                                                                                       [{:attempt-id "a1"
+                                                                                                         :status :blocked
+                                                                                                         :execution-session-id "child-1"
+                                                                                                         :blocked {:question "approve?"}}])))
+                                                                                 {:run-id "run-b1"
+                                                                                  :step-id "step-1-review"
+                                                                                  :attempt-id "a1"
+                                                                                  :execution-session-id "child-1"
+                                                                                  :status :blocked})]
+        (let [result (workflow-execution/execute-run! ctx session-id "run-b1")
+              run    (workflow-runtime/workflow-run-in @(:state* ctx) "run-b1")]
+          (is (= :blocked (:status result)))
+          (is (false? (:terminal? result)))
+          (is (true? (:blocked? result)))
+          (is (= :blocked (:status run)))
+          (is (= {:question "approve?"} (:blocked run))))))))

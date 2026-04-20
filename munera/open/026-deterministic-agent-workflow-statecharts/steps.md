@@ -28,3 +28,4 @@ Implementation checkpoints:
 - [x] Add a direct psi-tool launch path for named agent-chain workflows
 - [x] Add execution-time orchestration helpers for current-step attempt creation, prompt materialization, and result recording
 - [x] Add sequential run-loop orchestration for multi-step workflow execution
+- [x] Add blocked-status orchestration proof for the sequential execution loop

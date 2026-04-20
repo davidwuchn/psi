@@ -232,5 +232,7 @@ Notes:
 - Added focused tests proving:
   - multi-step sequential execution reaches terminal completion
   - downstream prompts consume prior-step canonical outputs
-- Remaining likely follow-on is broadening this orchestration from the current happy-path sequential loop into richer runtime-owned retry, blocked, and resumable execution control surfaces.
+- Added blocked-loop proof in `workflow_execution_test.clj`
+- The sequential execution loop is now proven to stop and report blocked status rather than only proving terminal completion.
+- Remaining likely follow-on is broadening this orchestration from the current sequential loop into richer runtime-owned retry and resumable execution control surfaces.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
