@@ -19,6 +19,6 @@ Implementation checkpoints:
 - [x] Implement blocked/resume semantics with resume creating a new attempt
 - [x] Expose workflow definitions and runs through Pathom/EQL, including workflow↔session relationships
 - [x] Extend `psi-tool` with `action: "workflow"` and slice-one ops (`list-definitions`, `create-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
-- [ ] Add focused tests for the sequential workflow lifecycle and introspection surface
-- [ ] Prove a representative chain-like workflow (e.g. plan→build→review) on top of the primitive
+- [x] Add focused tests for the sequential workflow lifecycle and introspection surface
+- [x] Prove a representative chain-like workflow (e.g. plan→build→review) on top of the primitive
 - [ ] Evaluate follow-on integration path for `agent-chain` once the lower-level primitive is proven

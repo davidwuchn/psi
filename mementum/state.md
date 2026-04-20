@@ -93,94 +93,6 @@ Bootstrapped on 2026-04-02.
   - removed obsolete handshake/tree-label compatibility branches that were superseded by the converged projections
   - converged capability-graph derivation on `psi.graph.analysis`; `psi.introspection.graph` is now a compatibility wrapper
   - started thinning the RPC command/frontend-action seam by moving picker selection side-effects into `psi.rpc.session.command-pickers`
-@@
- ## Suggested next step
- - Next active threads are now:
-   1. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
-   2. **Auto session name**: add helper model selection using the new model-selection-hierarchy thread
-   3. **Model selection hierarchy**: task-class helper/background model resolution
-   4. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
-   5. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
-+- Additional current follow-on from recent Gordian/RPC work:
-+  6. **RPC edge thinning**: continue reducing duplication between `psi.rpc.session.commands` and `psi.rpc.session.frontend_actions`, likely by centralizing more command-result/error/session-snapshot orchestration without reshaping navigation contracts
-
-## Explicit routing direction
-- Strong current direction: explicit session routing over inferred focus.
-- When an RPC operation can reasonably carry `session-id`, pass it explicitly.
-- New resolver/introspection follow-on now landed in `agent-session`:
-  - removed `psi.agent-session.resolvers.support/*session-id*`
-  - removed resolver-time hidden session selection
-  - session-scoped resolver reads now require explicit `:psi.agent-session/session-id`
-  - direct Pathom/qctx callers now pass session-id in entities instead of binding dynamic vars
-  - session git branch/context resolution is now explicitly session-scoped from session worktree/cwd
-  - graph introspection now advertises `:psi.agent-session/session-id` as a root seed because session-scoped attrs require it explicitly
-  - unit + extension + Emacs test suites are green after the change
-- `targetable-rpc-ops` was expanded so explicit routing now includes additional ops such as:
-  - `new_session`
-  - `switch_session`
-  - `list_sessions`
-  - `subscribe`
-  - `login_begin`
-  - `resolve_dialog`
-  - `cancel_dialog`
-- Adapter-local focus still exists, but should be fallback/adapter state rather than the primary semantic input for shared runtime projections.
-
-## Canonical app-runtime ownership now includes
-- selector model
-- footer model
-- session-summary model for header/diagnostic reuse
-- navigation result maps
-- context snapshot maps
-- context/session-tree public summary maps
-- context/session-tree widget projection payloads when adapters need the same rendered structure
-- transcript rehydration message reconstruction
-- shared UI action model
-- shared frontend action result normalization
-- extension UI/status public projection
-- background-job public summary maps
-- background-job widget/status public projection
-
-## Focused proof now in tests
-- app-runtime tests now prove:
-  - context snapshot projection preserves canonical display-name and updated-at semantics
-  - context snapshot marks active/streaming sessions correctly
-  - context snapshot falls back to the current session when the context index is empty
-  - context/session-tree summary projection builds canonical labels, actions, widget lines, and visibility rules
-  - session-summary projection builds canonical header/status fragments
-  - transcript messages are rebuilt canonically from the session journal
-  - navigation results use the shared app-runtime context + message projections
-  - frontend action result normalization works for canonical action names and canonical submitted values
-  - background-job summaries build canonical text and summary lines
-  - background-job widget/status projections build canonical widget rows and per-job statuses
-  - background-job live UI projection updates and clears shared extension UI state correctly
-- RPC tests now prove:
-  - new-session / resume / tree / fork flows still emit canonical `session/resumed` + `session/rehydrated`
-  - `footer/updated` exposes structured footer fields alongside canonical lines
-  - `session/updated` exposes shared session-summary fragments for header/status reuse
-  - `context/updated` exposes active-session-id, sessions, and backend-projected session-tree widget payload
-  - handshake emits transport/server info only (no bootstrap `context/updated` event)
-  - explicit `session-id` routing works in the newer navigation paths
-  - frontend action flows use canonical action names
-  - background-job RPC ops expose canonical summary fields
-- Emacs tests now prove:
-  - `ui/frontend-action-requested` is consumed from canonical `:ui/action`
-  - Emacs submits canonical frontend action names back on `frontend_action_result`
-  - no legacy payload duplication is required for selector/picker completion flows
-  - footer alignment prefers structured backend footer fields, with `:stats-line` parsing retained only as compatibility fallback
-  - header model label and `/status` session-summary text consume backend-owned shared session summary fragments
-  - `context/updated` renders the backend-projected session-tree widget instead of rebuilding widget structure locally
-  - tree candidate labels prefer backend-provided canonical labels when present
-  - projected background-job widgets/statuses render correctly
-- TUI tests now prove:
-  - projected extension UI ordering is preserved unchanged
-  - projected background-job widgets render from shared UI projection state
-
-## Recent relevant commits
-- `a946fe8` — ⚒ custom-providers: reload-models command + session bootstrap refresh
-- `97a66aa` — ⚒ custom-providers: wire model-registry init into bootstrap
-- `5d98edf` — ⊘ extensions: guard dispatch-in contains? against non-map handler returns
-- `a3f61cf0` — ⊘ tests: align dispatch-id expectations
-- `b10667f4` — ⊨ tools: remove tool-schemas child-session compatibility
 
 ## Prompt lifecycle convergence — current status
 - The prepare → execute → record → finish scaffold is now fully wired end-to-end.
@@ -196,52 +108,22 @@ Bootstrapped on 2026-04-02.
   - current prelude shape is synthetic user → assistant(skill body) → user(task) → assistant(ack)
   - child runtime initialization now preserves those preloaded messages in both runtime message state and the child journal seed
 
-## Custom providers — complete (`46bc655..a946fe8`)
-
-All 8 slices landed:
-
-1. `psi.ai.user-models` — parse `models.edn`, validate, resolve api-key specs
-2. `psi.ai.model-registry` — merged catalog (built-in + user + project), auth lookup
-3. `psi.ai.schemas/Provider` — relaxed from `[:enum :anthropic :openai]` to `keyword?`
-4. `psi.ai.core/resolve-provider` — dispatch fallback by `:api` protocol key
-5. `psi.agent-session.prompt-request` — custom provider auth + headers injection
-6. Transport (openai/anthropic) — `:no-auth-header` and custom `:headers` support
-7. All callers migrated from `ai-models/all-models` → `model-registry`
-8. `/reload-models` command + session bootstrap refresh (`a946fe8`)
-
-Config files:
-- `~/.psi/agent/models.edn` — user-global custom providers
-- `.psi/models.edn` — project-local custom providers
-
-Usage:
-- `/model local test-llm` — switch to a custom local model
-- `/reload-models` — reload models.edn from the current session's cwd after editing
-
-2 pre-existing failures in unit suite (unrelated: git-test, extensions-test).
-
 ## Current work update
-- Auto session name extension is now landed as a real vertical slice.
-- New runtime/extension seams landed to support it:
-  - prompt lifecycle emits canonical extension event `session_turn_finished`
-  - extensions can request delayed extension dispatch via `psi.extension/schedule-event`
-  - extension API now supports explicit source-session targeting via `:query-session` and `:mutate-session`
-- `extensions.auto-session-name` now:
-  - counts completed turns per session
-  - schedules checkpoints every 2 turns
-  - reads journal-backed source session entries rather than agent-core message history
-  - sanitizes visible user/assistant text only
-  - creates a helper child session and runs one sync helper turn
-  - applies inferred validated titles to the original session
-- Extension-local safety guards now exist for:
-  - helper-session recursion avoidance
-  - stale checkpoint suppression
-  - preserving manually changed current names by comparing against the last auto-applied name
+- 026 deterministic workflow runtime now has proof coverage landed in the active branch:
+  - canonical workflow model, runtime, progression, attempts, statechart, resolvers, and `psi-tool` surfaces exist
+  - `workflow_lifecycle_test.clj` proves representative `plan -> build -> review` completion and blocked/resume/new-attempt semantics
+  - focused workflow set is green when run in the 026 worktree
+- 026 follow-on direction is now clearer:
+  - `agent-chain` is currently only a discovery/config surface from `.psi/agents/agent-chain.edn`
+  - existing extension workflow runtime in `workflows.clj` is separate and should not become the execution substrate for canonical deterministic workflow runs
+  - next 026 slice should compile `agent-chain` config into canonical workflow definitions and keep `agent-chain` as a thin compatibility surface over `:workflows`
 
 ## Suggested next step
 - Next active threads are now:
-  1. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
-  2. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
-  3. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
+  1. **026 deterministic workflows**: implement the `agent-chain` compilation/delegation slice on top of canonical workflow definitions/runs
+  2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
+  3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
+  4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
 - Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes.
 - `008-model-selection-hierarchy` is now closed in `munera/closed/008-model-selection-hierarchy/`.
 - Model selection hierarchy is now available as shared infrastructure and already adopted by auto-session-name; remaining work is downstream adoption/refinement rather than core resolver invention.

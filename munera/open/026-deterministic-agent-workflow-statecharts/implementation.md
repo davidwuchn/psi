@@ -137,9 +137,42 @@ Current status:
 - Verified focused workflow/runtime/query/tool tests are green:
   - `clojure -M:test --focus psi.agent-session.tools-test --focus psi.agent-session.workflow-resolvers-test --focus psi.agent-session.workflow-attempts-test --focus psi.agent-session.workflow-progression-test --focus psi.agent-session.resolvers-test`
 
+2026-04-19 — lifecycle proof + representative chain proof
+- Added `components/agent-session/test/psi/agent_session/workflow_lifecycle_test.clj`
+- Proved a representative sequential `plan -> build -> review` workflow over the canonical workflow runtime by exercising:
+  - workflow run creation
+  - per-step attempt/session creation
+  - structured `:ok` result submission
+  - deterministic advancement across ordered steps
+  - terminal completion with accepted per-step outputs preserved
+  - introspection of step runs, attempts, history, and execution-session linkage via `:psi.workflow.run/detail`
+- Added a blocked/resume proof covering:
+  - blocked result-envelope handling
+  - runtime-owned resume semantics
+  - explicit creation of a fresh attempt after resume
+  - preservation of prior blocked attempt audit history and session linkage
+- Verified focused workflow lifecycle + runtime + resolver + psi-tool coverage is green:
+  - `clojure -M:test --focus psi.agent-session.workflow-lifecycle-test --focus psi.agent-session.workflow-runtime-test --focus psi.agent-session.workflow-attempts-test --focus psi.agent-session.workflow-progression-test --focus psi.agent-session.workflow-resolvers-test --focus psi.agent-session.tools-test`
+
+2026-04-19 — `agent-chain` follow-on integration assessment
+- Reviewed current `agent-chain` shape in `.psi/agents/agent-chain.edn` and the current discovery surface in `components/agent-session/src/psi/agent_session/resolvers/extensions.clj`
+- Current state:
+  - `agent-chain` definitions are currently discovered from static EDN config only
+  - chain steps are order-only and use `{ :agent ... :prompt ... }` with `$INPUT` / `$ORIGINAL` substitution conventions
+  - chain discovery is introspectable, but chain execution is not yet implemented on top of canonical workflow runs
+  - existing `workflow_mutations.clj` / `workflows.clj` are extension-workflow facilities and remain separate from the new canonical deterministic workflow runtime
+- Integration conclusion:
+  - the next slice should keep `agent-chain` as a thin compatibility/authoring surface over canonical workflow definitions rather than as a separate execution runtime
+  - chain config should compile into canonical workflow definitions with stable step ids, explicit `step-order`, agent-backed `:executor`, explicit input bindings, and a standard result-envelope contract
+  - the existing `:psi.agent-chain/*` discovery surface can remain for adapter continuity, but should eventually expose compiled workflow-definition identity alongside legacy chain summary data
+  - avoid migrating the old extension workflow runtime into this path; `agent-chain` should target the canonical `:workflows` state introduced for 026
+- Expected next implementation slice:
+  1. add a pure compiler from `agent-chain.edn` chain maps to canonical workflow definitions
+  2. add tests proving chain config compilation preserves step order, agent profile, and `$INPUT`/`$ORIGINAL` semantics as explicit bindings / derived execution materialization metadata
+  3. decide whether chain runs are launched through `agent-chain` tooling by delegating to workflow `create-run`, or by first registering compiled definitions in canonical root state
+  4. keep adapter/UI changes minimal until run creation and readback are working against canonical workflow runs
+
 Notes:
-- The deterministic workflow substrate now covers state model, statechart compilation, run creation, attempt/session linkage, result progression, Pathom/EQL read exposure, and initial `psi-tool` control operations.
-- Remaining work is primarily:
-  - orchestration that combines run creation, attempt creation, and progression into a full executable lifecycle
-  - representative chain-like proof and `agent-chain` follow-on
+- The deterministic workflow substrate now covers state model, statechart compilation, run creation, attempt/session linkage, result progression, Pathom/EQL read exposure, `psi-tool` control operations, and a representative chain-like proof.
+- Remaining work is primarily implementing the `agent-chain` compilation/delegation slice rather than resolving major ambiguity.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.
