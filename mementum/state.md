@@ -123,11 +123,12 @@ Bootstrapped on 2026-04-02.
   - an execution bridge now exists in `workflow_execution.clj` for current-step attempt/session creation, prompt materialization, prompt submission, result-envelope recording, and step advancement
   - `execute-run!` now provides a first sequential loop for multi-step workflow execution to terminal/blocking status
   - blocked-status behavior is now explicitly proven in `workflow_execution_test.clj`
-  - next 026 slice is broadening this loop with richer retry and resume-aware runtime control rather than inventing the basic sequential runner
+  - retry-aware loop behavior and resume-and-continue behavior are now also proven in `workflow_execution_test.clj`
+  - next 026 slice is less about core orchestration semantics and more about deciding which execution controls should be surfaced through `psi-tool` or chain-facing APIs
 
 ## Suggested next step
 - Next active threads are now:
-  1. **026 deterministic workflows**: extend `execute-run!`/workflow orchestration with retry and resume-aware control paths
+  1. **026 deterministic workflows**: decide whether to expose workflow execution controls (`execute-run!`, resume-and-continue) through `psi-tool` / chain-facing runtime APIs
   2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
   3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
   4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests

@@ -29,3 +29,4 @@ Implementation checkpoints:
 - [x] Add execution-time orchestration helpers for current-step attempt creation, prompt materialization, and result recording
 - [x] Add sequential run-loop orchestration for multi-step workflow execution
 - [x] Add blocked-status orchestration proof for the sequential execution loop
+- [x] Add retry-aware and resume-and-continue orchestration proofs for the sequential execution loop

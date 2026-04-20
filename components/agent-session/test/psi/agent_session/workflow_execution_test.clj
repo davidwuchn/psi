@@ -37,8 +37,18 @@
    :steps {"step-1-review" {:executor {:type :agent :profile "reviewer" :mode :sync}
                              :prompt-template "$INPUT"
                              :input-bindings {:input {:source :workflow-input :path [:input]}}
-                             :result-schema [:map [:outcome [:= :blocked]] [:blocked :map]]
+                             :result-schema :any
                              :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}})
+
+(def retry-definition
+  {:definition-id "retry-build"
+   :name "Retry Build"
+   :step-order ["step-1-builder"]
+   :steps {"step-1-builder" {:executor {:type :agent :profile "builder" :mode :sync}
+                              :prompt-template "$INPUT"
+                              :input-bindings {:input {:source :workflow-input :path [:input]}}
+                              :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                              :retry-policy {:max-attempts 2 :retry-on #{:execution-failed}}}}})
 
 (deftest materialize-step-inputs-and-prompt-test
   (let [[state1 _ _] (workflow-runtime/register-definition {:workflows {:definitions {} :runs {} :run-order []}} definition)
@@ -127,10 +137,7 @@
                                                                             :run-id "run-b1"
                                                                             :workflow-input {:input "need approval"}})]
                        state2)))]
-      (with-redefs [psi.agent-session.core/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
-                    psi.agent-session.core/last-assistant-message-in (fn [_ctx _child-session-id]
-                                                                       {:content "reviewer needs approval"})
-                    psi.agent-session.workflow-execution/execute-current-step! (fn [_ctx _sid _run-id]
+      (with-redefs [psi.agent-session.workflow-execution/execute-current-step! (fn [_ctx _sid _run-id]
                                                                                  (swap! (:state* ctx)
                                                                                         update-in
                                                                                         [:workflows :runs "run-b1"]
@@ -154,3 +161,107 @@
           (is (true? (:blocked? result)))
           (is (= :blocked (:status run)))
           (is (= {:question "approve?"} (:blocked run))))))))
+
+(deftest execute-run-retry-test
+  (testing "execute-run! retries when execution failure leaves the run retryable"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[state1 _ _] (workflow-runtime/register-definition state retry-definition)
+                           [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "retry-build"
+                                                                            :run-id "run-r1"
+                                                                            :workflow-input {:input "retry me"}})]
+                       (-> state2
+                           (assoc-in [:workflows :runs "run-r1" :step-runs "step-1-builder" :attempts]
+                                     [{:attempt-id "a1"
+                                       :status :running
+                                       :execution-session-id "child-1"}])))))
+          calls* (atom 0)]
+      (with-redefs [psi.agent-session.workflow-execution/execute-current-step!
+                    (fn [_ctx _sid _run-id]
+                      (let [n (swap! calls* inc)]
+                        (if (= 1 n)
+                          (do
+                            (swap! (:state* ctx)
+                                   psi.agent-session.workflow-progression/record-execution-failure
+                                   "run-r1"
+                                   "step-1-builder"
+                                   {:message "transient provider error"})
+                            {:run-id "run-r1"
+                             :step-id "step-1-builder"
+                             :attempt-id "a1"
+                             :execution-session-id "child-1"
+                             :status :running
+                             :error "transient provider error"})
+                          (do
+                            (swap! (:state* ctx)
+                                   update-in
+                                   [:workflows :runs "run-r1" :step-runs "step-1-builder" :attempts]
+                                   conj
+                                   {:attempt-id "a2"
+                                    :status :running
+                                    :execution-session-id "child-2"})
+                            (swap! (:state* ctx)
+                                   psi.agent-session.workflow-progression/submit-result-envelope
+                                   "run-r1"
+                                   "step-1-builder"
+                                   {:outcome :ok :outputs {:text "done"}})
+                            {:run-id "run-r1"
+                             :step-id "step-1-builder"
+                             :attempt-id "a2"
+                             :execution-session-id "child-2"
+                             :status :completed}))))]
+        (let [result (workflow-execution/execute-run! ctx session-id "run-r1")
+              run    (workflow-runtime/workflow-run-in @(:state* ctx) "run-r1")]
+          (is (= 2 @calls*))
+          (is (= :completed (:status result)))
+          (is (true? (:terminal? result)))
+          (is (= :completed (:status run)))
+          (is (= {:outcome :ok :outputs {:text "done"}}
+                 (get-in run [:step-runs "step-1-builder" :accepted-result]))))))))
+
+(deftest resume-and-execute-run-test
+  (testing "resume-and-execute-run! resumes blocked runs and continues with a fresh attempt"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[state1 _ _] (workflow-runtime/register-definition state blocked-definition)
+                           [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "blocked-review"
+                                                                            :run-id "run-resume"
+                                                                            :workflow-input {:input "need approval"}})]
+                       (-> state2
+                           (assoc-in [:workflows :runs "run-resume" :status] :blocked)
+                           (assoc-in [:workflows :runs "run-resume" :blocked] {:question "approve?"})
+                           (assoc-in [:workflows :runs "run-resume" :step-runs "step-1-review" :attempts]
+                                     [{:attempt-id "a1"
+                                       :status :blocked
+                                       :execution-session-id "child-1"
+                                       :blocked {:question "approve?"}}])))))
+          calls* (atom 0)]
+      (with-redefs [psi.agent-session.workflow-execution/execute-current-step!
+                    (fn [_ctx _sid _run-id]
+                      (swap! calls* inc)
+                      (swap! (:state* ctx)
+                             update-in
+                             [:workflows :runs "run-resume" :step-runs "step-1-review" :attempts]
+                             conj
+                             {:attempt-id "a2"
+                              :status :running
+                              :execution-session-id "child-2"})
+                      (swap! (:state* ctx)
+                             psi.agent-session.workflow-progression/submit-result-envelope
+                             "run-resume"
+                             "step-1-review"
+                             {:outcome :ok :outputs {:text "approved"}})
+                      {:run-id "run-resume"
+                       :step-id "step-1-review"
+                       :attempt-id "a2"
+                       :execution-session-id "child-2"
+                       :status :completed})]
+        (let [result (workflow-execution/resume-and-execute-run! ctx session-id "run-resume")
+              run    (workflow-runtime/workflow-run-in @(:state* ctx) "run-resume")]
+          (is (= 1 @calls*))
+          (is (= :completed (:status result)))
+          (is (true? (:terminal? result)))
+          (is (= :completed (:status run)))
+          (is (nil? (:blocked run))))))))

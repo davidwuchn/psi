@@ -234,5 +234,9 @@ Notes:
   - downstream prompts consume prior-step canonical outputs
 - Added blocked-loop proof in `workflow_execution_test.clj`
 - The sequential execution loop is now proven to stop and report blocked status rather than only proving terminal completion.
-- Remaining likely follow-on is broadening this orchestration from the current sequential loop into richer runtime-owned retry and resumable execution control surfaces.
+- Extended `workflow_execution.clj` with `resume-and-execute-run!` and made `execute-current-step!` return structured error info while recording execution failures.
+- Added focused retry/resume proofs in `workflow_execution_test.clj` showing:
+  - retryable execution failure can be followed by a successful later attempt within the sequential loop
+  - blocked runs can be resumed and then continued to completion with a fresh attempt
+- Remaining likely follow-on is shaping these helpers into a broader runtime-facing execution control surface and integrating them into `psi-tool`/named chain execution flows if desired.
 - Existing extension workflow runtime in `workflows.clj` remains separate; `workflow_runtime.clj` and related files are for the new canonical deterministic workflow-run state.

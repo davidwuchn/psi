@@ -8,7 +8,8 @@
    - create one attempt child session for the current step
    - prompt that session
    - record a canonical structured result envelope back onto the workflow run
-   - loop execution across sequential steps until terminal or blocked state"
+   - loop execution across sequential steps until terminal or blocked state
+   - resume a blocked run and continue execution with a fresh attempt"
   (:require
    [clojure.string :as str]
    [psi.agent-session.core :as session]
@@ -88,7 +89,6 @@
   [ctx parent-session-id run-id]
   (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)
         step-id      (:current-step-id workflow-run)
-        step-def     (get-in workflow-run [:effective-definition :steps step-id])
         {:keys [prompt]} (step-prompt workflow-run step-id)
         {:keys [attempt execution-session]}
         (workflow-attempts/create-step-attempt-session!
@@ -118,7 +118,12 @@
          :status (get-in @(:state* ctx) [:workflows :runs run-id :status])})
       (catch Exception e
         (swap! (:state* ctx) workflow-progression/record-execution-failure run-id step-id {:message (ex-message e)})
-        (throw e)))))
+        {:run-id run-id
+         :step-id step-id
+         :attempt-id (:attempt-id attempt)
+         :execution-session-id (:session-id execution-session)
+         :status (get-in @(:state* ctx) [:workflows :runs run-id :status])
+         :error (ex-message e)}))))
 
 (defn execute-run!
   "Execute a sequential workflow run until it reaches a terminal or blocked status.
@@ -145,4 +150,13 @@
 
         :else
         (let [step-result (execute-current-step! ctx parent-session-id run-id)]
-          (recur (conj steps-executed (select-keys step-result [:step-id :attempt-id :execution-session-id :status]))))))))
+          (recur (conj steps-executed (select-keys step-result [:step-id :attempt-id :execution-session-id :status :error]))))))))
+
+(defn resume-and-execute-run!
+  "Resume a blocked run and continue sequential execution.
+
+   Resuming clears blocked state via pure progression; the next loop iteration
+   creates a fresh attempt for the current step before executing it."
+  [ctx parent-session-id run-id]
+  (swap! (:state* ctx) workflow-progression/resume-blocked-run run-id)
+  (execute-run! ctx parent-session-id run-id))
