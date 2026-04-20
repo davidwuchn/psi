@@ -104,3 +104,13 @@
 - Verification:
   - focused extension runtime/LSP/agent-chain suites were repaired incrementally
   - full suite is green again (`1345 tests, 9738 assertions, 0 failures`)
+
+2026-04-20
+- Follow-on proof requested for this task beyond the base install mechanism.
+- New required proof:
+  - migrate repo built-in extensions away from the legacy shared `extensions/src/extensions` + `.psi/extensions/*.clj` symlink layout
+  - reshape `extensions/` into one project per built-in extension currently shipped in this repo
+  - create `.psi/extensions.edn` matching the currently active built-in extension set (`agent`, `agent_chain`, `auto_session_name`, `commit_checks`, `mementum`, `munera`, `work_on`)
+  - verify both startup loading and explicit reload/apply against the migrated structure through the project nREPL
+- Important consequence:
+  - this moves the task from purely implementing the install mechanism to also using the repo’s own built-in extensions as the canonical dogfood proof for local-root/project-manifest installs

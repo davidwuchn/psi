@@ -34,6 +34,8 @@ Desired outcome:
 - a clear reload/apply story after manifest edits
 - strong validation and introspection even without a dedicated install command UX
 - a practical development loop for extension authors without requiring full psi restart on every edit when a conservative reload path is possible
+- migrate this repository's built-in extensions from the legacy shared `extensions/src/extensions` + `.psi/extensions/*.clj` link setup to the new install-manifest model as the proof slice
+- ensure psi startup and reload work against that migrated structure through the project nREPL, not just through file-level/unit-only proof
 
 Core constraints:
 - simplicity first

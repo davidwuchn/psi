@@ -36,3 +36,9 @@ Implementation checklist:
   - [x] `README.md` link/update
   - [x] `doc/extensions.md` install-manifest section
   - [x] `doc/psi-project-config.md` install-state query example
+- [ ] Convert `extensions/` into a directory containing one project per current built-in extension under `extensions/src/extensions/` and `extensions/test/extensions/`
+- [ ] Create a project `.psi/extensions.edn` that matches the built-in extensions currently activated via `.psi/extensions/*.clj`
+- [ ] Ensure psi startup loads the migrated built-in extension projects from the new structure
+  - [ ] verify via project nREPL
+- [ ] Ensure psi explicit reload/apply reloads the migrated built-in extension projects from the new structure
+  - [ ] verify via project nREPL

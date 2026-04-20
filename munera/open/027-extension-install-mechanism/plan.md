@@ -90,6 +90,13 @@ Implementation slices:
      - inspect structured state/diagnostics
      - restart when required
 
+8. built-in extension migration proof
+   - convert `extensions/` from one shared source/test project into a directory containing one project per built-in extension currently under `extensions/src/extensions/` and `extensions/test/extensions/`
+   - create a project `.psi/extensions.edn` that activates the same built-in extensions currently linked from `.psi/extensions/`
+   - remove reliance on `.psi/extensions/*.clj` symlink loading for the built-in extension set used by this repo
+   - verify psi startup realizes the migrated extension projects from the manifest in the project nREPL
+   - verify explicit reload/apply reloads the migrated extension projects in the project nREPL
+
 Concrete projection targets:
 - raw manifests
 - effective raw deps
