@@ -8,6 +8,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.extensions.runtime-fns :as runtime-fns]
    [psi.app-runtime :as app-runtime]
    [psi.app-runtime.transcript]
    [psi.agent-session.persistence :as persist]
@@ -90,6 +91,68 @@
             sessions (ss/list-context-sessions-in ctx)]
         (is (= 1 (count sessions)))
         (is (= session-id (:session-id (first sessions))))))))
+
+(deftest start-tui-runtime-extension-command-after-new-targets-new-session-test
+  (let [orig-state @app-runtime/session-state]
+    (try
+      (with-main-bootstrap-stubs
+        (fn []
+          (let [{:keys [ctx session-id]} (app-runtime/create-runtime-session-context
+                                          {:provider           :anthropic
+                                           :id                 "test-model"
+                                           :name               "Test Model"
+                                           :supports-reasoning false
+                                           :context-window     200000}
+                                          {:ui-type :tui})
+                reg                    (:extension-registry ctx)
+                ext-path               "/ext/which-session"
+                runtime-fns*           (runtime-fns/make-extension-runtime-fns ctx session-id ext-path)
+                api                    (ext/create-extension-api reg ext-path runtime-fns*)
+                _                      (ext/register-extension-in! reg ext-path)
+                _                      ((:register-command api)
+                                        "which-session"
+                                        {:description "Append implicit extension session id"
+                                         :handler     (fn [_args]
+                                                        ((:append-message api)
+                                                         "assistant"
+                                                         (:psi.agent-session/session-id
+                                                          ((:query api) [:psi.agent-session/session-id]))))})
+                event-queue            (java.util.concurrent.LinkedBlockingQueue.)
+                tui-opts*              (atom nil)
+                tui-start!             (fn [_model-name _run-agent-fn opts]
+                                         (reset! tui-opts* opts)
+                                         :ok)]
+            (with-redefs [app-runtime/create-runtime-session-context
+                          (fn [_ai-model opts]
+                            {:ctx ctx
+                             :oauth-ctx nil
+                             :cwd (or (:cwd opts) (System/getProperty "user.dir"))
+                             :session-id session-id})
+                          app-runtime/bootstrap-runtime-session!
+                          (fn [_ctx sid _ai-model _opts]
+                            {:ctx _ctx
+                             :templates []
+                             :skills []
+                             :startup-rehydrate ((resolve 'psi.app-runtime/startup-rehydrate-from-current-session!) ctx sid nil {:provider :anthropic :id "test-model" :name "Test Model" :supports-reasoning false})})]
+              (is (= :ok (app-runtime/start-tui-runtime! tui-start! :ignored)))
+              (let [dispatch-fn   (:dispatch-fn @tui-opts*)
+                    query-fn      (:query-fn @tui-opts*)
+                    before-id     (:psi.agent-session/session-id (query-fn [:psi.agent-session/session-id]))
+                    new-result    (dispatch-fn "/new")
+                    after-new-id  (:session-id (:rehydrate new-result))
+                    ext-result    (dispatch-fn "/which-session")]
+                (is (= :new-session (:type new-result)))
+                (is (string? after-new-id))
+                (is (not= before-id after-new-id))
+                (is (= :extension-cmd (:type ext-result)))
+                ((:handler ext-result) (:args ext-result))
+                (is (= after-new-id
+                       (last (->> (persist/all-entries-in ctx after-new-id)
+                                  (filter #(= :message (:kind %)))
+                                  (map #(get-in % [:data :message :content 0 :text])))))
+                    "extension command implicit query must follow the active session after /new"))))))
+      (finally
+        (reset! app-runtime/session-state orig-state)))))
 
 (deftest run-session-initializes-session-file-test
   (let [orig-state @app-runtime/session-state]

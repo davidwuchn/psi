@@ -333,16 +333,17 @@
                                                   20
                                                   java.util.concurrent.TimeUnit/MILLISECONDS)]
                               (when (= :external-message (:type evt))
-                                (let [message (:message evt)]
+                                (let [message (:message evt)
+                                      target-session-id (or (:session-id evt) session-id)]
                                   (events/emit-event! emit-frame! state
                                                       {:event "assistant/message"
-                                                       :data  (events/external-message->assistant-payload session-id message)})
+                                                       :data  (events/external-message->assistant-payload target-session-id message)})
                                   (events/emit-event! emit-frame! state
                                                       {:event "session/updated"
-                                                       :data  (events/session-updated-payload ctx session-id)})
+                                                       :data  (events/session-updated-payload ctx target-session-id)})
                                   (events/emit-event! emit-frame! state
                                                       {:event "footer/updated"
-                                                       :data  (events/footer-updated-payload ctx session-id)}))))
+                                                       :data  (events/footer-updated-payload ctx target-session-id)}))))
                             (recur))))]
       (rpc.state/set-external-event-loop! state loop-fut)
       ;; Emit an immediate footer snapshot after starting the loop so subscribers

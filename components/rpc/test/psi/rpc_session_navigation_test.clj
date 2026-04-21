@@ -5,9 +5,52 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
+   [psi.agent-session.extensions :as ext]
+   [psi.agent-session.extensions.runtime-fns :as runtime-fns]
+   [psi.agent-session.mutations :as mutations]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.rpc-test-support :as support]))
+
+(deftest rpc-extension-command-after-new-emits-assistant-message-for-new-session-test
+  (testing "subscribe + /new + extension command emits assistant/message for the new active session"
+    (let [[ctx session-id] (support/create-session-context {:mutations mutations/all-mutations
+                                                           :event-queue (java.util.concurrent.LinkedBlockingQueue.)})
+          reg              (:extension-registry ctx)
+          ext-path         "/ext/which-session"
+          _                (ext/register-extension-in! reg ext-path)
+          runtime-fns*     (runtime-fns/make-extension-runtime-fns ctx session-id ext-path)
+          api              (ext/create-extension-api reg ext-path runtime-fns*)
+          _                ((:register-command api)
+                            "which-session"
+                            {:description "Append implicit extension session id"
+                             :handler     (fn [_args]
+                                            ((:append-message api)
+                                             "assistant"
+                                             (:psi.agent-session/session-id
+                                              ((:query api) [:psi.agent-session/session-id]))))})
+          state            (atom {:transport {:ready? true :pending {}}
+                                  :connection {:subscribed-topics #{"assistant/message"
+                                                                   "session/resumed"
+                                                                   "session/rehydrated"
+                                                                   "command-result"
+                                                                   "footer/updated"}}})
+          handler          (support/make-handler ctx state)
+          input            (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                                "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/resumed\" \"session/rehydrated\" \"command-result\" \"footer/updated\"]}}\n"
+                                "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/new\"}}\n"
+                                "{:id \"c2\" :kind :request :op \"command\" :params {:text \"/which-session\"}}\n")
+          {:keys [out-lines]} (support/run-loop input handler state 80)
+          frames           (support/parse-frames out-lines)
+          events           (filter #(= :event (:kind %)) frames)
+          rehydrate-evt    (some #(when (= "session/rehydrated" (:event %)) %) events)
+          new-session-id   (get-in rehydrate-evt [:data :session-id])
+          assistant-events (filter #(= "assistant/message" (:event %)) events)
+          matching-msg     (some #(when (= new-session-id (get-in % [:data :text])) %) assistant-events)]
+      (is (some? rehydrate-evt))
+      (is (string? new-session-id))
+      (is (some? matching-msg)
+          "extension assistant message should carry the new session id after /new"))))
 
 (deftest rpc-session-resume-and-rehydrate-events-test
   (testing "new_session emits session/resumed and session/rehydrated canonical events"
