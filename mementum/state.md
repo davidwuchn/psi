@@ -157,6 +157,12 @@ Bootstrapped on 2026-04-02.
   - `psi.memory.runtime/sync-memory-layer!` must not mutate the per-cwd git-head baseline cache; only `maybe-sync-on-git-head-change!` should advance that baseline
   - live project-nREPL validation confirmed that after the fixes the app-runtime prompt path emits `git_commit_created` and reaches `extensions.commit-checks`
   - absence of visible commit-check follow-up can simply mean configured checks passed/skipped; it is no longer evidence that the event path failed
+- Manifest activation shaping follow-on is now closed through task `036`:
+  - `extension_runtime.clj` now uses small helpers for manifest install-plan enrichment, dependency-failure projection, finalization, startup summary projection, and reload-result merge shaping
+  - startup bootstrap summary merge policy is now explicit in `app_runtime.clj` via `merge-startup-summary`
+  - loader docstrings now preserve the live-registry invariant: failed file-backed and init-var-backed activation is rolled back immediately and does not remain registered
+  - focused loader-seam tests now prove rollback for both failed file-backed and failed init-var-backed activation
+  - targeted manifest activation coverage stayed green after shaping (`41 tests, 192 assertions, 0 failures` across registry/io/manifest/startup suites)
 
 ## Notes for future ψ
 - `munera/plan.md` is now the main active-work tracker, with the active threads split into task directories under `munera/open/`.
