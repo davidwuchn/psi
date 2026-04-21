@@ -44,6 +44,24 @@
        :consume-count (count messages)
        :follow-mode   follow-mode})))
 
+(defn- synthetic-user-prompt-effects
+  [session-id user-msg]
+  [{:effect/type :runtime/dispatch-event-with-effect-result
+    :event-type :session/prompt-submit
+    :event-data {:session-id session-id
+                 :user-msg user-msg}
+    :origin :core}
+   {:effect/type :runtime/dispatch-event
+    :event-type :session/prompt
+    :event-data {:session-id session-id}
+    :origin :core}
+   {:effect/type :runtime/dispatch-event-with-effect-result
+    :event-type :session/prompt-prepare-request
+    :event-data {:session-id session-id
+                 :turn-id (str (java.util.UUID/randomUUID))
+                 :user-msg user-msg}
+    :origin :core}])
+
 (defn register!
   "Register prompt lifecycle handlers. Called once during context creation."
   [_ctx]
@@ -64,6 +82,13 @@
                  :message user-msg}]
       :return {:submitted? true
                :turn-id (str (java.util.UUID/randomUUID))
+               :user-msg user-msg}}))
+
+  (register-core-handler!
+   :session/submit-synthetic-user-prompt
+   (fn [_ctx {:keys [session-id user-msg]}]
+     {:effects (synthetic-user-prompt-effects session-id user-msg)
+      :return {:submitted? true
                :user-msg user-msg}}))
 
   (register-core-handler!
@@ -193,19 +218,9 @@
          follow-up-msg
          (update :effects into [{:effect/type :runtime/agent-drain-follow-up-queue
                                  :messages (:messages follow-up-batch)}
-                                {:effect/type :runtime/dispatch-event
-                                 :event-type :session/prompt
-                                 :event-data {:session-id session-id}
-                                 :origin :core}
                                 {:effect/type :runtime/dispatch-event-with-effect-result
-                                 :event-type :session/prompt-submit
+                                 :event-type :session/submit-synthetic-user-prompt
                                  :event-data {:session-id session-id
-                                              :user-msg follow-up-msg}
-                                 :origin :core}
-                                {:effect/type :runtime/dispatch-event-with-effect-result
-                                 :event-type :session/prompt-prepare-request
-                                 :event-data {:session-id session-id
-                                              :turn-id next-turn-id
                                               :user-msg follow-up-msg}
                                  :origin :core}])))))
 

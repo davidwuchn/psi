@@ -1,6 +1,6 @@
-- [ ] Add canonical dispatch-owned synthetic user prompt submission event/handler
-- [ ] Move prompt lifecycle event/effect bundling behind that entry point
-- [ ] Migrate scheduler delivery and drain paths to use the canonical entry point
-- [ ] Add focused tests for the canonical entry point
-- [ ] Update scheduler tests to reflect the new shaping boundary
-- [ ] Verify scheduler end-to-end behavior remains unchanged
+- [x] Add canonical dispatch-owned synthetic user prompt submission event/handler
+- [x] Move prompt lifecycle event/effect bundling behind that entry point
+- [x] Migrate scheduler delivery and drain paths to use the canonical entry point
+- [x] Add focused tests for the canonical entry point
+- [x] Update scheduler tests to reflect the new shaping boundary
+- [x] Verify scheduler end-to-end behavior remains unchanged

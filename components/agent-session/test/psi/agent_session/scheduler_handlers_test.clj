@@ -105,10 +105,9 @@
              (let [result (invoke-handler ctx :scheduler/deliver {:session-id session-id :schedule-id "sch-2"})]
                (apply-root-state-update! ctx result)
                (is (= :delivered (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-2" :status])))
-               (is (= [:runtime/dispatch-event-with-effect-result
-                       :runtime/dispatch-event
-                       :runtime/dispatch-event-with-effect-result]
-                      (mapv :effect/type (:effects result)))))))))))
+               (is (= 1 (count (:effects result))))
+               (is (= :runtime/dispatch-event-with-effect-result (-> result :effects first :effect/type)))
+               (is (= :session/submit-synthetic-user-prompt (-> result :effects first :event-type))))))))))
 
 (deftest scheduler-drain-and-statechart-idle-hooks-test
   (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:is-streaming true}})]
@@ -138,10 +137,9 @@
                (apply-root-state-update! ctx result)
                (is (= ["sch-b"] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))
                (is (= "sch-a" (get-in result [:return :schedule-id])))
-               (is (= [:runtime/dispatch-event-with-effect-result
-                       :runtime/dispatch-event
-                       :runtime/dispatch-event-with-effect-result]
-                      (mapv :effect/type (:effects result))))))
+               (is (= 1 (count (:effects result))))
+               (is (= :runtime/dispatch-event-with-effect-result (-> result :effects first :effect/type)))
+               (is (= :session/submit-synthetic-user-prompt (-> result :effects first :event-type)))))
 
            (testing "idle transitions emit scheduler drain effects"
              (let [done-r (invoke-handler ctx :on-agent-done {:session-id session-id})

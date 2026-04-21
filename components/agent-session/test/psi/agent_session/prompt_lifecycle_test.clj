@@ -42,6 +42,30 @@
        (finally
          (delete-tree! ~sym)))))
 
+(deftest submit-synthetic-user-prompt-enters-canonical-prompt-lifecycle-test
+  (let [[ctx session-id] (create-session-context {:persist? false})
+        user-msg {:role "user"
+                  :content [{:type :text :text "scheduled hello"}]
+                  :timestamp (java.time.Instant/now)
+                  :source :scheduled
+                  :schedule-id "sch-test"
+                  :label "wake"}]
+    (dispatch/clear-event-log!)
+    (let [result (dispatch/dispatch! ctx :session/submit-synthetic-user-prompt
+                                     {:session-id session-id
+                                      :user-msg user-msg}
+                                     {:origin :core})
+          effects (->> (dispatch/handler-entry :session/submit-synthetic-user-prompt)
+                       :fn
+                       (#(% ctx {:session-id session-id :user-msg user-msg}))
+                       :effects)]
+      (is (map? result))
+      (is (= true (:submitted? result)))
+      (is (= user-msg (:user-msg result)))
+      (is (= 3 (count effects)))
+      (is (= [:session/prompt-submit :session/prompt :session/prompt-prepare-request]
+             (mapv :event-type effects))))))
+
 (deftest prompt-record-response-appends-assistant-once-test
   (let [[ctx session-id] (create-session-context {:persist? false})
         assistant-msg    {:role "assistant"

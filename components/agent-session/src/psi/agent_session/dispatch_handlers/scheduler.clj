@@ -29,23 +29,6 @@
    :schedule-id schedule-id
    :label label})
 
-(defn- scheduled-prompt-effects
-  [session-id user-msg]
-  [{:effect/type :runtime/dispatch-event-with-effect-result
-    :event-type :session/prompt-submit
-    :event-data {:session-id session-id
-                 :user-msg user-msg}
-    :origin :core}
-   {:effect/type :runtime/dispatch-event
-    :event-type :session/prompt
-    :event-data {:session-id session-id}
-    :origin :core}
-   {:effect/type :runtime/dispatch-event-with-effect-result
-    :event-type :session/prompt-prepare-request
-    :event-data {:session-id session-id
-                 :turn-id (str (java.util.UUID/randomUUID))
-                 :user-msg user-msg}
-    :origin :core}])
 
 (defn register!
   [_ctx]
@@ -116,7 +99,11 @@
            (scheduler/deliver-schedule (scheduler-state-in ctx session-id) schedule-id)
            user-msg (scheduled-user-message schedule)]
        {:root-state-update (scheduler-update session-id (constantly state'))
-        :effects (scheduled-prompt-effects session-id user-msg)
+        :effects [{:effect/type :runtime/dispatch-event-with-effect-result
+                   :event-type :session/submit-synthetic-user-prompt
+                   :event-data {:session-id session-id
+                                :user-msg user-msg}
+                   :origin :core}]
         :return (assoc schedule :message-record user-msg)})))
 
   (register-core-handler!
@@ -131,4 +118,8 @@
                 :return {:drained? drained?
                          :schedule-id (:schedule-id schedule)}}
          drained?
-         (update :effects into (scheduled-prompt-effects session-id user-msg)))))))
+         (update :effects into [{:effect/type :runtime/dispatch-event-with-effect-result
+                                 :event-type :session/submit-synthetic-user-prompt
+                                 :event-data {:session-id session-id
+                                              :user-msg user-msg}
+                                 :origin :core}]))))))
