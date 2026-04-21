@@ -28,60 +28,22 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.statechart :as sc]))
 
-;;; Per-session runtime handle accessors
-
-
 (defn agent-ctx-in
-  "Return the agent-core context for `session-id`."
   [ctx session-id]
   (get-in @(:state* ctx) [:agent-session :sessions session-id :agent-ctx]))
 
 (defn sc-session-id-in
-  "Return the statechart session id for `session-id`."
   [ctx session-id]
   (get-in @(:state* ctx) [:agent-session :sessions session-id :sc-session-id]))
 
-;;; State path builders
-
-(defn- session-data-path
-  "Build the path to session data for a given session-id."
-  [sid]
-  [:agent-session :sessions sid :data])
-
-(defn- session-telemetry-path
-  "Build the path to a telemetry key within a session."
-  [sid k]
-  [:agent-session :sessions sid :telemetry k])
-
-(defn- session-journal-path
-  "Build the path to the journal within a session."
-  [sid]
-  [:agent-session :sessions sid :persistence :journal])
-
-(defn- session-flush-state-path
-  "Build the path to flush-state within a session."
-  [sid]
-  [:agent-session :sessions sid :persistence :flush-state])
-
-(defn- session-turn-ctx-path
-  "Build the path to turn ctx within a session."
-  [sid]
-  [:agent-session :sessions sid :turn :ctx])
-
-(defn- session-scheduler-path
-  "Build the path to scheduler state within a session."
-  [sid]
-  [:agent-session :sessions sid :data :scheduler])
-
-(defn- session-scheduler-schedules-path
-  "Build the path to scheduler schedule map within a session."
-  [sid]
-  [:agent-session :sessions sid :data :scheduler :schedules])
-
-(defn- session-scheduler-queue-path
-  "Build the path to scheduler delivery queue within a session."
-  [sid]
-  [:agent-session :sessions sid :data :scheduler :queue])
+(defn- session-data-path [sid] [:agent-session :sessions sid :data])
+(defn- session-telemetry-path [sid k] [:agent-session :sessions sid :telemetry k])
+(defn- session-journal-path [sid] [:agent-session :sessions sid :persistence :journal])
+(defn- session-flush-state-path [sid] [:agent-session :sessions sid :persistence :flush-state])
+(defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
+(defn- session-scheduler-path [sid] [:agent-session :sessions sid :data :scheduler])
+(defn- session-scheduler-schedules-path [sid] [:agent-session :sessions sid :data :scheduler :schedules])
+(defn- session-scheduler-queue-path [sid] [:agent-session :sessions sid :data :scheduler :queue])
 
 (def ^:private static-state-paths
   {:workflow-state  [:workflows]
@@ -112,130 +74,57 @@
    :scheduler-queue          session-scheduler-queue-path})
 
 (defn state-path
-  "Return the canonical root-state path vector for the named state key.
-   Session-scoped keys (:session-data, :provider-error-replies, :journal,
-   :flush-state, :turn-ctx, :scheduler, :scheduler-schedules,
-   :scheduler-queue, :tool-output-stats, :tool-call-attempts,
-   :tool-lifecycle-events, :provider-requests, :provider-replies) require
-   a session-id `sid` and return nil when none is provided.
-   Non-session keys work with one arg.
-   Returns nil for unknown keys."
   ([k] (state-path k nil))
   ([k sid]
    (if-let [build-path (get session-state-path-builders k)]
      (when sid (build-path sid))
      (get static-state-paths k))))
 
-;;; Private state primitives
-
-(defn- get-state-in*
-  [ctx path]
+(defn- get-state-in* [ctx path]
   (when-let [state* (:state* ctx)]
     (get-in @state* path)))
 
-(defn- assoc-state-in!*
-  [ctx path value]
+(defn- assoc-state-in!* [ctx path value]
   (swap! (:state* ctx) assoc-in path value))
 
-(defn- update-state-in!*
-  [ctx path f & args]
+(defn- update-state-in!* [ctx path f & args]
   (apply swap! (:state* ctx) update-in path f args))
 
-;;; Public state accessors
-
-(defn get-state-value-in
-  "Low-level canonical root-state read helper.
-   Prefer named session APIs or dispatch-routed mutations for production flows.
-   Retained as intentional infrastructure for resolvers, compatibility views,
-   and focused test/harness usage."
-  [ctx path]
-  (get-state-in* ctx path))
-
-(defn assoc-state-value-in!
-  "Low-level canonical root-state write helper.
-   Prefer named session APIs or dispatch-routed mutations in production code.
-   Retained primarily for focused test/harness setup and deliberate low-level
-   infrastructure boundaries."
-  [ctx path value]
-  (assoc-state-in!* ctx path value))
-
-(defn update-state-value-in!
-  "Low-level canonical root-state update helper.
-   Prefer named session APIs or dispatch-routed mutations in production code.
-   Retained primarily for focused test/harness setup and deliberate low-level
-   infrastructure boundaries."
-  [ctx path f & args]
-  (apply update-state-in!* ctx path f args))
-
-(defn get-session-data-in
-  "Return the AgentSession data map for `session-id` from `ctx`."
-  [ctx session-id]
-  (get-state-in* ctx (session-data-path session-id)))
-
-;;; Session update mechanics
+(defn get-state-value-in [ctx path] (get-state-in* ctx path))
+(defn assoc-state-value-in! [ctx path value] (assoc-state-in!* ctx path value))
+(defn update-state-value-in! [ctx path f & args] (apply update-state-in!* ctx path f args))
+(defn get-session-data-in [ctx session-id] (get-state-in* ctx (session-data-path session-id)))
 
 (defn session-update
-  "Wrap a session-data transform into a root-state transform for session `sid`.
-   Use in dispatch handler results:
-     {:root-state-update (session-update sid #(assoc % :session-name name))}"
   [sid f]
   (fn [state]
     (update-in state (session-data-path sid) f)))
 
-(defn apply-root-state-update-in!
-  "Apply a pure root-state update function to canonical state in `ctx`.
-   `f` is (fn [root-state] → new-root-state). Used by the dispatch pipeline
-   for pure handlers that intentionally operate on non-session root slices."
-  [ctx f]
+(defn apply-root-state-update-in! [ctx f]
   (swap! (:state* ctx) f)
   @(:state* ctx))
 
-;;; Worktree path
-
 (defn session-worktree-path-in
-  "Return the required worktree-path for `session-id`.
-   Sessions must always carry an explicit :worktree-path."
   [ctx session-id]
   (or (:worktree-path (get-session-data-in ctx session-id))
       (throw (ex-info "session is missing required :worktree-path"
                       {:session-id session-id
                        :callback :session-worktree-path-in}))))
 
-;;; Journal
-
-(defn- journal-append!
-  "Append `entry` to the journal for `session-id` and conditionally persist to disk."
-  [ctx session-id entry]
+(defn- journal-append! [ctx session-id entry]
   (persist/append-entry-in! ctx session-id entry)
   (when (:persist? ctx)
     (let [sd (get-session-data-in ctx session-id)
           session-file (:session-file sd)]
       (when session-file
         (persist/persist-entry-in!
-         ctx
-         session-id
-         (session-worktree-path-in ctx session-id)
-         (:parent-session-id sd)
-         session-file)))))
+         ctx session-id (session-worktree-path-in ctx session-id)
+         (:parent-session-id sd) session-file)))))
 
-(defn journal-append-in!
-  "Append `entry` to the journal for `session-id` and persist.
-   Use `persist/message-entry` et al. to build entries."
-  [ctx session-id entry]
-  (journal-append! ctx session-id entry))
+(defn journal-append-in! [ctx session-id entry] (journal-append! ctx session-id entry))
+(defn get-sessions-map-in [ctx] (get-state-in* ctx [:agent-session :sessions]))
 
-;;; Session registry helpers
-
-(defn get-sessions-map-in
-  "Return the sessions map {sid -> session-entry} from the atom."
-  [ctx]
-  (get-state-in* ctx [:agent-session :sessions]))
-
-(defn- latest-message-timestamp
-  "Return the latest journaled user/assistant/tool-result message timestamp.
-
-   Falls back to nil when the session has no recorded message entries yet."
-  [entries]
+(defn- latest-message-timestamp [entries]
   (reduce (fn [latest entry]
             (let [timestamp (when (= :message (:kind entry))
                               (get-in entry [:data :message :timestamp]))]
@@ -248,17 +137,6 @@
           (or entries [])))
 
 (defn list-context-sessions-in
-  "Return valid session metadata entries sorted by updated-at.
-
-   `:display-name` is canonicalized here so all adapters can render the same
-   explicit-or-inferred label for a session.
-
-   `:updated-at` prefers explicit session metadata when present, otherwise
-   derives from the latest journaled message timestamp so adapters can render a
-   real last-message clock instead of repeating session creation time.
-
-   Defensive filter: ignore malformed runtime slots that do not carry a
-   non-blank :session-id in :data. Adapters should only render real sessions."
   [ctx]
   (let [sessions (get-sessions-map-in ctx)]
     (->> (vals sessions)
@@ -283,26 +161,13 @@
          (sort-by (juxt :updated-at :session-id))
          vec)))
 
-;; set-context-active-session-in! removed — adapters own focus locally.
-;; Session targeting is explicit at call sites.
-
-;;; Statechart phase queries
-
-(defn sc-phase-in
-  "Return the statechart phase for `session-id`."
-  [ctx session-id]
+(defn sc-phase-in [ctx session-id]
   (sc/sc-phase (:sc-env ctx) (sc-session-id-in ctx session-id)))
 
-(defn idle-in?
-  "True when the session phase for `session-id` is :idle."
-  [ctx session-id]
+(defn idle-in? [ctx session-id]
   (= :idle (sc-phase-in ctx session-id)))
 
-;;; Prompt contribution helpers
-
-(defn sorted-prompt-contributions
-  "Return prompt contributions sorted by deterministic render order."
-  [coll]
+(defn sorted-prompt-contributions [coll]
   (->> (or coll [])
        (filter map?)
        (sort-by (fn [{:keys [priority ext-path id]}]
@@ -311,8 +176,5 @@
                    (or id "")]))
        vec))
 
-(defn list-prompt-contributions-in
-  "Return prompt contributions for `session-id` sorted by deterministic render order."
-  [ctx session-id]
+(defn list-prompt-contributions-in [ctx session-id]
   (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx session-id))))
-

@@ -19,6 +19,10 @@ Relevant files:
 - Seeded session default state with `:scheduler {:schedules {} :queue []}` in `session.clj`.
 - Added focused pure tests in `components/agent-session/test/psi/agent_session/scheduler_test.clj` covering create/list, bounds validation, fire queueing, delivery, cancel, and FIFO drain.
 - This first slice intentionally stops before dispatch integration so scheduler behavior is locally proven as plain data transitions.
+- Added dispatch handlers in `dispatch_handlers/scheduler.clj` for create/cancel/fired/deliver/drain-queue.
+- Added session-state path support for scheduler state.
+- Idle lifecycle hooks now emit scheduler drain on `:on-agent-done`, `:on-abort`, and `:on-compact-done`.
+- Added focused handler tests in `scheduler_handlers_test.clj` to prove create/queue/cancel/deliver behavior and idle drain hook emission.
 
 ## Review summary
 

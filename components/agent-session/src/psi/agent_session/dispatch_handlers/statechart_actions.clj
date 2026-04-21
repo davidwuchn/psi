@@ -75,11 +75,10 @@
   (dispatch/register-handler!
    :on-agent-done
    (fn [_ctx {:keys [session-id]}]
-     {:root-state-update (session/session-update session-id #(assoc %
-                                                         :is-streaming false
-                                                         :retry-attempt 0
-                                                         :interrupt-pending false
-                                                         :interrupt-requested-at nil))
+     {:root-state-update (session/session-update session-id #(assoc % :is-streaming false
+                                                                      :retry-attempt 0
+                                                                      :interrupt-pending false
+                                                                      :interrupt-requested-at nil))
       :effects [{:effect/type :runtime/mark-workflow-jobs-terminal}
                 {:effect/type :runtime/emit-background-job-terminal-messages}
                 {:effect/type :scheduler/drain-queue}]}))
@@ -87,10 +86,9 @@
   (dispatch/register-handler!
    :on-abort
    (fn [_ctx {:keys [session-id]}]
-     {:root-state-update (session/session-update session-id #(assoc %
-                                                         :is-streaming false
-                                                         :interrupt-pending false
-                                                         :interrupt-requested-at nil))
+     {:root-state-update (session/session-update session-id #(assoc % :is-streaming false
+                                                                      :interrupt-pending false
+                                                                      :interrupt-requested-at nil))
       :effects [{:effect/type :runtime/agent-abort}
                 {:effect/type :scheduler/drain-queue}]}))
 
@@ -131,7 +129,7 @@
   (dispatch/register-handler!
    :on-retrying-entered
    (fn [_ctx _data]
-     {:effects []})) ;; retry-attempt increment handled in :on-retry-triggered
+     {:effects []}))
 
   (dispatch/register-handler!
    :on-retry-resume

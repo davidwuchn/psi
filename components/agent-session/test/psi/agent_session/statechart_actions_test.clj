@@ -90,7 +90,11 @@
                     (select-keys (session-state/get-session-data-in ctx session-id)
                                  [:is-streaming :retry-attempt :interrupt-pending :interrupt-requested-at])))
              (is (= [{:effect/type :runtime/mark-workflow-jobs-terminal}
-                     {:effect/type :runtime/emit-background-job-terminal-messages}]
+                     {:effect/type :runtime/emit-background-job-terminal-messages}
+                     {:effect/type :runtime/dispatch-event
+                      :event-type :scheduler/drain-queue
+                      :event-data {:session-id session-id}
+                      :origin :core}]
                     (:effects result)))))
 
          (testing "on-abort clears interrupt state and emits agent-abort effect"
@@ -101,7 +105,11 @@
                      :interrupt-requested-at nil}
                     (select-keys (session-state/get-session-data-in ctx session-id)
                                  [:is-streaming :interrupt-pending :interrupt-requested-at])))
-             (is (= [{:effect/type :runtime/agent-abort}]
+             (is (= [{:effect/type :runtime/agent-abort}
+                     {:effect/type :runtime/dispatch-event
+                      :event-type :scheduler/drain-queue
+                      :event-data {:session-id session-id}
+                      :origin :core}]
                     (:effects result)))))))))
 
 (deftest auto-compaction-handlers-test
