@@ -94,6 +94,38 @@
                                                        (activation-entries (assoc plan :deps-realized? (:deps-realized? deps-result))))]
     (merge-extension-results activation-result deps-result)))
 
+(defn bootstrap-manifest-extensions-in!
+  "Compute, realize, activate, summarize, and persist manifest-backed startup
+   extension state for a bootstrapped session.
+
+   Returns:
+   - :manifest-result  — activation result with dependency realization details
+   - :finalized-state  — persisted install-state payload
+   - :summary-updates  — startup-summary deltas derived from manifest activation"
+  [ctx session-id cwd]
+  (let [install-state      (installs/compute-install-state cwd)
+        install-plan0      (installs/activation-plan install-state)
+        deps-result        (sync-non-local-extension-deps! (:deps-to-realize install-plan0))
+        install-plan       (-> install-plan0
+                               (assoc :entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib]))
+                               (assoc :restart-required-libs #{}))
+        manifest-result0   (activate-manifest-extensions-in! ctx session-id install-plan deps-result)
+        deps-failure-errors (if-let [msg (:deps-realize-error deps-result)]
+                              (mapv (fn [lib]
+                                      {:path (installs/manifest-extension-id lib)
+                                       :error msg})
+                                    (:deps-extension-libs install-plan))
+                              [])
+        manifest-result    (update manifest-result0 :errors into deps-failure-errors)
+        finalized-state    (installs/finalize-apply-state install-state install-plan manifest-result)
+        persisted-state    (installs/persist-install-state-in! ctx finalized-state)
+        summary-updates    {:extension-loaded-count (count (:loaded manifest-result))
+                            :extension-error-count  (count (:errors manifest-result))
+                            :extension-errors       (:errors manifest-result)}]
+    {:manifest-result manifest-result
+     :finalized-state persisted-state
+     :summary-updates summary-updates}))
+
 (defn reload-extensions-in!
   "Unregister all extensions and re-discover/load them.
 

@@ -76,8 +76,9 @@
    The file must define an `init` function in its namespace.
    `create-extension-api` builds the runtime API passed to `init`.
    `register-extension-in!` seeds registry state before init runs.
+   Failed loads are rolled back so the registry only retains live extensions.
    Returns {:extension ext-path :error nil} or {:extension nil :error msg}."
-  [reg ext-path runtime-fns register-extension-in! create-extension-api]
+  [reg ext-path runtime-fns register-extension-in! unregister-extension-in! create-extension-api]
   (try
     (let [f (io/file ext-path)]
       (when-not (.exists f)
@@ -103,14 +104,16 @@
         (init-var api)
         {:extension ext-path :error nil}))
     (catch Exception e
+      (unregister-extension-in! reg ext-path)
       (timbre/warn "Failed to load extension" ext-path (ex-message e))
       {:extension nil :error (ex-message e)})))
 
 (defn load-init-var-extension-in!
   "Load a manifest-installed extension by resolving and calling `init-var`.
    Registers the extension under `ext-id`, which is typically a stable
-   manifest-backed identity such as `manifest:{lib}`."
-  [reg ext-id init-var runtime-fns register-extension-in! create-extension-api]
+   manifest-backed identity such as `manifest:{lib}`.
+   Failed loads are rolled back so the registry only retains live extensions."
+  [reg ext-id init-var runtime-fns register-extension-in! unregister-extension-in! create-extension-api]
   (try
     (register-extension-in! reg ext-id)
     (let [init-fn (resolve-init-var init-var)
@@ -122,6 +125,7 @@
       (init-fn api)
       {:extension ext-id :error nil})
     (catch Exception e
+      (unregister-extension-in! reg ext-id)
       (timbre/warn "Failed to load manifest extension" ext-id (ex-message e))
       {:extension nil :error (ex-message e)})))
 
@@ -133,15 +137,16 @@
    - {:type :init-var :id <stable-id> :init-var 'ns/init}
 
    Returns {:loaded [id ...] :errors [{:path id :error msg}]} with ids matching
-   the activation entry identities."
-  [reg runtime-fns activation-entries register-extension-in! create-extension-api]
+   the activation entry identities.
+   Failed activation entries are rolled back from the live registry."
+  [reg runtime-fns activation-entries register-extension-in! unregister-extension-in! create-extension-api]
   (let [loaded (atom [])
         errors (atom [])]
     (doseq [{:keys [type id path init-var]} activation-entries]
       (let [{:keys [extension error]}
             (case type
-              :path (load-extension-in! reg path runtime-fns register-extension-in! create-extension-api)
-              :init-var (load-init-var-extension-in! reg id init-var runtime-fns register-extension-in! create-extension-api)
+              :path (load-extension-in! reg path runtime-fns register-extension-in! unregister-extension-in! create-extension-api)
+              :init-var (load-init-var-extension-in! reg id init-var runtime-fns register-extension-in! unregister-extension-in! create-extension-api)
               {:extension nil
                :error (str "Unknown extension activation entry type: " type)})]
         (if extension

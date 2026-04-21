@@ -55,7 +55,6 @@
    [psi.agent-session.mutations :as mutations]
 
    [psi.agent-session.dispatch :as dispatch]
-   [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.extension-runtime :as extension-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
@@ -350,12 +349,6 @@ Available: " (str/join ", " (map name (keys all))))
          base-prompt      (sys-prompt/build-system-prompt base-prompt-opts)
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt base-prompt} {:origin :core})
-         install-state    (installs/compute-install-state cwd)
-         install-plan0    (installs/activation-plan install-state)
-         deps-result      (extension-runtime/sync-non-local-extension-deps! (:deps-to-realize install-plan0))
-         install-plan     (-> install-plan0
-                              (assoc :entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib]))
-                              (assoc :restart-required-libs #{}))
          psi-tool         (tools/make-psi-tool (fn
                                                  ([q] (session/query-in ctx session-id q))
                                                  ([q entity] (session/query-in ctx q entity)))
@@ -373,20 +366,15 @@ Available: " (str/join ", " (map name (keys all))))
                             :skills                 skills
                             :extension-paths        []
                             :extension-targets      []})
-         manifest-result0 (extension-runtime/activate-manifest-extensions-in! ctx session-id install-plan deps-result)
-         deps-failure-errors (if-let [msg (:deps-realize-error deps-result)]
-                               (mapv (fn [lib]
-                                       {:path (installs/manifest-extension-id lib)
-                                        :error msg})
-                                     (:deps-extension-libs install-plan))
-                               [])
-         manifest-result  (update manifest-result0 :errors into deps-failure-errors)
-         summary          (-> summary-base
-                              (update :extension-loaded-count (fnil + 0) (count (:loaded manifest-result)))
-                              (update :extension-error-count (fnil + 0) (count (:errors manifest-result)))
-                              (update :extension-errors (fnil into []) (:errors manifest-result)))
-         finalized-state  (installs/finalize-apply-state install-state install-plan manifest-result)
-         _                (installs/persist-install-state-in! ctx finalized-state)
+         {:keys [manifest-result summary-updates]}
+         (extension-runtime/bootstrap-manifest-extensions-in! ctx session-id cwd)
+         summary          (merge-with
+                           (fn [base delta]
+                             (if (and (sequential? base) (sequential? delta))
+                               (into (vec base) delta)
+                               delta))
+                           summary-base
+                           summary-updates)
          _                (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:session-id session-id :summary summary} {:origin :core})
          _                (bootstrap/register-all-domains!)
          graph-caps       (graph-capabilities-in ctx session-id)

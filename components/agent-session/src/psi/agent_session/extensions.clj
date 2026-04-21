@@ -135,6 +135,18 @@
          assoc-in [:extensions ext-path :shortcuts (:key shortcut)] shortcut)
   reg)
 
+(defn unregister-extension-in!
+  "Remove one registered extension from `reg`.
+   Preserves other extension state, flag-values, and event-bus."
+  [reg path]
+  (swap! (:state reg)
+         (fn [s]
+           (-> s
+               (update :extensions dissoc path)
+               (update :registration-order (fn [order]
+                                             (vec (remove #(= path %) order)))))))
+  reg)
+
 (defn unregister-all-in!
   "Remove all registered extensions from `reg`. Used during reload.
    Preserves flag-values and event-bus."
@@ -468,13 +480,13 @@
    `runtime-fns` is passed through to `create-extension-api`.
    Returns {:extension ext-path :error nil} or {:extension nil :error msg}."
   [reg ext-path runtime-fns]
-  (loader/load-extension-in! reg ext-path runtime-fns register-extension-in! create-extension-api))
+  (loader/load-extension-in! reg ext-path runtime-fns register-extension-in! unregister-extension-in! create-extension-api))
 
 (defn load-init-var-extension-in!
   "Load a manifest-installed extension by stable id + init var.
    Returns {:extension ext-id :error nil} or {:extension nil :error msg}."
   [reg ext-id init-var runtime-fns]
-  (loader/load-init-var-extension-in! reg ext-id init-var runtime-fns register-extension-in! create-extension-api))
+  (loader/load-init-var-extension-in! reg ext-id init-var runtime-fns register-extension-in! unregister-extension-in! create-extension-api))
 
 (defn load-extension-init-in!
   "Compatibility alias for init-var-backed manifest activation."
@@ -486,7 +498,7 @@
    See `psi.agent-session.extensions.loader/activate-extensions-in!` for the
    supported entry shapes."
   [reg runtime-fns activation-entries]
-  (loader/activate-extensions-in! reg runtime-fns activation-entries register-extension-in! create-extension-api))
+  (loader/activate-extensions-in! reg runtime-fns activation-entries register-extension-in! unregister-extension-in! create-extension-api))
 
 (defn load-extensions-in!
   "Discover and load all extensions into `reg`.

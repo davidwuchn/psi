@@ -31,6 +31,14 @@
       (ext/register-extension-in! reg "/ext/foo")
       (is (= 1 (ext/extension-count-in reg)))))
 
+  (testing "unregister-extension-in! removes one extension from live registry"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/foo")
+      (ext/register-extension-in! reg "/ext/bar")
+      (ext/unregister-extension-in! reg "/ext/foo")
+      (is (= ["/ext/bar"] (ext/extensions-in reg)))
+      (is (= 1 (ext/extension-count-in reg)))))
+
   (testing "setting allowed events before registration does not hide extension from registration order"
     (let [reg (ext/create-registry)]
       (ext/set-allowed-events-in! reg "/ext/foo" #{:session/ui-notify})
