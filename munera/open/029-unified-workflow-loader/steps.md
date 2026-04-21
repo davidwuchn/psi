@@ -39,7 +39,10 @@ Extension:
 - [x] Implement prompt contribution (list all workflows with descriptions)
 - [x] Implement reload capability (/delegate-reload)
 - [x] Implement session lifecycle cleanup (reload on session_switch)
-- [ ] Implement consolidated widget for active/recent runs
+- [x] Implement consolidated widget for active/recent runs
+  - run-status-icon + run-widget-lines per run
+  - refresh-widgets! syncs tracked async + canonical runs
+  - wired into async start, completion, and cleanup
 
 Tool:
 - [x] Implement `delegate` tool with unified parameter surface
@@ -85,5 +88,4 @@ Cleanup — deferred to later slice:
 - [ ] Update docs
 
 Remaining for full feature parity:
-- Widget consolidation for active/recent runs
 - Extension cleanup (removing old extensions and legacy code)
