@@ -79,3 +79,18 @@
       (is (= {:input "new" :original "new"} (:workflow-input updated-run)))
       (is (= updated-run (workflow-runtime/workflow-run-in state3 run-id)))
       (is (= :workflow/input-updated (-> updated-run :history last :event))))))
+
+(deftest remove-run-test
+  (testing "remove-run removes the run from runs and run-order"
+    (let [[state1 definition-id _]
+          (workflow-runtime/register-definition {:workflows (workflow-model/initial-workflow-state)}
+                                                registered-definition)
+          [state2 run-id run]
+          (workflow-runtime/create-run state1 {:definition-id definition-id
+                                               :run-id "run-1"
+                                               :workflow-input {:input "x"}})
+          [state3 removed-run]
+          (workflow-runtime/remove-run state2 run-id)]
+      (is (= run removed-run))
+      (is (nil? (workflow-runtime/workflow-run-in state3 run-id)))
+      (is (= [] (get-in state3 [:workflows :run-order]))))))

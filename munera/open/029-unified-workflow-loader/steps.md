@@ -96,9 +96,11 @@ Corrective follow-up after implementation review:
   - blocked runs now resume the existing run with updated workflow input
   - terminal runs now create a fresh run from the source definition and execute it
   - focused tests now prove blocked, terminal, and non-stopped continue behavior
-- [ ] Align `delegate action=remove` with the design
-  - either implement true removal or narrow the contract to cancel
-  - update tool/docs/tests to one obvious meaning
+- [x] Align `delegate action=remove` with the design
+  - added true canonical run removal (`psi.workflow/remove-run`)
+  - `delegate remove` now removes rather than cancels
+  - active-run tracking/widget cleanup now follows removal
+  - focused tests now prove runtime, mutation, and delegate remove behavior
 - [ ] Align multi-step framing prompt behavior with the design
   - inject framing prompt into each delegated step context by default
   - stop relying on fallback-only framing behavior

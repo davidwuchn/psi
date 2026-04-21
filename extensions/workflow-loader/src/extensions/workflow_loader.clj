@@ -433,10 +433,13 @@
   (let [run-id (some-> id str str/trim not-empty)]
     (if (nil? run-id)
       {:error "id is required for remove"}
-      (let [result (mutate! 'psi.workflow/cancel-run {:run-id run-id})]
+      (let [result (mutate! 'psi.workflow/remove-run {:run-id run-id})]
         (if (:psi.workflow/error result)
           {:error (:psi.workflow/error result)}
-          {:ok true :run-id run-id})))))
+          (do
+            (swap! active-runs dissoc run-id)
+            (refresh-widgets!)
+            {:ok true :run-id run-id}))))))
 
 (defn- execute-delegate-tool
   "Main delegate tool execution dispatcher."

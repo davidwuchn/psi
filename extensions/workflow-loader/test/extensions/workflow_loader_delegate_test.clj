@@ -305,6 +305,31 @@
           (is (.contains ^String result "Error"))
           (is (.contains ^String result "Unknown workflow")))))))
 
+(deftest delegate-remove-test
+  (testing "remove deletes the run rather than cancelling it"
+    (let [remove-params (atom nil)
+          api (make-mock-api
+               {:mutate-results
+                {'psi.workflow/register-definition
+                 (fn [_] {:psi.workflow/registered? true})
+                 'psi.workflow/remove-run
+                 (fn [params]
+                   (reset! remove-params params)
+                   {:psi.workflow/run-id (:run-id params)
+                    :psi.workflow/removed? true})
+                 'psi.workflow/list-runs
+                 (fn [_] {:psi.workflow/runs []})}})]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      {:definitions {}
+                       :errors []
+                       :warnings []})]
+        (wl/init api)
+        (let [result (execute-tool {:action "remove"
+                                    :id "run-1"})]
+          (is (.contains ^String result "Removed run run-1"))
+          (is (= {:run-id "run-1"} @remove-params)))))))
+
 (deftest delegate-run-missing-params-test
   (testing "run without workflow or prompt returns appropriate errors"
     (let [api (make-mock-api

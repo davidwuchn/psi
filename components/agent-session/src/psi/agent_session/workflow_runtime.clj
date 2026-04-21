@@ -136,3 +136,18 @@
                                           :workflow-input (or workflow-input {})}}))]
       [(assoc-in state (run-path run-id) updated-run)
        updated-run])))
+
+(defn remove-run
+  "Return [state removed-run] after removing a workflow run from canonical state."
+  [state run-id]
+  (let [run (workflow-run-in state run-id)]
+    (when-not run
+      (throw (ex-info "Workflow run not found" {:run-id run-id})))
+    [(-> state
+         (update-in (runs-path) dissoc run-id)
+         (update-in (run-order-path)
+                    (fn [order]
+                      (->> (or order [])
+                           (remove #(= run-id %))
+                           vec))))
+     run]))

@@ -152,6 +152,30 @@
                                                         :run-id "run-1"})]
       (is (string? (:psi.workflow/error result))))))
 
+(deftest remove-workflow-run-test
+  (testing "removes an existing run from canonical state"
+    (let [ctx (make-test-ctx)
+          _ (cwf-mutations/register-workflow-definition {} {:psi/agent-session-ctx ctx
+                                                            :definition sample-definition})
+          _ (cwf-mutations/create-workflow-run {} {:psi/agent-session-ctx ctx
+                                                   :definition-id "test-workflow"
+                                                   :workflow-input {}
+                                                   :run-id "run-1"})
+          result (cwf-mutations/remove-workflow-run {} {:psi/agent-session-ctx ctx
+                                                        :run-id "run-1"})]
+      (is (= "run-1" (:psi.workflow/run-id result)))
+      (is (true? (:psi.workflow/removed? result)))
+      (is (nil? (:psi.workflow/error result)))
+      (is (nil? (get-in @(:state* ctx) [:workflows :runs "run-1"])))
+      (is (= [] (get-in @(:state* ctx) [:workflows :run-order])))))
+
+  (testing "returns error for nonexistent run"
+    (let [ctx (make-test-ctx)
+          result (cwf-mutations/remove-workflow-run {} {:psi/agent-session-ctx ctx
+                                                        :run-id "ghost"})]
+      (is (false? (:psi.workflow/removed? result)))
+      (is (string? (:psi.workflow/error result))))))
+
 (deftest list-workflow-definitions-test
   (testing "lists registered definitions"
     (let [ctx (make-test-ctx)

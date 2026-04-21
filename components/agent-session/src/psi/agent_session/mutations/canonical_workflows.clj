@@ -152,6 +152,26 @@
        :psi.workflow/status nil
        :psi.workflow/error (ex-message e)})))
 
+(pco/defmutation remove-workflow-run
+  "Remove a canonical workflow run from root state."
+  [_ {:keys [psi/agent-session-ctx run-id]}]
+  {::pco/op-name 'psi.workflow/remove-run
+   ::pco/params  [:psi/agent-session-ctx :run-id]
+   ::pco/output  [:psi.workflow/run-id
+                  :psi.workflow/removed?
+                  :psi.workflow/error]}
+  (try
+    (let [[new-state _removed-run]
+          (workflow-runtime/remove-run @(:state* agent-session-ctx) run-id)]
+      (reset! (:state* agent-session-ctx) new-state)
+      {:psi.workflow/run-id run-id
+       :psi.workflow/removed? true
+       :psi.workflow/error nil})
+    (catch Exception e
+      {:psi.workflow/run-id run-id
+       :psi.workflow/removed? false
+       :psi.workflow/error (ex-message e)})))
+
 (pco/defmutation list-workflow-definitions
   "List all registered canonical workflow definitions."
   [_ {:keys [psi/agent-session-ctx]}]
@@ -194,5 +214,6 @@
    execute-workflow-run
    resume-workflow-run
    cancel-workflow-run
+   remove-workflow-run
    list-workflow-definitions
    list-workflow-runs])

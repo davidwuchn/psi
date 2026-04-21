@@ -193,9 +193,24 @@ Validation:
   - `extensions.workflow-loader-delegate-test`
 - result: `23 tests, 83 assertions, 0 failures`
 
+2026-04-20
+- Second corrective alignment slice landed: `remove` semantics.
+
+What changed:
+- added pure canonical workflow runtime support to remove a run from `:workflows :runs` and `:run-order`
+- added canonical mutation `psi.workflow/remove-run`
+- updated `delegate action=remove` to call true removal instead of cancel
+- extension-side cleanup now also drops active-run tracking and refreshes widgets after removal
+
+Validation:
+- focused suite green:
+  - `psi.agent-session.workflow-runtime-test`
+  - `psi.agent-session.mutations.canonical-workflows-test`
+  - `extensions.workflow-loader-delegate-test`
+- result after continue + remove slices: `26 tests, 95 assertions, 0 failures`
+
 Remaining work:
 - corrective alignment slice recorded in `plan.md` and `steps.md`:
-  - remove semantics
   - framing prompt injection semantics
   - execution-time propagation for `:skills` and `:model`
   - explicit parent-session targeting for result injection
