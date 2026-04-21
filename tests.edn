@@ -20,7 +20,8 @@
                  "extensions/mcp-tasks-run/test"
                  "extensions/plan-state-learning/test"
                  "extensions/work-on/test"
-                 "extensions/workflow-display/test"]
+                 "extensions/workflow-display/test"
+                 "extensions/workflow-loader/test"]
     :source-paths ["extensions/agent/src"
                    "extensions/agent-chain/src"
                    "extensions/auto-session-name/src"
@@ -32,7 +33,8 @@
                    "extensions/munera/src"
                    "extensions/plan-state-learning/src"
                    "extensions/work-on/src"
-                   "extensions/workflow-display/src"]
+                   "extensions/workflow-display/src"
+                   "extensions/workflow-loader/src"]
     :ns-patterns [".*-test$"]
     :skip-meta [:integration]}
 
@@ -42,13 +44,14 @@
                  "components/agent-session/test"
                  "extensions/agent/test" "extensions/agent-chain/test" "extensions/auto-session-name/test" "extensions/commit-checks/test"
                  "extensions/hello-ext/test" "extensions/lsp/test" "extensions/mcp-tasks-run/test" "extensions/plan-state-learning/test"
-                 "extensions/work-on/test" "extensions/workflow-display/test"]
+                 "extensions/work-on/test" "extensions/workflow-display/test" "extensions/workflow-loader/test"]
     :source-paths ["components/ai/src" "components/app-runtime/src" "components/engine/src" "components/query/src" "components/history/src"
                    "components/introspection/src" "components/memory/src" "components/recursion/src" "components/tui/src" "components/rpc/src" "components/agent-core/src"
                    "components/agent-session/src" "components/system-bootstrap/src"
                    "extensions/agent/src" "extensions/agent-chain/src" "extensions/auto-session-name/src" "extensions/commit-checks/src"
                    "extensions/hello-ext/src" "extensions/lsp/src" "extensions/mcp-tasks-run/src" "extensions/mementum/src"
-                   "extensions/munera/src" "extensions/plan-state-learning/src" "extensions/work-on/src" "extensions/workflow-display/src"]
+                   "extensions/munera/src" "extensions/plan-state-learning/src" "extensions/work-on/src" "extensions/workflow-display/src"
+                   "extensions/workflow-loader/src"]
     :ns-patterns [".*-test$"]
     :focus-meta [:integration]}]
 
