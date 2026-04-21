@@ -3,7 +3,7 @@
 Bootstrapped on 2026-04-02.
 
 ## Current orientation
-- Project: psi (`/Users/duncan/projects/hugoduncan/psi/refactor`)
+- Project: psi
 - Runtime: JVM Clojure
 
 ## Key files
