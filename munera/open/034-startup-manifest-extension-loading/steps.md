@@ -5,6 +5,8 @@
 - [ ] Integrate the shared activation layer into startup
 - [ ] Realize required non-local manifest deps during startup before activation
 - [ ] Integrate the shared activation layer into reload/apply
+- [ ] Persist truthful finalized startup install/apply state after activation
+- [ ] Remove bootstrap-specific direct init-var activation in favor of the shared activation path
 - [ ] Add startup success test for local-root manifest activation
 - [ ] Add startup success test for git manifest activation
 - [ ] Add startup success test for mvn manifest activation
@@ -12,4 +14,5 @@
 - [ ] Add startup failure test for init resolution failure
 - [ ] Add startup failure test for init execution failure
 - [ ] Add convergence test for startup summary vs live registry state
+- [ ] Add convergence test for persisted startup install/apply state vs live registry state
 - [ ] Update docs for startup activation semantics of local-root, git, and mvn manifest installs
