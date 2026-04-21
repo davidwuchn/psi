@@ -17,8 +17,7 @@
    [extensions.workflow-loader.delivery :as delivery]
    [extensions.workflow-loader.orchestration :as orchestration]
    [extensions.workflow-loader.text :as text]
-   [psi.agent-session.workflow-file-loader :as loader]
-   [psi.agent-session.workflow-runtime :as workflow-runtime]))
+   [psi.agent-session.workflow-file-loader :as loader]))
 
 ;;; Extension state
 

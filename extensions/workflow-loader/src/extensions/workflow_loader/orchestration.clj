@@ -13,7 +13,7 @@
   (str "delegate/" run-id))
 
 (defn start-background-job!
-  [mutate! session-id run-id workflow-name]
+  [mutate! session-id run-id _workflow-name]
   (let [job-id (str "job-" (UUID/randomUUID))
         result (mutate! 'psi.extension/start-background-job
                         {:session-id session-id
@@ -82,8 +82,7 @@
   "Launch workflow execution asynchronously on a separate thread.
    Canonical job state is authoritative; inflight-runs only supports local sync waits."
   [{:keys [mutate! start-background-job! mark-background-job-terminal! notify!
-           refresh-widgets! inflight-runs inject-result-into-context!
-           on-async-completion-fn]}
+           refresh-widgets! inflight-runs on-async-completion-fn]}
    run-id session-id workflow-name include-result?]
   (let [parent-session-id session-id
         {:keys [job-id]} (start-background-job! session-id run-id workflow-name)

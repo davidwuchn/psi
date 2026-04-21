@@ -3,6 +3,6 @@
 - [x] Extract pure delegate text/projection shaping helpers
 - [x] Extract delegate runtime orchestration helpers
 - [x] Thin the top-level extension entrypoint to assembly/wiring
-- [ ] Remove stale or redundant helpers left behind by 029/031 convergence
+- [x] Remove stale or redundant helpers left behind by 029/031 convergence
 - [x] Run focused workflow-loader and adjacent projection/runtime tests
 - [x] Update task-local implementation notes with decomposition decisions and trade-offs

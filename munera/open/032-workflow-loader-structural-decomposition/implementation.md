@@ -60,6 +60,11 @@ Trade-offs:
 - blocked-run resume flow still lives in the top-level namespace because it remains closely coupled to current workflow-loader-specific continue semantics and local refresh/wait wiring
 - definition loading/registration also remains top-level for now because it is already compact and directly tied to extension init/reload wiring
 
+Cleanup follow-on completed:
+- removed unused top-level `workflow-runtime` require after decomposition
+- removed unused orchestration bindings surfaced by clj-kondo
+- top-level namespace now retains only workflow-loader-specific control flow, definition reload/wiring, and widget refresh assembly
+
 Guardrails:
 - preserve existing tests and user-visible strings where possible
 - do not redesign canonical workflow runtime or background-job architecture
