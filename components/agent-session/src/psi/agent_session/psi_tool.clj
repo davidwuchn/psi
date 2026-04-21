@@ -9,6 +9,7 @@
    [psi.agent-session.extension-runtime :as extension-runtime]
    [psi.agent-session.extensions :as extensions]
    [psi.agent-session.project-nrepl-ops :as project-nrepl-ops]
+   [psi.agent-session.psi-tool-scheduler :as psi-tool-scheduler]
    [psi.agent-session.psi-tool-workflow :as psi-tool-workflow]
    [psi.agent-session.session-state :as session-state]
    [psi.agent-session.tool-output :as tool-output]
@@ -18,15 +19,16 @@
   {:name        "psi-tool"
    :label       "Psi Tool"
    :description (str "Execute a live psi runtime operation. Canonical requests use `action` with one of: "
-                     "`query`, `eval`, `reload-code`, `project-repl`, or `workflow`. `query` executes an EQL query against the live session graph; "
+                     "`query`, `eval`, `reload-code`, `project-repl`, `workflow`, or `scheduler`. `query` executes an EQL query against the live session graph; "
                      "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
                      "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
                      "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`; "
-                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|create-run|execute-run|read-run|list-runs|resume-run|cancel-run`. "
+                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|create-run|execute-run|read-run|list-runs|resume-run|cancel-run`; "
+                     "`scheduler` manages one-shot delayed prompt injection for the invoking session with explicit `op` values `create|list|cancel`. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
-                 :properties {:action        {:type "string" :enum ["query" "eval" "reload-code" "project-repl" "workflow"]
+                 :properties {:action        {:type "string" :enum ["query" "eval" "reload-code" "project-repl" "workflow" "scheduler"]
                                               :description "Canonical psi-tool operation discriminator."}
                               :query         {:type "string" :description "For `action: \"query\"`: EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}
                               :entity        {:type "string" :description "For `action: \"query\"`: optional EDN root entity map to seed the query, e.g. \"{:psi.agent-session/session-id \\\"sid\\\"}\" for explicit session targeting."}
@@ -45,7 +47,12 @@
                               :workflow-input {:type "string" :description "For `action: \"workflow\"`: workflow input map as EDN."}
                               :run-id        {:type "string" :description "For `action: \"workflow\"`: workflow run id."}
                               :chain-name    {:type "string" :description "For `action: \"workflow\"`: legacy parameter, no longer used."}
-                              :reason        {:type "string" :description "For `action: \"workflow\"`: optional cancel reason."}}
+                              :reason        {:type "string" :description "For `action: \"workflow\"`: optional cancel reason."}
+                              :message       {:type "string" :description "For `action: \"scheduler\"`, `op: \"create\"`: prompt content to inject when the schedule fires."}
+                              :label         {:type "string" :description "For `action: \"scheduler\"`: optional human-readable schedule label."}
+                              :delay-ms      {:type "integer" :description "For `action: \"scheduler\"`, `op: \"create\"`: relative delay in milliseconds (1000ms to 24h)."}
+                              :at            {:type "string" :description "For `action: \"scheduler\"`, `op: \"create\"`: absolute ISO-8601 UTC instant. Past instants fire immediately."}
+                              :schedule-id   {:type "string" :description "For `action: \"scheduler\"`, `op: \"cancel\"`: schedule id to cancel."}}
                  :required   []}})
 
 (defn- sanitize-psi-tool-result
@@ -78,7 +85,7 @@
     :else          nil))
 
 (def ^:private psi-tool-supported-actions
-  ["query" "eval" "reload-code" "project-repl" "workflow"])
+  ["query" "eval" "reload-code" "project-repl" "workflow" "scheduler"])
 
 (def ^:private project-repl-supported-ops
   ["status" "start" "attach" "stop" "eval" "interrupt"])
@@ -86,8 +93,11 @@
 (def ^:private workflow-supported-ops
   ["list-definitions" "create-run" "execute-run" "read-run" "list-runs" "resume-run" "cancel-run"])
 
+(def ^:private scheduler-supported-ops
+  ["create" "list" "cancel"])
+
 (defn- validate-psi-tool-request
-  [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason] :as args}]
+  [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason message label delay-ms at schedule-id] :as args}]
   (let [effective-action (psi-tool-action args)]
     (cond
       (nil? effective-action)
@@ -179,7 +189,23 @@
          :workflow-input workflow-input
          :run-id         run-id
          :chain-name     chain-name
-         :reason         reason}))))
+         :reason         reason})
+
+      (= effective-action "scheduler")
+      (do
+        (when-not (some #{op} scheduler-supported-ops)
+          (throw (ex-info "psi-tool scheduler action requires valid `op`"
+                          {:phase         :validate
+                           :action        effective-action
+                           :op            op
+                           :supported-ops scheduler-supported-ops})))
+        {:action      effective-action
+         :op          op
+         :message     message
+         :label       label
+         :delay-ms    delay-ms
+         :at          at
+         :schedule-id schedule-id}))))
 
 (defn- sanitize-psi-tool-data
   [x]
@@ -203,7 +229,7 @@
    :is-error true})
 
 (defn telemetry-args
-  [{:strs [action query ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason]}]
+  [{:strs [action query ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason message label delay-ms at schedule-id]}]
   (cond-> (ordered-map)
     action (assoc "action" action)
     query (assoc "query" query)
@@ -220,7 +246,12 @@
     workflow-input (assoc "workflow-input" workflow-input)
     run-id (assoc "run-id" run-id)
     chain-name (assoc "chain-name" chain-name)
-    reason (assoc "reason" reason)))
+    reason (assoc "reason" reason)
+    message (assoc "message" message)
+    label (assoc "label" label)
+    delay-ms (assoc "delay-ms" delay-ms)
+    at (assoc "at" at)
+    schedule-id (assoc "schedule-id" schedule-id)))
 
 (defn- execute-psi-tool-query
   [query-fn {:keys [query entity]}]
@@ -505,7 +536,7 @@
              :psi-tool/worktree-source worktree-source))))
 
 (defn truncation-visible-prefix
-  [{:keys [action ns form namespaces worktree-path op code definition-id run-id]}]
+  [{:keys [action ns form namespaces worktree-path op code definition-id run-id schedule-id label]}]
   (case action
     "eval"
     (str "Eval action=eval ns=" ns " form=" form)
@@ -528,6 +559,13 @@
            (str " definition-id=" definition-id))
          (when run-id
            (str " run-id=" run-id)))
+
+    "scheduler"
+    (str "Scheduler action=scheduler op=" op
+         (when schedule-id
+           (str " schedule-id=" schedule-id))
+         (when label
+           (str " label=" label)))
 
     nil))
 
@@ -576,6 +614,10 @@
 (defn- execute-psi-tool-workflow-report
   [runtime-opts request]
   (psi-tool-workflow/execute-psi-tool-workflow-report runtime-opts request))
+
+(defn- execute-psi-tool-scheduler-report
+  [runtime-opts request]
+  (psi-tool-scheduler/execute-psi-tool-scheduler-report runtime-opts request))
 
 (defn serialize-operation-output
   [opts request output narrowing-hint]
@@ -642,6 +684,13 @@
                   safe-report (sanitize-psi-tool-data report)
                   output (pr-str safe-report)]
               (assoc (serialize-operation-output opts request output "Use a narrower workflow result to reduce output size.")
+                     :is-error (not= :ok (:psi-tool/overall-status safe-report))))
+
+            "scheduler"
+            (let [report (execute-psi-tool-scheduler-report {:ctx (:ctx opts) :session-id (:session-id opts)} request)
+                  safe-report (sanitize-psi-tool-data report)
+                  output (pr-str safe-report)]
+              (assoc (serialize-operation-output opts request output "Use a narrower scheduler result to reduce output size.")
                      :is-error (not= :ok (:psi-tool/overall-status safe-report))))))
         (catch StackOverflowError _
           {:content  "EQL query error: result contains recursive data that overflowed printer stack"
@@ -680,6 +729,15 @@
                             :psi-tool/duration-ms    0
                             :psi-tool/overall-status :error
                             :psi-tool/error          (psi-tool-error-summary :workflow e)}]
+                {:content  (pr-str report)
+                 :is-error true})
+
+              "scheduler"
+              (let [report {:psi-tool/action         :scheduler
+                            :psi-tool/scheduler-op   (some-> (get args "op") keyword)
+                            :psi-tool/duration-ms    0
+                            :psi-tool/overall-status :error
+                            :psi-tool/error          (psi-tool-error-summary :scheduler e)}]
                 {:content  (pr-str report)
                  :is-error true})
 
