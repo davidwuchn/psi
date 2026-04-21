@@ -144,5 +144,60 @@ Validation:
   - `extensions.workflow-loader-delegate-test`
 - result: `51 tests, 394 assertions, 0 failures`
 
+2026-04-20
+- Implementation review against design completed.
+
+Review outcome:
+- The implementation matches the design well at the structural level:
+  - unified `.psi/workflows/` discovery/parsing/loading exists
+  - single `delegate` tool and `/delegate` command exist
+  - canonical workflow runtime is the execution substrate
+  - migration away from `agent` and `agent-chain` landed
+- The implementation does not yet fully match the design at the behavioral level.
+
+Confirmed gaps from review:
+- `delegate action=continue` currently requires a `prompt` but does not actually use it; current behavior is closer to async `resume-run` than the designed "continue with new prompt" surface.
+- `delegate action=remove` currently cancels a run rather than removing it; public contract and behavior diverge.
+- Multi-step workflow body text is currently used as fallback framing/system prompt only when referenced workflow defs lack a system prompt; this is weaker than the design intent of injecting framing context into each delegated step by default.
+- `:skills` and `:model` metadata are preserved through parsing/compilation, but execution-time propagation is incomplete from the current bridge implementation.
+- `include_result_in_context` currently operates via ambient extension session access rather than explicit originating parent-session targeting, so async completion after session switching is not yet proven correct.
+- Reload behavior has not yet been proven to retire removed/renamed workflow definitions from canonical runtime state.
+- Minor contract drift remains between tool schema and behavior (for example defaulting `action` to `run` while schema marks it required).
+
+Direction taken after review:
+- treat task 029 as structurally converged but behaviorally incomplete
+- add corrective plan + steps instead of marking full feature parity complete
+- next slice should focus on semantic alignment, not further surface expansion
+
+2026-04-20
+- First corrective alignment slice landed: `continue` semantics.
+
+What changed:
+- added pure workflow runtime support to replace a run's top-level `:workflow-input` before resuming
+- extended canonical `psi.workflow/resume-run` mutation to accept optional `workflow-input`
+- updated `delegate action=continue` behavior:
+  - blocked runs now update workflow input from the supplied prompt and resume the existing run asynchronously
+  - terminal runs (`:completed`, `:failed`, `:cancelled`) now create a fresh run from the original source definition and execute it asynchronously
+  - non-stopped runs are now rejected explicitly
+- added focused tests proving:
+  - blocked-run continuation uses the supplied prompt
+  - terminal-run continuation creates a fresh run from the source definition
+  - running runs are rejected
+  - runtime-level workflow-input replacement is recorded correctly
+  - mutation-level resume path updates workflow input before execution
+
+Validation:
+- focused suite green:
+  - `psi.agent-session.workflow-runtime-test`
+  - `psi.agent-session.mutations.canonical-workflows-test`
+  - `extensions.workflow-loader-delegate-test`
+- result: `23 tests, 83 assertions, 0 failures`
+
 Remaining work:
-- none for task 029 feature parity; branch now includes both unified workflow-loader implementation and legacy surface removal
+- corrective alignment slice recorded in `plan.md` and `steps.md`:
+  - remove semantics
+  - framing prompt injection semantics
+  - execution-time propagation for `:skills` and `:model`
+  - explicit parent-session targeting for result injection
+  - reload retirement correctness
+  - contract/doc/schema cleanup

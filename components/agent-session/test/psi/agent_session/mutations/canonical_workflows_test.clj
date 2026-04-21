@@ -91,6 +91,31 @@
       (is (true? (:psi.workflow/terminal? result)))
       (is (nil? (:psi.workflow/error result))))))
 
+(deftest resume-workflow-run-test
+  (testing "resume-workflow-run updates workflow input before resuming when provided"
+    (let [captured-run (atom nil)
+          ctx (assoc (make-test-ctx)
+                     :resume-and-execute-workflow-run-fn
+                     (fn [ctx* _session-id run-id]
+                       (reset! captured-run (get-in @(:state* ctx*) [:workflows :runs run-id]))
+                       {:status :completed :terminal? true :blocked? false :steps-executed []}))
+          _ (cwf-mutations/register-workflow-definition {} {:psi/agent-session-ctx ctx
+                                                            :definition sample-definition})
+          _ (cwf-mutations/create-workflow-run {} {:psi/agent-session-ctx ctx
+                                                   :definition-id "test-workflow"
+                                                   :workflow-input {:input "old" :original "old"}
+                                                   :run-id "run-1"})
+          _ (swap! (:state* ctx) assoc-in [:workflows :runs "run-1" :status] :blocked)
+          result (cwf-mutations/resume-workflow-run {} {:psi/agent-session-ctx ctx
+                                                        :session-id "parent-session"
+                                                        :run-id "run-1"
+                                                        :workflow-input {:input "new" :original "new"}})]
+      (is (= "run-1" (:psi.workflow/run-id result)))
+      (is (= :completed (:psi.workflow/status result)))
+      (is (nil? (:psi.workflow/error result)))
+      (is (= {:input "new" :original "new"}
+             (:workflow-input @captured-run))))))
+
 (deftest cancel-workflow-run-test
   (testing "cancels a pending run"
     (let [ctx (make-test-ctx)

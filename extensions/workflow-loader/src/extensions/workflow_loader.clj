@@ -337,9 +337,68 @@
                    :status (:psi.workflow/status exec-result)
                    :result (:psi.workflow/result exec-result)})))))))))
 
+(defn- find-run-summary
+  [run-id]
+  (let [result (mutate! 'psi.workflow/list-runs {})
+        runs (:psi.workflow/runs result)]
+    (some #(when (= run-id (:run-id %)) %) runs)))
+
+(defn- continue-workflow-input
+  [prompt-text]
+  {:input prompt-text
+   :original prompt-text})
+
+(defn- continue-terminal-run-async!
+  [run-id session-id prompt-text include?]
+  (let [{:keys [source-definition-id]} (find-run-summary run-id)]
+    (when-not source-definition-id
+      (throw (ex-info "Cannot continue run without source definition" {:run-id run-id})))
+    (let [new-run-name (str source-definition-id "-continue-" (System/currentTimeMillis))
+          create-result (mutate! 'psi.workflow/create-run
+                                 {:definition-id source-definition-id
+                                  :workflow-input (continue-workflow-input prompt-text)
+                                  :run-id new-run-name})
+          new-run-id (:psi.workflow/run-id create-result)]
+      (when-not new-run-id
+        (throw (ex-info (or (:psi.workflow/error create-result)
+                            "Failed to create continuation run")
+                        {:run-id run-id
+                         :definition-id source-definition-id})))
+      (execute-async! new-run-id session-id source-definition-id include?)
+      {:ok true
+       :run-id new-run-id
+       :status :running
+       :continued-from run-id})))
+
+(defn- continue-blocked-run-async!
+  [run-id session-id prompt-text include?]
+  (let [fut (future
+              (try
+                (let [result (mutate! 'psi.workflow/resume-run
+                                      {:run-id run-id
+                                       :session-id session-id
+                                       :workflow-input (continue-workflow-input prompt-text)})]
+                  (when-not (:psi.workflow/error result)
+                    (on-async-completion! run-id (str "resume-" run-id) include? result))
+                  result)
+                (catch Exception e
+                  (notify! (str "Resume of run '" run-id "' failed: " (ex-message e)) :error)
+                  (swap! active-runs dissoc run-id)
+                  {:psi.workflow/error (ex-message e)})))]
+    (swap! active-runs assoc run-id
+           {:future fut
+            :session-id session-id
+            :workflow (str "resume-" run-id)
+            :started-at (System/currentTimeMillis)})
+    {:ok true
+     :run-id run-id
+     :status :resuming}))
+
 (defn- delegate-continue
-  "Handle action=continue: resume a stopped/blocked run with new prompt.
-   Resumes asynchronously and optionally injects result into context."
+  "Handle action=continue: push a stopped run forward with new prompt.
+
+   - blocked runs: update workflow input and resume the existing run
+   - terminal runs: create a fresh run from the original definition and execute it"
   [{:keys [id prompt include_result_in_context]}]
   (let [run-id (some-> id str str/trim not-empty)
         prompt-text (some-> prompt str str/trim not-empty)
@@ -353,27 +412,20 @@
 
       :else
       (let [session-id (current-session-id)
-            ;; Resume asynchronously
-            fut (future
-                  (try
-                    (let [result (mutate! 'psi.workflow/resume-run
-                                          {:run-id run-id
-                                           :session-id session-id})]
-                      (when-not (:psi.workflow/error result)
-                        (on-async-completion! run-id (str "resume-" run-id) include? result))
-                      result)
-                    (catch Exception e
-                      (notify! (str "Resume of run '" run-id "' failed: " (ex-message e)) :error)
-                      (swap! active-runs dissoc run-id)
-                      {:psi.workflow/error (ex-message e)})))]
-        (swap! active-runs assoc run-id
-               {:future fut
-                :session-id session-id
-                :workflow (str "resume-" run-id)
-                :started-at (System/currentTimeMillis)})
-        {:ok true
-         :run-id run-id
-         :status :resuming}))))
+            run-summary (find-run-summary run-id)
+            status (:status run-summary)]
+        (cond
+          (nil? run-summary)
+          {:error (str "Unknown run '" run-id "'")}
+
+          (= :blocked status)
+          (continue-blocked-run-async! run-id session-id prompt-text include?)
+
+          (contains? #{:completed :failed :cancelled} status)
+          (continue-terminal-run-async! run-id session-id prompt-text include?)
+
+          :else
+          {:error (str "Run '" run-id "' is not stopped; current status is " (name (or status :unknown)))})))))
 
 (defn- delegate-remove
   "Handle action=remove: remove a run by id."

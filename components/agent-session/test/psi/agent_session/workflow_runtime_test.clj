@@ -64,3 +64,18 @@
       (is (nil? (:source-definition-id run)))
       (is (= "only-step" (:current-step-id run)))
       (is (= "only-step" (-> run :effective-definition :step-order first))))))
+
+(deftest update-run-workflow-input-test
+  (testing "update-run-workflow-input replaces workflow input and records history"
+    (let [[state1 definition-id _]
+          (workflow-runtime/register-definition {:workflows (workflow-model/initial-workflow-state)}
+                                                registered-definition)
+          [state2 run-id _]
+          (workflow-runtime/create-run state1 {:definition-id definition-id
+                                               :run-id "run-1"
+                                               :workflow-input {:input "old" :original "old"}})
+          [state3 updated-run]
+          (workflow-runtime/update-run-workflow-input state2 run-id {:input "new" :original "new"})]
+      (is (= {:input "new" :original "new"} (:workflow-input updated-run)))
+      (is (= updated-run (workflow-runtime/workflow-run-in state3 run-id)))
+      (is (= :workflow/input-updated (-> updated-run :history last :event))))))

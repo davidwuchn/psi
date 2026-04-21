@@ -91,8 +91,12 @@
        :psi.workflow/error (ex-message e)})))
 
 (pco/defmutation resume-workflow-run
-  "Resume a blocked canonical workflow run and continue execution."
-  [_ {:keys [psi/agent-session-ctx session-id run-id]}]
+  "Resume a blocked canonical workflow run and continue execution.
+
+   When `workflow-input` is provided, it replaces the run's top-level workflow
+   input before resuming so continue-with-new-prompt flows can reuse the same
+   blocked run."
+  [_ {:keys [psi/agent-session-ctx session-id run-id workflow-input]}]
   {::pco/op-name 'psi.workflow/resume-run
    ::pco/params  [:psi/agent-session-ctx :session-id :run-id]
    ::pco/output  [:psi.workflow/run-id
@@ -102,6 +106,10 @@
                   :psi.workflow/blocked?
                   :psi.workflow/error]}
   (try
+    (when workflow-input
+      (let [[new-state _updated-run]
+            (workflow-runtime/update-run-workflow-input @(:state* agent-session-ctx) run-id workflow-input)]
+        (reset! (:state* agent-session-ctx) new-state)))
     (let [resume-fn (:resume-and-execute-workflow-run-fn agent-session-ctx)
           exec-result (resume-fn agent-session-ctx session-id run-id)]
       {:psi.workflow/run-id run-id

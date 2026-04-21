@@ -430,20 +430,23 @@
         ;; After completion, tracking is cleared
         (is (empty? @(deref #'wl/active-runs)))))))
 
-(deftest delegate-continue-test
-  (testing "continue resumes a blocked run asynchronously"
-    (let [resume-called (atom false)
+(deftest delegate-continue-blocked-run-test
+  (testing "continue on blocked run uses the supplied prompt and resumes asynchronously"
+    (let [resume-params (atom nil)
           api (make-mock-api
                {:mutate-results
                 {'psi.workflow/register-definition
                  (fn [_] {:psi.workflow/registered? true})
                  'psi.workflow/resume-run
-                 (fn [_]
-                   (reset! resume-called true)
+                 (fn [params]
+                   (reset! resume-params params)
                    {:psi.workflow/run-id "run-1"
                     :psi.workflow/status :completed})
                  'psi.workflow/list-runs
-                 (fn [_] {:psi.workflow/runs []})
+                 (fn [_]
+                   {:psi.workflow/runs [{:run-id "run-1"
+                                         :status :blocked
+                                         :source-definition-id "planner"}]})
                  'psi.extension/append-entry
                  (fn [_] {})}})]
       (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
@@ -456,6 +459,80 @@
                                     :id "run-1"
                                     :prompt "continue with this"})]
           (is (.contains ^String result "Resuming"))
-          ;; Wait for async
           (Thread/sleep 200)
-          (is (true? @resume-called)))))))
+          (is (= {:run-id "run-1"
+                  :session-id "test-session-1"
+                  :workflow-input {:input "continue with this"
+                                   :original "continue with this"}}
+                 @resume-params)))))))
+
+(deftest delegate-continue-terminal-run-test
+  (testing "continue on terminal run creates and executes a fresh run from the original definition"
+    (let [create-params (atom nil)
+          execute-params (atom nil)
+          api (make-mock-api
+               {:mutate-results
+                {'psi.workflow/register-definition
+                 (fn [_] {:psi.workflow/registered? true})
+                 'psi.workflow/create-run
+                 (fn [params]
+                   (reset! create-params params)
+                   {:psi.workflow/run-id (:run-id params)
+                    :psi.workflow/status :pending})
+                 'psi.workflow/execute-run
+                 (fn [params]
+                   (reset! execute-params params)
+                   {:psi.workflow/run-id (:run-id params)
+                    :psi.workflow/status :completed
+                    :psi.workflow/result "continued output"})
+                 'psi.workflow/list-runs
+                 (fn [_]
+                   {:psi.workflow/runs [{:run-id "run-1"
+                                         :status :completed
+                                         :source-definition-id "planner"}]})
+                 'psi.extension/append-entry
+                 (fn [_] {})}})]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      {:definitions {"planner" {:definition-id "planner"
+                                                 :name "planner"
+                                                 :summary "Plans"
+                                                 :step-order ["step-1"]
+                                                 :steps {"step-1" {:label "planner"}}}}
+                       :errors []
+                       :warnings []})]
+        (wl/init api)
+        (let [result (execute-tool {:action "continue"
+                                    :id "run-1"
+                                    :prompt "plan the next slice"})]
+          (is (.contains ^String result "Resuming"))
+          (Thread/sleep 200)
+          (is (= "planner" (:definition-id @create-params)))
+          (is (= {:input "plan the next slice"
+                  :original "plan the next slice"}
+                 (:workflow-input @create-params)))
+          (is (= "test-session-1" (:session-id @execute-params)))
+          (is (string? (:run-id @execute-params))))))))
+
+(deftest delegate-continue-running-run-test
+  (testing "continue rejects runs that are not stopped"
+    (let [api (make-mock-api
+               {:mutate-results
+                {'psi.workflow/register-definition
+                 (fn [_] {:psi.workflow/registered? true})
+                 'psi.workflow/list-runs
+                 (fn [_]
+                   {:psi.workflow/runs [{:run-id "run-1"
+                                         :status :running
+                                         :source-definition-id "planner"}]})}})]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      {:definitions {}
+                       :errors []
+                       :warnings []})]
+        (wl/init api)
+        (let [result (execute-tool {:action "continue"
+                                    :id "run-1"
+                                    :prompt "continue with this"})]
+          (is (.contains ^String result "Error"))
+          (is (.contains ^String result "is not stopped")))))))

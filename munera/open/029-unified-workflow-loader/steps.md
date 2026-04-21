@@ -90,5 +90,32 @@ Cleanup — deferred to later slice:
   - `psi-tool` workflow ops/docs now expose canonical-only workflow operations
   - `deps.edn`, `tests.edn`, and `extensions/deps.edn` no longer include agent/agent-chain paths
 
+Corrective follow-up after implementation review:
+- [x] Align `delegate action=continue` with the design
+  - supplied `prompt` now feeds continuation workflow input
+  - blocked runs now resume the existing run with updated workflow input
+  - terminal runs now create a fresh run from the source definition and execute it
+  - focused tests now prove blocked, terminal, and non-stopped continue behavior
+- [ ] Align `delegate action=remove` with the design
+  - either implement true removal or narrow the contract to cancel
+  - update tool/docs/tests to one obvious meaning
+- [ ] Align multi-step framing prompt behavior with the design
+  - inject framing prompt into each delegated step context by default
+  - stop relying on fallback-only framing behavior
+  - add direct execution tests for prompt composition
+- [ ] Propagate execution-time workflow config completely
+  - make `:skills` reach child session creation/runtime
+  - make `:model` overrides effective during execution
+  - add tests that prove effective runtime config, not just stored metadata
+- [ ] Fix parent-session targeting for `include_result_in_context`
+  - target the originating parent session explicitly
+  - add test covering session switch before async completion
+- [ ] Fix reload lifecycle correctness
+  - ensure removed/renamed workflow files are retired from canonical runtime state
+  - add reload tests for deletion/rename cases
+- [ ] Reconcile public contract drift
+  - schema vs behavior for default `action`
+  - docs/help text/prompt contribution consistency
+
 Remaining for full feature parity:
-- none
+- corrective alignment slice above

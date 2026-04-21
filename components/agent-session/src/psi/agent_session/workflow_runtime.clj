@@ -116,3 +116,23 @@
          (update-in (run-order-path) (fnil conj []) run-id'))
      run-id'
      run]))
+
+(defn update-run-workflow-input
+  "Return [state updated-run] after replacing a run's workflow input.
+
+   Intended for continue/resume flows that need to push a new top-level prompt
+   into an existing blocked run before re-executing the current step."
+  [state run-id workflow-input]
+  (let [run (workflow-run-in state run-id)]
+    (when-not run
+      (throw (ex-info "Workflow run not found" {:run-id run-id})))
+    (let [updated-run (-> run
+                          (assoc :workflow-input (or workflow-input {}))
+                          (assoc :updated-at (now))
+                          (update :history (fnil conj [])
+                                  {:event :workflow/input-updated
+                                   :timestamp (now)
+                                   :data {:run-id run-id
+                                          :workflow-input (or workflow-input {})}}))]
+      [(assoc-in state (run-path run-id) updated-run)
+       updated-run])))
