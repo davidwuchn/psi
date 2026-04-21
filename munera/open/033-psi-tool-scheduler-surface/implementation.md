@@ -23,6 +23,9 @@ Relevant files:
 - Added session-state path support for scheduler state.
 - Idle lifecycle hooks now emit scheduler drain on `:on-agent-done`, `:on-abort`, and `:on-compact-done`.
 - Added focused handler tests in `scheduler_handlers_test.clj` to prove create/queue/cancel/deliver behavior and idle drain hook emission.
+- Added runtime timer execution in `dispatch_effects.clj` with a runtime-only scheduler timer handle registry and explicit `:scheduler/start-timer` / `:scheduler/cancel-timer` effects.
+- Added `psi_tool_scheduler.clj` and extended `psi_tool.clj` so `action: "scheduler"` now supports `create|list|cancel` with relative and absolute delay inputs.
+- Added focused psi-tool scheduler tests in `psi_tool_scheduler_test.clj` covering create/list/cancel, past absolute time normalization, bounds rejection, and cap rejection.
 
 ## Review summary
 
