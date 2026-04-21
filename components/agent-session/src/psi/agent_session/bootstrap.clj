@@ -8,6 +8,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.extensions.runtime-fns :as extension-runtime-fns]
    [psi.agent-session.mutations :as mutations]
    [psi.query.core :as query]))
 
@@ -21,18 +22,18 @@
        op-sym))
 
 (defn load-startup-resources-via-mutations-in!
-  "Load startup prompt templates, skills, tools, and extension paths by executing
-   EQL mutations (one mutation call per resource).
+  "Load startup prompt templates, skills, tools, and extensions.
 
    opts keys:
-   :templates       — vector of prompt template maps
-   :skills          — vector of skill maps
-   :tools           — vector of tool maps
-   :extension-paths — vector of extension file paths
+   :templates          — vector of prompt template maps
+   :skills             — vector of skill maps
+   :tools              — vector of tool maps
+   :extension-paths    — vector of extension file paths
+   :extension-targets  — vector of activation targets {:kind :path|:init-var ...}
 
    Returns {:prompt-count int :skill-count int :tool-count int :extension-results [result-map ...]}."
-  [ctx session-id {:keys [templates skills tools extension-paths]
-                   :or   {templates [] skills [] tools [] extension-paths []}}]
+  [ctx session-id {:keys [templates skills tools extension-paths extension-targets]
+                   :or   {templates [] skills [] tools [] extension-paths [] extension-targets []}}]
   (let [qctx (query/create-query-context)
         _    (session/register-resolvers-in! qctx false)
         _    (session/register-mutations-in! qctx mutations/all-mutations true)]
@@ -51,12 +52,24 @@
                         {:psi/agent-session-ctx ctx
                          :session-id           session-id
                          :tool                 tool}))
-    (let [ext-results (mapv (fn [p]
-                              (run-mutation-in! qctx 'psi.extension/add-extension
-                                                {:psi/agent-session-ctx ctx
-                                                 :session-id           session-id
-                                                 :path                 p}))
-                            extension-paths)]
+    (let [runtime-fns  (extension-runtime-fns/make-extension-runtime-fns ctx session-id nil)
+          path-results (mapv (fn [p]
+                               (run-mutation-in! qctx 'psi.extension/add-extension
+                                                 {:psi/agent-session-ctx ctx
+                                                  :session-id           session-id
+                                                  :path                 p}))
+                             extension-paths)
+          init-results (mapv (fn [{:keys [id init-var]}]
+                               (let [{:keys [extension error]}
+                                     (ext/load-extension-init-in! (:extension-registry ctx)
+                                                                  id
+                                                                  init-var
+                                                                  runtime-fns)]
+                                 {:psi.extension/loaded? (some? extension)
+                                  :psi.extension/path    id
+                                  :psi.extension/error   error}))
+                             (filter #(= :init-var (:kind %)) extension-targets))
+          ext-results (vec (concat path-results init-results))]
       {:prompt-count      (count (:prompt-templates (ss/get-session-data-in ctx session-id)))
        :skill-count       (count (:skills (ss/get-session-data-in ctx session-id)))
        :tool-count        (count (:tools (agent/get-data-in (ss/agent-ctx-in ctx session-id))))
@@ -85,9 +98,10 @@
    :skills                 — skill maps (default [])
    :tools                  — tool maps (default [])
    :extension-paths        — extension file paths (default [])
+   :extension-targets      — activation targets (default [])
 
    Returns startup summary map stored at :startup-bootstrap."
-  [ctx session-id {:keys [register-global-query? base-tools system-prompt developer-prompt developer-prompt-source templates skills tools extension-paths]
+  [ctx session-id {:keys [register-global-query? base-tools system-prompt developer-prompt developer-prompt-source templates skills tools extension-paths extension-targets]
                    :or   {register-global-query? true
                           base-tools             []
                           system-prompt          ""
@@ -96,7 +110,8 @@
                           templates              []
                           skills                 []
                           tools                  []
-                          extension-paths        []}}]
+                          extension-paths        []
+                          extension-targets      []}}]
   (when register-global-query?
     (session/register-resolvers!)
     (session/register-mutations! mutations/all-mutations))
@@ -119,7 +134,8 @@
          ctx session-id {:templates templates
                          :skills skills
                          :tools startup-tools
-                         :extension-paths extension-paths})
+                         :extension-paths extension-paths
+                         :extension-targets extension-targets})
         ext-errors (keep (fn [r]
                            (when-let [e (:psi.extension/error r)]
                              {:path  (:psi.extension/path r)

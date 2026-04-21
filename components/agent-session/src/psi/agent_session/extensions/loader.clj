@@ -5,6 +5,28 @@
    [clojure.string :as str]
    [taoensso.timbre :as timbre]))
 
+(defn load-init-var-in!
+  [reg ext-id init-sym runtime-fns register-extension-in! create-extension-api]
+  (try
+    (let [ns-sym   (symbol (namespace init-sym))
+          _        (when-not (find-ns ns-sym)
+                     (require ns-sym))
+          ns-obj   (find-ns ns-sym)
+          _        (when-not ns-obj
+                     (throw (ex-info (str "Namespace " ns-sym " not found after require")
+                                     {:path ext-id :ns ns-sym :init init-sym})))
+          init-var (ns-resolve ns-obj (symbol (name init-sym)))
+          _        (when-not init-var
+                     (throw (ex-info (str "Extension init var not found: " init-sym)
+                                     {:path ext-id :ns ns-sym :init init-sym})))
+          _        (register-extension-in! reg ext-id)
+          api      (create-extension-api reg ext-id runtime-fns)]
+      (init-var api)
+      {:extension ext-id :error nil})
+    (catch Exception e
+      (timbre/warn "Failed to load extension" ext-id (ex-message e))
+      {:extension nil :error (ex-message e)})))
+
 (defn- extension-file?
   "True if `f` is a .clj file."
   [f]
@@ -103,23 +125,28 @@
    `runtime-fns` is passed to each extension's API.
    `load-extension-in!` is the single-extension loader implementation.
    Returns {:loaded [paths] :errors [{:path :error}]}."
-  ([reg runtime-fns configured-paths load-extension-in!]
-   (load-extensions-in! reg runtime-fns configured-paths nil load-extension-in!))
-  ([reg runtime-fns configured-paths cwd load-extension-in!]
+  ([reg runtime-fns configured-paths register-extension-in! create-extension-api load-extension-in!]
+   (load-extensions-in! reg runtime-fns configured-paths [] nil register-extension-in! create-extension-api load-extension-in!))
+  ([reg runtime-fns configured-paths activation-targets cwd register-extension-in! create-extension-api load-extension-in!]
    (let [paths  (discover-extension-paths configured-paths cwd)
+         targets (concat (map (fn [p] {:kind :path :id p :path p}) paths)
+                         activation-targets)
          loaded (atom [])
          errors (atom [])]
-     (doseq [p paths]
-       (let [{:keys [extension error]} (load-extension-in! reg p runtime-fns)]
+     (doseq [{:keys [kind id path init-var]} targets]
+       (let [{:keys [extension error]}
+             (case kind
+               :init-var (load-init-var-in! reg id init-var runtime-fns register-extension-in! create-extension-api)
+               (load-extension-in! reg path runtime-fns))]
          (if extension
            (swap! loaded conj extension)
-           (swap! errors conj {:path p :error error}))))
+           (swap! errors conj {:path (or path id) :error error}))))
      {:loaded @loaded :errors @errors})))
 
 (defn reload-extensions-in!
   "Clear registered extensions and reload them from discovery/configured paths."
-  ([reg runtime-fns configured-paths unregister-all-in! load-extensions-in!]
-   (reload-extensions-in! reg runtime-fns configured-paths nil unregister-all-in! load-extensions-in!))
-  ([reg runtime-fns configured-paths cwd unregister-all-in! load-extensions-in!]
+  ([reg runtime-fns configured-paths activation-targets unregister-all-in! load-extensions-in!]
+   (reload-extensions-in! reg runtime-fns configured-paths activation-targets nil unregister-all-in! load-extensions-in!))
+  ([reg runtime-fns configured-paths activation-targets cwd unregister-all-in! load-extensions-in!]
    (unregister-all-in! reg)
-   (load-extensions-in! reg runtime-fns configured-paths cwd)))
+   (load-extensions-in! reg runtime-fns configured-paths activation-targets cwd)))

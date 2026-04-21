@@ -13,7 +13,6 @@
    registration change."
   (:require
    [clojure.repl.deps :as repl.deps]
-   [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.extensions :as ext]
@@ -31,11 +30,16 @@
   ([ctx session-id configured-paths]
    (load-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
-   (let [runtime-fns* (runtime-fns/make-extension-runtime-fns ctx session-id nil)]
+   (let [runtime-fns*       (runtime-fns/make-extension-runtime-fns ctx session-id nil)
+         effective-cwd      (or cwd (ss/session-worktree-path-in ctx session-id))
+         install-state      (installs/compute-install-state effective-cwd)
+         plan               (installs/activation-plan install-state)
+         configured*        (vec (concat configured-paths (:extension-paths plan)))
+         activation-targets (filterv #(= :init-var (:kind %)) (:activation-targets plan))]
      (ext/load-extensions-in! (:extension-registry ctx) runtime-fns*
-                              configured-paths cwd))))
+                              configured* activation-targets effective-cwd))))
 
-(defn- sync-non-local-extension-deps!
+(defn sync-non-local-extension-deps!
   [deps-to-realize]
   (if (seq deps-to-realize)
     (try
@@ -78,7 +82,8 @@
                              (sync-non-local-extension-deps! (:deps-to-realize plan))
                              {:deps-realized? false})
          configured*       (vec (concat configured-paths (:extension-paths plan)))
-         reload-base       (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* configured* effective-cwd)
+         activation-targets (filterv #(= :init-var (:kind %)) (:activation-targets plan))
+         reload-base       (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* configured* activation-targets effective-cwd)
          reload-result     (merge reload-base deps-result)
          finalized-state   (installs/finalize-apply-state install-state plan reload-result)
          persisted-state   (installs/persist-install-state-in! ctx finalized-state)]

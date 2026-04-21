@@ -1,6 +1,7 @@
 (ns psi.agent-session.extension-manifest-activation-test
   (:require
    [clojure.java.io :as io]
+   [clojure.repl.deps]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
@@ -35,6 +36,16 @@
     (spit f body)
     f))
 
+(defn- define-runtime-extension-ns! [ns-sym cmd-name]
+  (create-ns ns-sym)
+  (binding [*ns* (the-ns ns-sym)]
+    (clojure.core/refer 'clojure.core)
+    (intern *ns* 'init
+            (fn [api]
+              ((:register-command api) cmd-name
+               {:description (str "hello from " cmd-name)
+                :handler (fn [_] nil)})))))
+
 (deftest reload-extensions-loads-manifest-local-root-extension-test
   (let [cwd        (test-support/temp-cwd)
         home       (tmp-dir)
@@ -59,9 +70,11 @@
         (is (= :applied
                (get-in result [:install-state :psi.extensions/last-apply :status])))))))
 
-(deftest reload-extensions-keeps-git-manifest-entry-at-restart-required-test
+(deftest reload-extensions-loads-git-manifest-entry-via-init-var-when-deps-realized-test
   (let [cwd       (test-support/temp-cwd)
         home      (tmp-dir)
+        ns-sym    'psi.test.remote-ext
+        _         (define-runtime-extension-ns! ns-sym "remote-hello")
         [ctx sid] (test-support/create-test-session {:persist? false :cwd cwd})]
     (with-redefs [installs/user-manifest-file (fn [] (manifest-file home ".psi/agent/extensions.edn"))
                   installs/project-manifest-file (fn [_] (manifest-file cwd ".psi/extensions.edn"))]
@@ -69,13 +82,21 @@
             (pr-str {:deps {'psi/test-remote-ext {:git/url "https://example.com/ext"
                                                   :git/sha "abc123"
                                                   :psi/init 'psi.test.remote-ext/init}}}))
-      (let [result (ext-rt/reload-extensions-in! ctx sid [] cwd)]
-        (is (= :restart-required
+      (installs/persist-install-state-in!
+       ctx
+       {:psi.extensions/effective
+        {:raw-deps
+         {'psi/test-remote-ext {:git/url "https://example.com/ext"
+                                :git/sha "abc123"
+                                :psi/init 'psi.test.remote-ext/init}}}})
+      (let [result (with-redefs [clojure.repl.deps/sync-deps (fn [& _] :ok)]
+                     (ext-rt/reload-extensions-in! ctx sid [] cwd))]
+        (is (= :loaded
                (get-in result [:install-state :psi.extensions/effective :entries-by-lib 'psi/test-remote-ext :status])))
-        (is (= :restart-required
+        (is (= :applied
                (get-in result [:install-state :psi.extensions/last-apply :status])))
-        (is (some #(= :restart-required (:category %))
-                  (get-in result [:install-state :psi.extensions/diagnostics])))))))
+        (is (some #(= "manifest:psi/test-remote-ext" %)
+                  (map str (ext/extensions-in (:extension-registry ctx)))))))))
 
 (deftest reload-extensions-realizes-non-local-deps-when-safe-test
   (let [cwd       (test-support/temp-cwd)

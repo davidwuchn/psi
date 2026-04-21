@@ -264,6 +264,10 @@
           ["src"]))
       ["src"])))
 
+(defn manifest-extension-id
+  [lib]
+  (str "manifest:" lib))
+
 (defn resolve-local-root-entry
   [lib {:keys [dep]}]
   (let [local-root (:local/root dep)
@@ -278,9 +282,13 @@
             existing-file (some #(when (.exists ^java.io.File %) %) files)]
         (if existing-file
           {:lib lib
+           :id (.getAbsolutePath ^java.io.File existing-file)
+           :kind :path
            :path (.getAbsolutePath ^java.io.File existing-file)
            :init-var init-var}
           {:lib lib
+           :id (manifest-extension-id lib)
+           :kind :path
            :path nil
            :init-var init-var
            :error (str "Unable to resolve local extension source file for " lib
@@ -319,6 +327,10 @@
                                     (filter (fn [[_ {:keys [dep]}]]
                                               (= :local (coordinate-family dep))))
                                     enabled-exts)
+         non-local-entries   (into {}
+                                    (filter (fn [[_ {:keys [dep]}]]
+                                              (not= :local (coordinate-family dep))))
+                                    enabled-exts)
          deps-extension-libs (into #{}
                                    (keep (fn [[lib {:keys [dep]}]]
                                            (when (not= :local (coordinate-family dep))
@@ -331,6 +343,13 @@
                                    local-entries)
          resolved-ok         (filterv :path resolved)
          resolved-fail       (filterv :error resolved)
+         init-var-targets    (mapv (fn [[lib {:keys [dep]}]]
+                                     {:lib lib
+                                      :id (manifest-extension-id lib)
+                                      :kind :init-var
+                                      :path nil
+                                      :init-var (:psi/init dep)})
+                                   non-local-entries)
          diagnostics         (mapv (fn [{:keys [lib init-var error]}]
                                      (diagnostic {:severity :error
                                                   :category :load-failure
@@ -341,6 +360,7 @@
                                    resolved-fail)]
      {:extension-paths (mapv :path resolved-ok)
       :path->lib (into {} (map (juxt :path :lib)) resolved-ok)
+      :activation-targets (vec (concat resolved-ok init-var-targets))
       :deps-to-realize deps-to-realize
       :deps-extension-libs deps-extension-libs
       :deps-apply-safe? deps-apply-safe?

@@ -56,10 +56,10 @@
 
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-installs :as installs]
+   [psi.agent-session.extension-runtime :as extension-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.runtime :as runtime]
-   [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.app-runtime.background-job-ui :as background-job-ui]
    [psi.app-runtime.nrepl-runtime :as app-nrepl]
@@ -353,6 +353,8 @@ Available: " (str/join ", " (map name (keys all))))
          install-state    (installs/compute-install-state cwd)
          _                (installs/persist-install-state-in! ctx install-state)
          install-plan     (installs/activation-plan install-state)
+         _                (extension-runtime/sync-non-local-extension-deps! (:deps-to-realize install-plan))
+         activation-targets (vec (:activation-targets install-plan))
          ext-paths        (vec (:extension-paths install-plan))
          psi-tool         (tools/make-psi-tool (fn
                                                  ([q] (session/query-in ctx session-id q))
@@ -369,7 +371,8 @@ Available: " (str/join ", " (map name (keys all))))
                             :developer-prompt-source (if developer-prompt :env :fallback)
                             :templates              templates
                             :skills                 skills
-                            :extension-paths        ext-paths})
+                            :extension-paths        ext-paths
+                            :extension-targets      activation-targets})
          _                (bootstrap/register-all-domains!)
          graph-caps       (graph-capabilities-in ctx session-id)
          build-opts       (assoc base-prompt-opts :graph-capabilities graph-caps)

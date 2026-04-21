@@ -470,21 +470,33 @@
   [reg ext-path runtime-fns]
   (loader/load-extension-in! reg ext-path runtime-fns register-extension-in! create-extension-api))
 
+(defn load-extension-init-in!
+  "Load a single extension from an already-realized `init-sym` into `reg`.
+   Registers the extension under `ext-id` and invokes the init var with the
+   canonical extension API. Returns {:extension ext-id :error nil} or
+   {:extension nil :error msg}."
+  [reg ext-id init-sym runtime-fns]
+  (loader/load-init-var-in! reg ext-id init-sym runtime-fns register-extension-in! create-extension-api))
+
 (defn load-extensions-in!
   "Discover and load all extensions into `reg`.
    `configured-paths` are explicit CLI paths.
    `runtime-fns` is passed to each extension's API.
    Returns {:loaded [paths] :errors [{:path :error}]}."
-  ([reg] (load-extensions-in! reg {} []))
-  ([reg runtime-fns] (load-extensions-in! reg runtime-fns []))
+  ([reg] (load-extensions-in! reg {} [] [] nil))
+  ([reg runtime-fns] (load-extensions-in! reg runtime-fns [] [] nil))
   ([reg runtime-fns configured-paths]
-   (load-extensions-in! reg runtime-fns configured-paths nil))
-  ([reg runtime-fns configured-paths cwd]
-   (loader/load-extensions-in! reg runtime-fns configured-paths cwd load-extension-in!)))
+   (load-extensions-in! reg runtime-fns configured-paths [] nil))
+  ([reg runtime-fns configured-paths activation-targets]
+   (load-extensions-in! reg runtime-fns configured-paths activation-targets nil))
+  ([reg runtime-fns configured-paths activation-targets cwd]
+   (loader/load-extensions-in! reg runtime-fns configured-paths activation-targets cwd register-extension-in! create-extension-api load-extension-in!)))
 
 (defn reload-extensions-in!
   "Clear registered extensions and reload them from discovery/configured paths."
   ([reg runtime-fns configured-paths]
-   (reload-extensions-in! reg runtime-fns configured-paths nil))
-  ([reg runtime-fns configured-paths cwd]
-   (loader/reload-extensions-in! reg runtime-fns configured-paths cwd unregister-all-in! load-extensions-in!)))
+   (reload-extensions-in! reg runtime-fns configured-paths [] nil))
+  ([reg runtime-fns configured-paths activation-targets]
+   (reload-extensions-in! reg runtime-fns configured-paths activation-targets nil))
+  ([reg runtime-fns configured-paths activation-targets cwd]
+   (loader/reload-extensions-in! reg runtime-fns configured-paths activation-targets cwd unregister-all-in! load-extensions-in!)))

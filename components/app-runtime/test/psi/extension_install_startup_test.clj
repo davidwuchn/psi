@@ -1,6 +1,7 @@
 (ns psi.extension-install-startup-test
   (:require
    [clojure.java.io :as io]
+   [clojure.repl.deps]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.extension-installs :as installs]
@@ -31,6 +32,16 @@
     (spit f body)
     f))
 
+(defn- define-runtime-extension-ns! [ns-sym cmd-name]
+  (create-ns ns-sym)
+  (binding [*ns* (the-ns ns-sym)]
+    (clojure.core/refer 'clojure.core)
+    (intern *ns* 'init
+            (fn [api]
+              ((:register-command api) cmd-name
+               {:description (str "hello from " cmd-name)
+                :handler (fn [_] nil)})))))
+
 (deftest startup-persists-install-state-and-loads-manifest-extension-paths-test
   (testing "bootstrap startup computes install state and loads manifest-backed local-root extensions"
     (let [cwd             (test-support/temp-cwd)
@@ -58,6 +69,32 @@
       (is (= :configured
              (get-in (installs/extension-installs-state-in ctx)
                      [:psi.extensions/effective :entries-by-lib 'psi/test-startup-ext :status]))))))
+
+(deftest startup-loads-non-local-manifest-extension-via-init-var-test
+  (testing "bootstrap startup loads non-local manifest extensions through :psi/init"
+    (let [cwd   (test-support/temp-cwd)
+          home  (test-support/temp-cwd)
+          ns-sym 'psi.test.startup-remote-ext
+          _     (define-runtime-extension-ns! ns-sym "startup-remote-hello")
+          {:keys [ctx summary]} (with-redefs [installs/user-manifest-file (fn [] (manifest-file home ".psi/agent/extensions.edn"))
+                                             installs/project-manifest-file (fn [_] (manifest-file cwd ".psi/extensions.edn"))
+                                             clojure.repl.deps/sync-deps (fn [& _] :ok)]
+                                (spit (installs/project-manifest-file cwd)
+                                      (pr-str {:deps {'psi/test-startup-remote-ext {:git/url "https://example.com/ext"
+                                                                                    :git/sha "abc123"
+                                                                                    :psi/init 'psi.test.startup-remote-ext/init}}}))
+                                (with-redefs [oauth/create-context (fn [] nil)
+                                              pt/discover-templates (fn [] [])
+                                              skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                                              sys-prompt/discover-context-files (fn [_] [])
+                                              sys-prompt/build-system-prompt (fn [_] "")]
+                                  (let [result (app-runtime/bootstrap-runtime-session! {:provider :anthropic :id "claude-sonnet-4-6" :supports-reasoning true} {:cwd cwd})]
+                                    (model-registry/init! {:user-models-path nil :project-models-path nil})
+                                    result)))]
+      (is (= 1 (:extension-loaded-count summary)))
+      (is (= [] (:extension-errors summary)))
+      (is (some #(= "manifest:psi/test-startup-remote-ext" %)
+                (map str (ext/extensions-in (:extension-registry ctx))))))))
 
 (deftest reload-extension-installs-applies-manifest-local-root-in-project-nrepl-friendly-runtime-test
   (testing "reload/apply still loads manifest-backed local-root extensions after startup state persistence"
