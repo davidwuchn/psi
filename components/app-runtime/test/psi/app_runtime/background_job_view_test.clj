@@ -41,3 +41,12 @@
     (is (.contains (:job/text detail) "job-1"))
     (is (= "Cancellation requested for job-1 (status=pending-cancel)"
            (:job/message cancel)))))
+
+(deftest scheduled-prompt-job-summary-includes-fire-time-test
+  (let [summary (bg/job-summary {:job-id "schedule/sch-1"
+                                 :tool-name "check-build"
+                                 :job-kind :scheduled-prompt
+                                 :status :running
+                                 :fire-at "2026-04-21T18:05:00Z"})]
+    (is (.contains (:job/list-line summary) "check-build"))
+    (is (.contains (:job/list-line summary) "2026-04-21T18:05:00Z"))))

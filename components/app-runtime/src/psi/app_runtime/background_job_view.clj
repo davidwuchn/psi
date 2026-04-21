@@ -31,23 +31,27 @@
 
 (defn job-summary
   [job]
-  {:job/id                  (:job-id job)
-   :job/tool-name           (:tool-name job)
-   :job/status              (:status job)
-   :job/status-label        (render-status-label (:status job))
-   :job/thread-id           (:thread-id job)
-   :job/job-kind            (:job-kind job)
-   :job/workflow-ext-path   (:workflow-ext-path job)
-   :job/workflow-id         (:workflow-id job)
-   :job/started-at          (:started-at job)
-   :job/completed-at        (:completed-at job)
-   :job/cancel-requested-at (:cancel-requested-at job)
-   :job/is-terminal         (contains? #{:completed :failed :cancelled :timed-out} (:status job))
-   :job/is-running          (= :running (:status job))
-   :job/is-cancelling       (= :pending-cancel (:status job))
-   :job/list-line           (str (or (:job-id job) "(unknown-job)")
-                                 "  [" (or (render-status-label (:status job)) "unknown") "]"
-                                 "  " (or (:tool-name job) "(unknown-tool)"))})
+  (let [suffix (case (:job-kind job)
+                 :scheduled-prompt (str " @ " (or (:fire-at job) "unknown-fire-time"))
+                 nil)]
+    {:job/id                  (:job-id job)
+     :job/tool-name           (:tool-name job)
+     :job/status              (:status job)
+     :job/status-label        (render-status-label (:status job))
+     :job/thread-id           (:thread-id job)
+     :job/job-kind            (:job-kind job)
+     :job/workflow-ext-path   (:workflow-ext-path job)
+     :job/workflow-id         (:workflow-id job)
+     :job/started-at          (:started-at job)
+     :job/completed-at        (:completed-at job)
+     :job/cancel-requested-at (:cancel-requested-at job)
+     :job/is-terminal         (contains? #{:completed :failed :cancelled :timed-out} (:status job))
+     :job/is-running          (= :running (:status job))
+     :job/is-cancelling       (= :pending-cancel (:status job))
+     :job/list-line           (str (or (:job-id job) "(unknown-job)")
+                                   "  [" (or (render-status-label (:status job)) "unknown") "]"
+                                   "  " (or (:tool-name job) "(unknown-tool)")
+                                   (or suffix ""))}))
 
 (defn jobs-summary
   ([jobs]

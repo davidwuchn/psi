@@ -424,6 +424,43 @@
       (is (false? (:psi.background-job/is-terminal job)))
       (is (true? (:psi.background-job/is-non-terminal job))))))
 
+(deftest scheduler-resolver-test
+  (testing "scheduler attrs resolve from session root and background-job projection includes scheduled prompts"
+    (let [[ctx session-id] (test-support/create-test-session)
+          _ (dispatch/dispatch! ctx :scheduler/create
+                                {:session-id session-id
+                                 :schedule-id "sch-1"
+                                 :label "check-build"
+                                 :message "check build"
+                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :delay-ms 1000}
+                                {:origin :core})
+          result (session/query-in ctx session-id
+                                   [:psi.scheduler/pending-count
+                                    {:psi.scheduler/schedules
+                                     [:psi.scheduler/schedule-id
+                                      :psi.scheduler/label
+                                      :psi.scheduler/message
+                                      :psi.scheduler/status]}
+                                    {:psi.agent-session/background-jobs
+                                     [:psi.background-job/id
+                                      :psi.background-job/tool-name
+                                      :psi.background-job/job-kind
+                                      :psi.background-job/status]}])
+          schedules (:psi.scheduler/schedules result)
+          jobs (:psi.agent-session/background-jobs result)
+          schedule (first schedules)
+          job (first (filter #(= "schedule/sch-1" (:psi.background-job/id %)) jobs))]
+      (is (= 1 (:psi.scheduler/pending-count result)))
+      (is (= 1 (count schedules)))
+      (is (= "sch-1" (:psi.scheduler/schedule-id schedule)))
+      (is (= "check-build" (:psi.scheduler/label schedule)))
+      (is (= :pending (:psi.scheduler/status schedule)))
+      (is (= :scheduled-prompt (:psi.background-job/job-kind job)))
+      (is (= :running (:psi.background-job/status job)))
+      (is (= "check-build" (:psi.background-job/tool-name job))))))
+
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable
             (regression: extension query-fn uses isolated qctx via register-resolvers-in!)"
