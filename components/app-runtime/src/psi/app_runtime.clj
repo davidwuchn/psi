@@ -101,6 +101,20 @@
   []
   (app-nrepl/active-session-id-in-session-state session-state default-session-id-in))
 
+(defn- merge-startup-summary
+  "Merge manifest/bootstrap startup summary maps.
+
+   Scalar startup fields are overwritten by the newer summary contribution.
+   Sequential fields accumulate in order so bootstrap diagnostics and manifest
+   activation errors both remain visible."
+  [base delta]
+  (merge-with (fn [base-value delta-value]
+                (if (and (sequential? base-value) (sequential? delta-value))
+                  (into (vec base-value) delta-value)
+                  delta-value))
+              base
+              delta))
+
 ;; ============================================================
 ;; nREPL server (started conditionally via --nrepl)
 ;; ============================================================
@@ -368,13 +382,7 @@ Available: " (str/join ", " (map name (keys all))))
                             :extension-targets      []})
          {:keys [summary-updates]}
          (extension-runtime/bootstrap-manifest-extensions-in! ctx session-id cwd)
-         summary          (merge-with
-                           (fn [base delta]
-                             (if (and (sequential? base) (sequential? delta))
-                               (into (vec base) delta)
-                               delta))
-                           summary-base
-                           summary-updates)
+         summary          (merge-startup-summary summary-base summary-updates)
          _                (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:session-id session-id :summary summary} {:origin :core})
          _                (bootstrap/register-all-domains!)
          graph-caps       (graph-capabilities-in ctx session-id)

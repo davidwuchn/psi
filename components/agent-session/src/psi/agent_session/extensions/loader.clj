@@ -76,7 +76,12 @@
    The file must define an `init` function in its namespace.
    `create-extension-api` builds the runtime API passed to `init`.
    `register-extension-in!` seeds registry state before init runs.
-   Failed loads are rolled back so the registry only retains live extensions.
+
+   Live-registry invariant:
+   failed activation is rolled back immediately, so the registry retains only
+   successfully initialized live extensions. Failure is surfaced by the caller
+   through returned error data rather than a lingering registry entry.
+
    Returns {:extension ext-path :error nil} or {:extension nil :error msg}."
   [reg ext-path runtime-fns register-extension-in! unregister-extension-in! create-extension-api]
   (try
@@ -112,7 +117,10 @@
   "Load a manifest-installed extension by resolving and calling `init-var`.
    Registers the extension under `ext-id`, which is typically a stable
    manifest-backed identity such as `manifest:{lib}`.
-   Failed loads are rolled back so the registry only retains live extensions."
+
+   Live-registry invariant:
+   failed activation is rolled back immediately, so manifest-backed identities
+   appear in the live registry only after successful init execution."
   [reg ext-id init-var runtime-fns register-extension-in! unregister-extension-in! create-extension-api]
   (try
     (register-extension-in! reg ext-id)

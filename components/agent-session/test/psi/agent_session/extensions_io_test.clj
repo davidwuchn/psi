@@ -81,6 +81,39 @@
       (is (some? (:error result)))
       (is (nil? (:extension result))))))
 
+(deftest failed-extension-activation-rolls-back-live-registry-test
+  (testing "file-backed activation rollback removes failed extension from live registry"
+    (let [tmp-dir  (io/file (System/getProperty "java.io.tmpdir")
+                            (str "psi-ext-fail-file-" (System/nanoTime)))
+          ext-file (io/file tmp-dir "failing_ext.clj")
+          reg      (ext/create-registry)]
+      (try
+        (.mkdirs tmp-dir)
+        (spit ext-file
+              "(ns psi.test-extensions.failing-ext)\n\n(defn init [_]\n  (throw (ex-info \"boom file init\" {})))\n")
+        (let [result (ext/load-extension-in! reg (.getAbsolutePath ext-file) {})]
+          (is (some? (:error result)))
+          (is (nil? (:extension result)))
+          (is (= [] (ext/extensions-in reg)))
+          (is (= 0 (ext/extension-count-in reg))))
+        (finally
+          (.delete ext-file)
+          (.delete tmp-dir)))))
+
+  (testing "init-var activation rollback removes failed manifest identity from live registry"
+    (let [ns-sym 'psi.test-extensions.failing-init-var
+          _      (create-ns ns-sym)
+          _      (binding [*ns* (the-ns ns-sym)]
+                   (clojure.core/refer 'clojure.core)
+                   (intern *ns* 'init (fn [_] (throw (ex-info "boom init-var init" {})))))
+          reg    (ext/create-registry)
+          ext-id "manifest:psi/test-failing-init-var"
+          result (ext/load-init-var-extension-in! reg ext-id 'psi.test-extensions.failing-init-var/init {})]
+      (is (some? (:error result)))
+      (is (nil? (:extension result)))
+      (is (= [] (ext/extensions-in reg)))
+      (is (= 0 (ext/extension-count-in reg))))))
+
 ;; ── Extension discovery ─────────────────────────────────────────────────────
 
 (deftest discover-extension-paths-test

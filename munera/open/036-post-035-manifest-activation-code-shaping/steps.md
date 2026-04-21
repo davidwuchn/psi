@@ -1,7 +1,7 @@
-- [ ] Reduce orchestration density in `extension_runtime.clj`
-- [ ] Extract only small helpers that improve local comprehensibility
-- [ ] Reduce duplicated manifest apply orchestration shape where useful
-- [ ] Make startup summary merge semantics explicit if helpful
-- [ ] Preserve and document the failed-activation live-registry invariant near the seam
-- [ ] Add a focused low-level rollback invariant test
-- [ ] Verify 034/035 manifest activation behavior remains unchanged
+- [x] Reduce orchestration density in `extension_runtime.clj`
+- [x] Extract only small helpers that improve local comprehensibility
+- [x] Reduce duplicated manifest apply orchestration shape where useful
+- [x] Make startup summary merge semantics explicit if helpful
+- [x] Preserve and document the failed-activation live-registry invariant near the seam
+- [x] Add a focused low-level rollback invariant test
+- [x] Verify 034/035 manifest activation behavior remains unchanged

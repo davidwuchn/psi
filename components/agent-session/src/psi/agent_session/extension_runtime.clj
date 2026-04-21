@@ -54,6 +54,12 @@
   [lib]
   (str "manifest:" lib))
 
+(defn- install-plan-for-activation
+  [install-state plan]
+  (assoc plan
+         :entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib])
+         :restart-required-libs #{}))
+
 (defn- activation-entries
   [plan]
   (vec
@@ -78,6 +84,33 @@
   [activation-result deps-result]
   (merge activation-result (select-keys deps-result [:deps-realized? :deps-restart-required? :deps-realize-error])))
 
+(defn- deps-failure-errors
+  [deps-result install-plan]
+  (if-let [msg (:deps-realize-error deps-result)]
+    (mapv (fn [lib]
+            {:path (installs/manifest-extension-id lib)
+             :error msg})
+          (:deps-extension-libs install-plan))
+    []))
+
+(defn- finalize-manifest-apply!
+  [ctx install-state install-plan apply-result]
+  (->> (installs/finalize-apply-state install-state install-plan apply-result)
+       (installs/persist-install-state-in! ctx)))
+
+(defn- startup-summary-updates
+  [manifest-result]
+  {:extension-loaded-count (count (:loaded manifest-result))
+   :extension-error-count  (count (:errors manifest-result))
+   :extension-errors       (:errors manifest-result)})
+
+(defn- merge-manifest-apply-results
+  [path-result manifest-result]
+  (-> path-result
+      (update :loaded into (:loaded manifest-result))
+      (update :errors into (:errors manifest-result))
+      (merge (select-keys manifest-result [:deps-realized? :deps-restart-required? :deps-realize-error]))))
+
 (defn activate-manifest-extensions-in!
   "Activate manifest-aware extensions through one shared abstraction.
 
@@ -88,7 +121,7 @@
 
    Returns {:loaded [id ...] :errors [{:path :error}] ...deps-result-keys}."
   [ctx session-id plan deps-result]
-  (let [runtime-fns* (runtime-fns/make-extension-runtime-fns ctx session-id nil)
+  (let [runtime-fns*      (runtime-fns/make-extension-runtime-fns ctx session-id nil)
         activation-result (ext/activate-extensions-in! (:extension-registry ctx)
                                                        runtime-fns*
                                                        (activation-entries (assoc plan :deps-realized? (:deps-realized? deps-result))))]
@@ -103,28 +136,16 @@
    - :finalized-state  — persisted install-state payload
    - :summary-updates  — startup-summary deltas derived from manifest activation"
   [ctx session-id cwd]
-  (let [install-state      (installs/compute-install-state cwd)
-        install-plan0      (installs/activation-plan install-state)
-        deps-result        (sync-non-local-extension-deps! (:deps-to-realize install-plan0))
-        install-plan       (-> install-plan0
-                               (assoc :entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib]))
-                               (assoc :restart-required-libs #{}))
-        manifest-result0   (activate-manifest-extensions-in! ctx session-id install-plan deps-result)
-        deps-failure-errors (if-let [msg (:deps-realize-error deps-result)]
-                              (mapv (fn [lib]
-                                      {:path (installs/manifest-extension-id lib)
-                                       :error msg})
-                                    (:deps-extension-libs install-plan))
-                              [])
-        manifest-result    (update manifest-result0 :errors into deps-failure-errors)
-        finalized-state    (installs/finalize-apply-state install-state install-plan manifest-result)
-        persisted-state    (installs/persist-install-state-in! ctx finalized-state)
-        summary-updates    {:extension-loaded-count (count (:loaded manifest-result))
-                            :extension-error-count  (count (:errors manifest-result))
-                            :extension-errors       (:errors manifest-result)}]
+  (let [install-state    (installs/compute-install-state cwd)
+        install-plan     (install-plan-for-activation install-state
+                                                      (installs/activation-plan install-state))
+        deps-result      (sync-non-local-extension-deps! (:deps-to-realize install-plan))
+        manifest-result  (-> (activate-manifest-extensions-in! ctx session-id install-plan deps-result)
+                             (update :errors into (deps-failure-errors deps-result install-plan)))
+        finalized-state  (finalize-manifest-apply! ctx install-state install-plan manifest-result)]
     {:manifest-result manifest-result
-     :finalized-state persisted-state
-     :summary-updates summary-updates}))
+     :finalized-state finalized-state
+     :summary-updates (startup-summary-updates manifest-result)}))
 
 (defn reload-extensions-in!
   "Unregister all extensions and re-discover/load them.
@@ -144,25 +165,19 @@
    (reload-extensions-in! ctx session-id configured-paths nil))
   ([ctx session-id configured-paths cwd]
    (dispatch/dispatch! ctx :session/reset-prompt-contributions {:session-id session-id} {:origin :core})
-   (let [runtime-fns*      (runtime-fns/make-extension-runtime-fns ctx session-id nil)
-         effective-cwd     (or cwd (ss/session-worktree-path-in ctx session-id))
-         previous-state    (installs/extension-installs-state-in ctx)
-         install-state     (installs/compute-install-state effective-cwd)
-         plan-base         (installs/activation-plan install-state previous-state)
-         deps-result       (if (:deps-apply-safe? plan-base)
-                             (sync-non-local-extension-deps! (:deps-to-realize plan-base))
-                             {:deps-realized? false})
-         configured*       (vec configured-paths)
-         path-reload       (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* configured* effective-cwd)
-         plan              (assoc plan-base
-                                  :entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib]))
-         manifest-result   (activate-manifest-extensions-in! ctx session-id plan deps-result)
-         reload-result     (-> path-reload
-                               (update :loaded into (:loaded manifest-result))
-                               (update :errors into (:errors manifest-result))
-                               (merge (select-keys manifest-result [:deps-realized? :deps-restart-required? :deps-realize-error])))
-         finalized-state   (installs/finalize-apply-state install-state plan reload-result)
-         persisted-state   (installs/persist-install-state-in! ctx finalized-state)]
+   (let [runtime-fns*    (runtime-fns/make-extension-runtime-fns ctx session-id nil)
+         effective-cwd   (or cwd (ss/session-worktree-path-in ctx session-id))
+         previous-state  (installs/extension-installs-state-in ctx)
+         install-state   (installs/compute-install-state effective-cwd)
+         plan-base       (installs/activation-plan install-state previous-state)
+         install-plan    (install-plan-for-activation install-state plan-base)
+         deps-result     (if (:deps-apply-safe? install-plan)
+                           (sync-non-local-extension-deps! (:deps-to-realize install-plan))
+                           {:deps-realized? false})
+         path-reload     (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns* (vec configured-paths) effective-cwd)
+         manifest-result (activate-manifest-extensions-in! ctx session-id install-plan deps-result)
+         reload-result   (merge-manifest-apply-results path-reload manifest-result)
+         persisted-state (finalize-manifest-apply! ctx install-state install-plan reload-result)]
      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
      (assoc reload-result :install-state persisted-state))))
 
