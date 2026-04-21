@@ -11,6 +11,7 @@ Open tasks in suggested execution order:
 7. `munera/open/006-agent-tool-skill-prelude-follow-on/`
 8. `munera/open/033-psi-tool-scheduler-surface/`
 9. `munera/open/034-startup-manifest-extension-loading/`
+10. `munera/open/035-post-034-manifest-activation-cleanup/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.

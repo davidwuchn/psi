@@ -1,0 +1,8 @@
+- [ ] Extract startup manifest activation orchestration out of `app_runtime.clj`
+- [ ] Introduce an extension-runtime-owned startup activation helper
+- [ ] Preserve 034 startup behavior after extraction
+- [ ] Choose explicit failed manifest activation registry semantics
+- [ ] Implement the chosen registry semantic consistently
+- [ ] Update any registry/introspection/tests affected by the semantic choice
+- [ ] Simplify startup manifest activation tests with shared helpers/fixtures
+- [ ] Update task/docs wording if needed after cleanup
