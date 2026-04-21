@@ -459,7 +459,30 @@
       (is (= :pending (:psi.scheduler/status schedule)))
       (is (= :scheduled-prompt (:psi.background-job/job-kind job)))
       (is (= :running (:psi.background-job/status job)))
-      (is (= "check-build" (:psi.background-job/tool-name job))))))
+      (is (= "check-build" (:psi.background-job/tool-name job)))))
+
+  (testing "scheduler supports entity-seeded single schedule lookup"
+    (let [[ctx session-id] (test-support/create-test-session)
+          _ (dispatch/dispatch! ctx :scheduler/create
+                                {:session-id session-id
+                                 :schedule-id "sch-one"
+                                 :label "one"
+                                 :message "wake"
+                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :delay-ms 1000}
+                                {:origin :core})
+          result (session/query-in ctx
+                                   [:psi.scheduler/schedule-id
+                                    :psi.scheduler/label
+                                    :psi.scheduler/message
+                                    :psi.scheduler/status]
+                                   {:psi.agent-session/session-id session-id
+                                    :psi.scheduler/schedule-id "sch-one"})]
+      (is (= "sch-one" (:psi.scheduler/schedule-id result)))
+      (is (= "one" (:psi.scheduler/label result)))
+      (is (= "wake" (:psi.scheduler/message result)))
+      (is (= :pending (:psi.scheduler/status result))))))
 
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable

@@ -60,6 +60,15 @@
     {:psi.scheduler/pending-count (scheduler/pending-count state)
      :psi.scheduler/schedules (mapv scheduler-runtime/schedule->eql schedules)}))
 
+(pco/defresolver scheduler-by-id
+  [{:keys [psi/agent-session-ctx psi.agent-session/session-id psi.scheduler/schedule-id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id :psi.scheduler/schedule-id]
+   ::pco/output scheduler-output}
+  (when-let [schedule (scheduler/get-schedule
+                       (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
+                       schedule-id)]
+    (scheduler-runtime/schedule->eql schedule)))
+
 (pco/defresolver agent-session-dispatch-registry
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
@@ -198,6 +207,7 @@
 (def resolvers
   [agent-session-background-jobs
    agent-session-scheduler
+   scheduler-by-id
    agent-session-dispatch-registry
    agent-session-dispatch-event-log
    tool-output-policy
