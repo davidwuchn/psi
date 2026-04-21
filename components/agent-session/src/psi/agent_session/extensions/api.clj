@@ -220,11 +220,20 @@
             (some #(when (= service-key (:psi.service/key %)) %)
                   (list-services))))
         register-prompt-contribution!
-        (fn [id contribution]
-          (mutate-ext-required :register-prompt-contribution
-                               'psi.extension/register-prompt-contribution
-                               {:id           id
-                                :contribution contribution}))
+        (letfn [(register-prompt-contribution*
+                  ([id contribution]
+                   (mutate-ext-required :register-prompt-contribution
+                                        'psi.extension/register-prompt-contribution
+                                        {:id           id
+                                         :contribution contribution}))
+                  ([contribution]
+                   (let [id* (or (:id contribution)
+                                 (:psi.extension.prompt-contribution/id contribution))]
+                     (when-not id*
+                       (throw (ex-info "register-prompt-contribution requires :id"
+                                       {:contribution contribution})))
+                     (register-prompt-contribution* id* (dissoc contribution :id :psi.extension.prompt-contribution/id)))))]
+          register-prompt-contribution*)
         update-prompt-contribution!
         (fn [id patch]
           (mutate-ext-required :update-prompt-contribution
