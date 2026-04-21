@@ -72,7 +72,7 @@ Example:
     (is (= 1 (count (get-in @state [:handlers "session_switch"]))))))
 ```
 
-For cwd-sensitive extensions (e.g. reading `.psi/agents`), wrap with
+For cwd-sensitive extensions (e.g. reading project-local `.psi/` config), wrap with
 `with-user-dir`:
 
 ```clojure
@@ -86,33 +86,20 @@ For cwd-sensitive extensions (e.g. reading `.psi/agents`), wrap with
 These extensions ship with the project as per-extension local-root libraries and
 are activated in this repo through `.psi/extensions.edn`.
 
-### `extensions/agent-chain/src/extensions/agent_chain.clj` (`extensions.agent-chain`)
+### `extensions/workflow-loader/src/extensions/workflow_loader.clj` (`extensions.workflow-loader`)
 
-Purpose: run repeatable multi-agent pipelines.
+Purpose: discover workflow definitions from `.psi/workflows/`, compile/register
+canonical workflow definitions, and expose a unified delegation surface for both
+single-step profiles and multi-step orchestrations.
 
-- Tool: `agent-chain`
-  - actions: `run`, `list`, `reload`
+- Tool: `delegate`
+  - actions: `run`, `list`, `continue`, `remove`
+  - run options include `workflow`, `mode` (`sync|async`), `fork_session`, `timeout_ms`, `include_result_in_context`
 - Commands:
-  - `/chain` — list chains, agents, recent runs
-  - `/chain-reload` — reload chain + agent definitions
+  - `/delegate <workflow> <prompt>`
+  - `/delegate-reload`
 - Config:
-  - `.psi/agents/agent-chain.edn`
-  - `.psi/agents/*.md` (agent profiles)
-
-### `extensions/agent/src/extensions/agent.clj` (`extensions.agent`)
-
-Purpose: create/continue/remove/list agents with workflow-backed UI widgets.
-
-- Tool: `agent`
-  - actions: `create`, `continue`, `remove`, `list`
-  - create options include `agent`, `mode` (`sync|async`), `fork_session`, `timeout_ms`
-  - implementation note: agent runs execute in real child sessions with their own runtime handles and started session statecharts, so sub-agents can run even while the parent session is busy/streaming
-- Commands:
-  - `/agent [--fork|-f] [@agent] <task>`
-  - `/agent-cont <id> <prompt>`
-  - `/agent-rm <id>`
-  - `/agent-clear`
-  - `/agent-list`
+  - `.psi/workflows/*.md`
 
 ### `extensions/mcp-tasks-run/src/extensions/mcp_tasks_run.clj` (`extensions.mcp-tasks-run`)
 
@@ -141,8 +128,7 @@ Preferred display-map keys:
 The display payload itself may live under an extension-specific namespaced key,
 for example:
 - `:run/display`
-- `:chain/display`
-- `:agent/display`
+- `:delegate/display`
 
 Preferred helper path:
 - widget/UI consumers: `extensions.workflow-display/merged-display` + `display-lines`
@@ -150,8 +136,7 @@ Preferred helper path:
 
 Current in-repo examples:
 - `extensions.mcp-tasks-run` — widget + list output reuse `:run/display`
-- `extensions.agent-chain` — widget + `action=list` reuse `:chain/display`
-- `extensions.agent` — widget + `agent-list` reuse `:agent/display`
+- `extensions.workflow-loader` — widget + `action=list` reuse unified workflow run display
 
 ### `extensions/commit-checks/src/extensions/commit_checks.clj` (`extensions.commit-checks`)
 

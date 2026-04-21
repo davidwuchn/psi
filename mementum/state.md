@@ -114,12 +114,12 @@ Bootstrapped on 2026-04-02.
   - `workflow_lifecycle_test.clj` proves representative `plan -> build -> review` completion and blocked/resume/new-attempt semantics
   - focused workflow set is green when run in the 026 worktree
 - 026 follow-on direction is now clearer:
-  - `agent-chain` was only a discovery/config surface from `.psi/agents/agent-chain.edn`, but now also has canonical runtime registration + launch entrypoints
+  - the old `agent-chain` discovery/config surface from `.psi/agents/agent-chain.edn` has now been retired in favor of unified `.psi/workflows/*.md` loading through `workflow-loader`
   - existing extension workflow runtime in `workflows.clj` is separate and should not become the execution substrate for canonical deterministic workflow runs
   - pure chain compilation now exists in `workflow_agent_chain.clj`
   - runtime registration now exists in `workflow_agent_chain_runtime.clj`
   - compiled chain definitions preserve legacy prompt text as `:prompt-template` plus explicit bindings for workflow input, prior-step output, and original request
-  - `psi-tool` workflow ops now include `register-agent-chains` and `create-run-from-agent-chain`
+  - `psi-tool` workflow ops are now focused on canonical workflow definitions/runs only (`list-definitions`, `create-run`, `execute-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
   - an execution bridge now exists in `workflow_execution.clj` for current-step attempt/session creation, prompt materialization, prompt submission, result-envelope recording, and step advancement
   - `execute-run!` now provides a first sequential loop for multi-step workflow execution to terminal/blocking status
   - blocked-status behavior is now explicitly proven in `workflow_execution_test.clj`

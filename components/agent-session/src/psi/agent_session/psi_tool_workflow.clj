@@ -3,7 +3,6 @@
   (:require
    [clojure.edn :as edn]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.workflow-agent-chain-runtime :as workflow-agent-chain-runtime]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
 
@@ -116,16 +115,6 @@
                                                                       :step-order    (:step-order d)})
                                                                    definitions)}})
 
-              "register-agent-chains"
-              (let [report (workflow-agent-chain-runtime/register-agent-chain-definitions! ctx)]
-                {:psi-tool/action         :workflow
-                 :psi-tool/workflow-op    :register-agent-chains
-                 :psi-tool/overall-status (if (:error report) :error :ok)
-                 :psi-tool/workflow       {:config-path      (:config-path report)
-                                           :registered-count (:registered-count report)
-                                           :definition-ids   (:definition-ids report)
-                                           :error            (:error report)}})
-
               "create-run"
               (let [create-opts (cond-> {}
                                   definition-id (assoc :definition-id definition-id)
@@ -139,35 +128,6 @@
                  :psi-tool/overall-status :ok
                  :psi-tool/workflow       {:run-id created-run-id
                                            :run    (workflow-run-summary workflow-run)}})
-
-              "create-run-from-agent-chain"
-              (let [register-report (workflow-agent-chain-runtime/register-agent-chain-definitions! ctx)]
-                (when (:error register-report)
-                  (throw (ex-info "Agent-chain registration failed"
-                                  {:phase              :workflow
-                                   :action             "workflow"
-                                   :op                 op
-                                   :chain-name         chain-name
-                                   :registration-report register-report})))
-                (when-not (some #{chain-name} (:definition-ids register-report))
-                  (throw (ex-info "Agent-chain definition not found"
-                                  {:phase                    :validate
-                                   :action                   "workflow"
-                                   :op                       op
-                                   :chain-name               chain-name
-                                   :available-definition-ids (:definition-ids register-report)})))
-                (let [[new-state created-run-id workflow-run]
-                      (workflow-runtime/create-run @(:state* ctx)
-                                                   {:definition-id  chain-name
-                                                    :workflow-input (or (parse-workflow-input-string workflow-input) {})})]
-                  ((:apply-root-state-update-fn ctx) ctx (constantly new-state))
-                  {:psi-tool/action         :workflow
-                   :psi-tool/workflow-op    :create-run-from-agent-chain
-                   :psi-tool/overall-status :ok
-                   :psi-tool/workflow       {:chain-name   chain-name
-                                             :registration register-report
-                                             :run-id       created-run-id
-                                             :run          (workflow-run-summary workflow-run)}}))
 
               "execute-run"
               (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)]

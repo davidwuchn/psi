@@ -8,8 +8,6 @@
         psi/query                   {:local/root "../components/query"}
         psi/ui-state                {:local/root "../components/ui-state"}
         psi/extension-test-helpers  {:local/root "../components/extension-test-helpers"}
-        psi/agent                   {:local/root "agent"}
-        psi/agent-chain             {:local/root "agent-chain"}
         psi/auto-session-name       {:local/root "auto-session-name"}
         psi/commit-checks           {:local/root "commit-checks"}
         psi/hello-ext               {:local/root "hello-ext"}
@@ -22,9 +20,7 @@
         psi/workflow-display        {:local/root "workflow-display"}}
 
  :aliases
- {:test {:extra-paths ["agent/test"
-                       "agent-chain/test"
-                       "auto-session-name/test"
+ {:test {:extra-paths ["auto-session-name/test"
                        "commit-checks/test"
                        "hello-ext/test"
                        "lsp/test"

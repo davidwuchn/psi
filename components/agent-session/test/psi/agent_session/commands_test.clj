@@ -196,7 +196,7 @@
                                                store
                                                {:tool-call-id "tc-cmd-j1"
                                                 :thread-id thread-id
-                                                :tool-name "agent-chain"
+                                                :tool-name "delegate"
                                                 :job-id "job-cmd-j1"})))}
                         {:origin :core})
 

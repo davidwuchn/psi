@@ -32,17 +32,17 @@
                                            (throw (ex-info "unexpected mutation" {:op op :params params}))))}
           ext-path         "/ext/test"
           _                (ext/register-extension-in! reg ext-path)
-          _                (ext/register-tool-in! reg ext-path {:name "agent-chain"
-                                                                :label "Agent Chain"
-                                                                :description "Run agent chains"
+          _                (ext/register-tool-in! reg ext-path {:name "delegate"
+                                                                :label "Delegate"
+                                                                :description "Run workflows"
                                                                 :parameters {:type "object"}})
-          _                (ext/register-command-in! reg ext-path {:name "chain" :description "List chains"})
+          _                (ext/register-command-in! reg ext-path {:name "delegate" :description "Run a workflow"})
           _                (((ext/create-extension-api reg ext-path runtime-fns)
-                              :register-prompt-contribution)
-                             "agent-chain-chains"
-                             {:section "Extension Capabilities"
-                              :content "tool: agent-chain"
-                              :priority 200})
+                             :register-prompt-contribution)
+                            "workflow-loader-workflows"
+                            {:section "Extension Capabilities"
+                             :content "tool: delegate"
+                             :priority 200})
           summary          {:extension-loaded-count (count (ext/extensions-in reg))}
           tool-def-names   (->> (:tool-defs (ss/get-session-data-in ctx session-id))
                                 (map :name)
@@ -54,10 +54,10 @@
              (:extension-loaded-count summary)
              1))
       (is (= #{ext-path} (set (ext/extensions-in reg))))
-      (is (contains? (set (ext/tool-names-in reg)) "agent-chain"))
+      (is (contains? (set (ext/tool-names-in reg)) "delegate"))
       ;; Registry invariants first: if extensions are loaded, the live registry must retain tools.
       ;; Active tool projection is asserted elsewhere by bootstrap/runtime tests.
       (is (or (empty? tool-def-names)
-              (contains? tool-def-names "agent-chain")))
+              (contains? tool-def-names "delegate")))
       (is (or (empty? active-tool-names)
-              (contains? active-tool-names "agent-chain"))))))
+              (contains? active-tool-names "delegate"))))))

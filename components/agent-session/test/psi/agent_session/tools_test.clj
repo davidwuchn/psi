@@ -121,16 +121,6 @@
         (is (true? (:is-error result)))
         (is (re-find #"requires `definition-id` or `definition`" (:content result)))))
 
-    (testing "workflow register-agent-chains is accepted as a valid op"
-      (let [result ((:execute tool) {"action" "workflow" "op" "register-agent-chains"})
-            parsed (read-string (:content result))]
-        (is (= :workflow (:psi-tool/action parsed)))))
-
-    (testing "workflow create-run-from-agent-chain requires chain-name"
-      (let [result ((:execute tool) {"action" "workflow" "op" "create-run-from-agent-chain"})]
-        (is (true? (:is-error result)))
-        (is (re-find #"requires `chain-name`" (:content result)))))
-
     (testing "workflow create-run rejects both definition-id and definition"
       (let [result ((:execute tool) {"action" "workflow"
                                      "op" "create-run"

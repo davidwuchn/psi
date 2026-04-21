@@ -107,7 +107,7 @@
                                  [{:event-kind :tool-result :tool-id "call-1" :tool-name "read"}
                                   {:event-kind :tool-result :tool-id "call-2" :tool-name "bash"}])
       (let [result (session/query-in ctx session-id [:psi.agent-session/tool-call-count
-                                                    :psi.agent-session/executed-tool-count])]
+                                                     :psi.agent-session/executed-tool-count])]
         (is (= 1 (:psi.agent-session/tool-call-count result)))
         (is (= 2 (:psi.agent-session/executed-tool-count result)))))))
 
@@ -397,17 +397,17 @@
                                                                 :workflow-id  "wf-1"})))}
                                         {:origin :core})
           result    (session/query-in ctx session-id
-                                       [:psi.agent-session/background-job-count
-                                        :psi.agent-session/background-job-statuses
-                                        {:psi.agent-session/background-jobs
-                                         [:psi.background-job/id
-                                          :psi.background-job/thread-id
-                                          :psi.background-job/tool-call-id
-                                          :psi.background-job/tool-name
-                                          :psi.background-job/job-kind
-                                          :psi.background-job/status
-                                          :psi.background-job/is-terminal
-                                          :psi.background-job/is-non-terminal]}])
+                                      [:psi.agent-session/background-job-count
+                                       :psi.agent-session/background-job-statuses
+                                       {:psi.agent-session/background-jobs
+                                        [:psi.background-job/id
+                                         :psi.background-job/thread-id
+                                         :psi.background-job/tool-call-id
+                                         :psi.background-job/tool-name
+                                         :psi.background-job/job-kind
+                                         :psi.background-job/status
+                                         :psi.background-job/is-terminal
+                                         :psi.background-job/is-non-terminal]}])
           jobs      (:psi.agent-session/background-jobs result)
           job       (first jobs)]
       (is (= 1 (:psi.agent-session/background-job-count result)))
@@ -423,47 +423,6 @@
       (is (= :running (:psi.background-job/status job)))
       (is (false? (:psi.background-job/is-terminal job)))
       (is (true? (:psi.background-job/is-non-terminal job))))))
-
-(deftest agent-chain-discovery-resolver-test
-  (testing "agent-chain config is queryable from session root"
-    (let [tmp (str (java.nio.file.Files/createTempDirectory
-                    "psi-agent-chain-resolver-test-"
-                    (make-array java.nio.file.attribute.FileAttribute 0)))
-          cfg (io/file tmp ".psi" "agents" "agent-chain.edn")]
-      (try
-        (io/make-parents cfg)
-        (spit cfg (pr-str [{:name "prompt-build"
-                            :description "Build prompts"
-                            :steps [{:agent "prompt-compiler" :prompt "$INPUT"}
-                                    {:agent "prompt-compiler" :prompt "again: $INPUT"}]}]))
-        (with-user-dir tmp
-          (let [result (q [:psi.agent-chain/config-path
-                           :psi.agent-chain/count
-                           :psi.agent-chain/names
-                           :psi.agent-chain/chains
-                           :psi.agent-chain/error])
-                chains (:psi.agent-chain/chains result)]
-            (is (= 1 (:psi.agent-chain/count result)))
-            (is (= ["prompt-build"] (:psi.agent-chain/names result)))
-            (is (string? (:psi.agent-chain/config-path result)))
-            (is (nil? (:psi.agent-chain/error result)))
-            (is (= 1 (count chains)))
-            (is (= "prompt-build" (:name (first chains))))
-            (is (= 2 (:step-count (first chains))))
-            (is (= ["prompt-compiler" "prompt-compiler"]
-                   (:agents (first chains))))))
-        (finally
-          (when (.exists cfg)
-            (.delete cfg))
-          (let [agents-dir (.getParentFile cfg)
-                psi-dir (.getParentFile agents-dir)
-                root-dir (io/file tmp)]
-            (when (and agents-dir (.exists agents-dir))
-              (.delete agents-dir))
-            (when (and psi-dir (.exists psi-dir))
-              (.delete psi-dir))
-            (when (.exists root-dir)
-              (.delete root-dir))))))))
 
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable

@@ -22,7 +22,7 @@
                      "`eval` evaluates an in-process Clojure form in a named already-loaded namespace; "
                      "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
                      "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`; "
-                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|register-agent-chains|create-run|create-run-from-agent-chain|execute-run|read-run|list-runs|resume-run|cancel-run`. "
+                     "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|create-run|execute-run|read-run|list-runs|resume-run|cancel-run`. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"
@@ -44,7 +44,7 @@
                               :definition    {:type "string" :description "For `action: \"workflow\"`: inline workflow definition as EDN."}
                               :workflow-input {:type "string" :description "For `action: \"workflow\"`: workflow input map as EDN."}
                               :run-id        {:type "string" :description "For `action: \"workflow\"`: workflow run id."}
-                              :chain-name    {:type "string" :description "For `action: \"workflow\"`, `op: \"create-run-from-agent-chain\"`: legacy agent-chain name to compile/register and run."}
+                              :chain-name    {:type "string" :description "For `action: \"workflow\"`: legacy parameter, no longer used."}
                               :reason        {:type "string" :description "For `action: \"workflow\"`: optional cancel reason."}}
                  :required   []}})
 
@@ -84,7 +84,7 @@
   ["status" "start" "attach" "stop" "eval" "interrupt"])
 
 (def ^:private workflow-supported-ops
-  ["list-definitions" "register-agent-chains" "create-run" "create-run-from-agent-chain" "execute-run" "read-run" "list-runs" "resume-run" "cancel-run"])
+  ["list-definitions" "create-run" "execute-run" "read-run" "list-runs" "resume-run" "cancel-run"])
 
 (defn- validate-psi-tool-request
   [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason] :as args}]
@@ -167,9 +167,7 @@
         (when (and (= op "create-run") (nil? definition-id) (nil? definition))
           (throw (ex-info "psi-tool workflow create-run requires `definition-id` or `definition`"
                           {:phase :validate :action effective-action :op op})))
-        (when (and (= op "create-run-from-agent-chain") (not (string? chain-name)))
-          (throw (ex-info "psi-tool workflow create-run-from-agent-chain requires `chain-name`"
-                          {:phase :validate :action effective-action :op op})))
+
         (when (and ((set ["execute-run" "read-run" "resume-run" "cancel-run"]) op)
                    (not (string? run-id)))
           (throw (ex-info "psi-tool workflow op requires `run-id`"
