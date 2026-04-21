@@ -83,7 +83,7 @@ Add `"scheduler"` to psi-tool:
 Session-scoped resolvers:
 - `:psi.scheduler/schedules` — all schedule records for the session
 - `:psi.scheduler/pending-count` — number of pending + queued items
-- `:psi.scheduler/schedule` — single schedule by id (entity-seeded)
+- entity-seeded single-schedule lookup keyed by `:psi.scheduler/schedule-id`
 
 Makes scheduled items discoverable through standard graph queries.
 
@@ -128,4 +128,4 @@ as an independent source of truth.
   the next idle transition delivers the next queued item. This is naturally self-pacing.
 - Timer thread handles stored in a runtime atom (not session state). Cleaned up on
   session close via a lifecycle hook.
-- Pending and queued schedules are cancelled when the owning session closes.
+- Pending and queued schedules are cancelled when the owning session runtime shuts down; if a distinct per-session close/unload lifecycle exists or is later introduced, scheduler teardown should route through that lifecycle as well.

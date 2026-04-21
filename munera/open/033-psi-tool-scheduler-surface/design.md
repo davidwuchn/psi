@@ -144,7 +144,7 @@ op: "cancel"   — cancel a schedule by id
   is a projection of scheduler state rather than an independent source of truth
 - Delivery must enter the canonical dispatch-owned prompt submission lifecycle,
   not a parallel prompt injection path
-- Pending and queued schedules are cancelled when the owning session closes
+- Pending and queued schedules are cancelled when the owning session runtime is shut down; if a distinct per-session close/unload lifecycle exists or is added later, scheduler cancellation should route through that lifecycle too
 
 ## Out of scope
 
