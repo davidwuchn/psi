@@ -1,0 +1,15 @@
+- [ ] Extract one shared manifest-aware activation layer used by startup and reload/apply
+- [ ] Implement path-backed activation through the shared layer
+- [ ] Implement init-var-backed activation through the shared layer
+- [ ] Register non-file-backed manifest extensions under `manifest:{lib}`
+- [ ] Integrate the shared activation layer into startup
+- [ ] Realize required non-local manifest deps during startup before activation
+- [ ] Integrate the shared activation layer into reload/apply
+- [ ] Add startup success test for local-root manifest activation
+- [ ] Add startup success test for git manifest activation
+- [ ] Add startup success test for mvn manifest activation
+- [ ] Add startup failure test for dependency realization failure
+- [ ] Add startup failure test for init resolution failure
+- [ ] Add startup failure test for init execution failure
+- [ ] Add convergence test for startup summary vs live registry state
+- [ ] Update docs for startup activation semantics of local-root, git, and mvn manifest installs
