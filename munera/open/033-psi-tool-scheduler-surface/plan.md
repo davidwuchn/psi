@@ -51,8 +51,7 @@ Add to `dispatch_schema.clj` effect schemas.
 ### Slice 3: Idle delivery hook
 
 When the session transitions to `:idle` (`:on-agent-done`, `:on-abort`, `:on-compact-done`),
-drain the scheduler queue: for each queued schedule in FIFO order, dispatch
-`:scheduler/deliver`.
+check the scheduler queue and deliver at most the oldest queued schedule.
 
 The delivery dispatches `:session/prompt-submit` with provenance metadata on the
 user message so it flows through the normal prompt lifecycle.
@@ -90,13 +89,14 @@ Makes scheduled items discoverable through standard graph queries.
 
 ### Slice 6: Background-job integration
 
-Register each schedule as a background job on create:
+Project schedules into the existing background-job surface:
 - job-type: `:scheduled-prompt`
-- status mirrors schedule status
-- display: label + fire-at + status
+- status derives from schedule status
+- display derives from label + fire-at + status
 - cancel through background-job cancel routes to `:scheduler/cancel`
 
-Update background job on status transitions (fired → queued → delivered, or cancelled).
+Background-job visibility is derived from scheduler state rather than maintained
+as an independent source of truth.
 
 ### Slice 7: Tests
 
@@ -121,10 +121,11 @@ Update background job on status transitions (fired → queued → delivered, or 
 
 ## Decisions
 
-- Delivery goes through dispatch (`:scheduler/deliver` → effect that calls `prompt-in!`),
-  not direct `prompt-in!` from the handler. This avoids the namespace cycle risk and
-  keeps handlers pure.
+- Delivery goes through dispatch (`:scheduler/deliver` → effect that enters the
+  canonical prompt submission lifecycle), not a parallel prompt injection path.
+  This avoids the namespace cycle risk and keeps handlers pure.
 - One queued item delivered per idle transition. The delivered prompt triggers a cycle;
   the next idle transition delivers the next queued item. This is naturally self-pacing.
 - Timer thread handles stored in a runtime atom (not session state). Cleaned up on
   session close via a lifecycle hook.
+- Pending and queued schedules are cancelled when the owning session closes.

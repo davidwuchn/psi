@@ -1,4 +1,4 @@
-# 030 — Expose scheduler through psi-tool
+# 033 — Expose scheduler through psi-tool
 
 ## Goal
 
@@ -62,7 +62,9 @@ If the target session is not idle when the timer fires, the prompt injection
 is queued and delivered when the session returns to `:idle`. The scheduler
 promises delivery, not instant delivery. This avoids fighting the statechart
 or dropping scheduled work. Multiple queued items deliver in FIFO order by
-original fire time.
+original fire time. FIFO ordering applies within the queued scheduled set.
+On each transition to `:idle`, the oldest queued scheduled item is delivered,
+so queued delivery is self-paced by the normal prompt lifecycle.
 
 ### Message authorship and provenance
 
@@ -90,7 +92,8 @@ Relative is the common case. Absolute enables "at 10pm UTC" use cases.
 No timezone handling — absolute is always UTC.
 
 If an absolute instant is in the past, fire immediately — the intent is
-"no later than", and erroring is just friction.
+"no later than", and erroring is just friction. Past absolute instants are
+normalized to immediate delivery and are exempt from the minimum-delay bound.
 
 ### Delay bounds
 
@@ -114,8 +117,9 @@ UI, since scheduled items surface as background jobs.
 - `queued` — timer fired but session is busy, waiting for idle
 - `delivered` — prompt injected into session
 
-Cancel works on `pending` and `queued`. Once `delivered`, the schedule is
-complete and no longer cancellable.
+Cancel works on `pending` and `queued`. Once delivery has begun, the schedule
+is no longer cancellable. In practice, cancel is best-effort until the
+schedule transitions to `delivered` or delivery dispatch has been emitted.
 
 ### psi-tool surface
 
@@ -136,6 +140,21 @@ op: "cancel"   — cancel a schedule by id
 - Scheduled items survive in session state but NOT across process restarts
   (volatile scheduling is fine for v1)
 - Timer threads use the existing `daemon-thread-fn` infrastructure
+- Scheduler records are the canonical source of truth; background-job visibility
+  is a projection of scheduler state rather than an independent source of truth
+- Delivery must enter the canonical dispatch-owned prompt submission lifecycle,
+  not a parallel prompt injection path
+- Pending and queued schedules are cancelled when the owning session closes
+
+## Out of scope
+
+- Recurring schedules
+- Persistence across process restarts
+- Cross-session scheduling
+- Scheduled creation of new sessions
+- Scheduler-native tool invocation or workflow execution actions
+- Non-UTC absolute time parsing or timezone-local scheduling semantics
+- Guaranteed wall-clock precision beyond normal process and thread timing
 
 ## Future directions
 
@@ -151,8 +170,8 @@ op: "cancel"   — cancel a schedule by id
 - Agent can list pending/queued schedules via `psi-tool` (`op: "list"`)
 - Agent can cancel a pending/queued schedule via `psi-tool` (`op: "cancel"`)
 - Scheduled items are discoverable through EQL graph resolvers
-- Scheduled items appear as background jobs in the UI
-- Scheduled prompt fires after the specified delay
+- Scheduled items are projected into the existing background-job UI surface with status consistent with scheduler state
+- Scheduled prompt is not delivered before its fire time and is delivered once eligible, subject to busy-session queueing
 - Past absolute instants fire immediately
 - Prompt injection queues if session is busy, delivers FIFO when idle
 - Injected prompts appear as user-role messages with provenance metadata

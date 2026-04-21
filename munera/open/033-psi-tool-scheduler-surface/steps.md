@@ -40,11 +40,13 @@ Slice 5 — EQL resolvers:
 - [ ] Unit tests for resolvers
 
 Slice 6 — Background-job integration:
-- [ ] Register schedule as background job on create
-- [ ] Update background job status on schedule state transitions
+- [ ] Project schedules into the existing background-job surface
+- [ ] Ensure projected background-job status/display derives from scheduler state
 - [ ] Route background-job cancel to `:scheduler/cancel`
 - [ ] Clean up timer handles on session close
+- [ ] Cancel pending/queued schedules on session close
 - [ ] Integration test: schedule appears in background jobs widget
+- [ ] Integration test: session close cancels owned schedules and cleans up timer handles
 
 Slice 7 — End-to-end tests:
 - [ ] Full lifecycle: create → fire → deliver → agent responds → idle
