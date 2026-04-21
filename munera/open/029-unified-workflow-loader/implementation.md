@@ -267,6 +267,22 @@ Validation:
   - `extensions.workflow-loader-test`
 - result for this slice: `12 tests, 45 assertions, 0 failures`
 
+2026-04-20
+- Final corrective alignment slice landed: contract/doc/schema cleanup.
+
+What changed:
+- `delegate` tool schema now matches runtime behavior by treating omitted `action` as default `run` rather than falsely requiring `action`
+- tool/command/docs text now reflects actual semantics:
+  - `continue` pushes a stopped run forward with a new prompt
+  - `remove` deletes a run
+  - `/delegate-reload` retires removed definitions during reload
+- user-facing extension docs now match the converged workflow-loader surface
+
+Validation:
+- focused suites green:
+  - `extensions.workflow-loader-delegate-test`
+  - `extensions.workflow-loader-test`
+- result for this slice: `19 tests, 62 assertions, 0 failures`
+
 Remaining work:
-- corrective alignment slice recorded in `plan.md` and `steps.md`:
-  - contract/doc/schema cleanup
+- none for the corrective alignment plan recorded in `plan.md` and `steps.md`

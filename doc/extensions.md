@@ -94,10 +94,13 @@ single-step profiles and multi-step orchestrations.
 
 - Tool: `delegate`
   - actions: `run`, `list`, `continue`, `remove`
+  - omitted `action` defaults to `run`
+  - `continue` pushes a stopped run forward with a new prompt
+  - `remove` deletes a run (it does not cancel and retain it)
   - run options include `workflow`, `mode` (`sync|async`), `fork_session`, `timeout_ms`, `include_result_in_context`
 - Commands:
   - `/delegate <workflow> <prompt>`
-  - `/delegate-reload`
+  - `/delegate-reload` — reloads workflow definitions and retires removed definitions
 - Config:
   - `.psi/workflows/*.md`
 

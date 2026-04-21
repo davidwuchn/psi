@@ -117,9 +117,10 @@ Corrective follow-up after implementation review:
   - removed/renamed workflow files are now retired from canonical runtime state during reload
   - added canonical definition removal support plus workflow-loader reload diffing
   - focused tests now cover deletion and rename retirement cases
-- [ ] Reconcile public contract drift
-  - schema vs behavior for default `action`
-  - docs/help text/prompt contribution consistency
+- [x] Reconcile public contract drift
+  - tool schema no longer claims `action` is required while behavior defaults it to `run`
+  - docs/help text now reflect current continue/remove/reload semantics
+  - delegate contract wording now matches implemented behavior
 
 Remaining for full feature parity:
-- corrective alignment slice above
+- none

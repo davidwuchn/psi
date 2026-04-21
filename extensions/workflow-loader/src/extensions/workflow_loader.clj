@@ -477,7 +477,9 @@
             {:ok true :run-id run-id}))))))
 
 (defn- execute-delegate-tool
-  "Main delegate tool execution dispatcher."
+  "Main delegate tool execution dispatcher.
+
+   Defaults missing action to `run`."
   [args _opts]
   (let [action (or (some-> (:action args) str str/lower-case str/trim) "run")]
     (case action
@@ -608,11 +610,11 @@
   ((:register-tool api)
    {:name        "delegate"
     :label       "Delegate"
-    :description "Run, list, continue, or remove workflow-based delegations. Covers single-step agent profiles and multi-step orchestrations."
+    :description "Run, list, continue, or remove workflow-based delegations. `continue` pushes a stopped run forward with a new prompt; `remove` deletes a run. Covers single-step agent profiles and multi-step orchestrations."
     :parameters  {:type       "object"
                   :properties {"action"                   {:type "string"
                                                            :enum ["run" "list" "continue" "remove"]
-                                                           :description "Operation: run (default), list, continue, remove"}
+                                                           :description "Operation: run (default when omitted), list, continue, remove"}
                                "workflow"                 {:type "string"
                                                            :description "Workflow name to run (action=run)"}
                                "prompt"                   {:type "string"
@@ -627,17 +629,16 @@
                                "fork_session"             {:type "boolean"
                                                            :description "When true, child session starts from a fork of the parent conversation"}
                                "include_result_in_context" {:type "boolean"
-                                                            :description "When true, inject result into parent context"}
+                                                            :description "When true, inject result into the originating parent session context"}
                                "timeout_ms"               {:type "integer"
-                                                           :description "Sync mode timeout in milliseconds (default 300000)"}}
-                  :required   ["action"]}
+                                                           :description "Sync mode timeout in milliseconds (default 300000)"}}}
     :execute     (fn
                    ([args] (execute-delegate-tool args nil))
                    ([args opts] (execute-delegate-tool args opts)))})
 
   ;; Register /delegate command
   ((:register-command api) "delegate"
-                           {:description "Delegate to a workflow: /delegate <workflow> <prompt>"
+                           {:description "Delegate to a workflow: /delegate <workflow> <prompt> (defaults to action=run)"
                             :handler (fn [args]
                                        (let [{:keys [workflow prompt]} (parse-delegate-command args)]
                                          (cond
@@ -657,10 +658,12 @@
 
   ;; Register /delegate-reload command
   ((:register-command api) "delegate-reload"
-                           {:description "Reload workflow definitions from disk"
+                           {:description "Reload workflow definitions from disk and retire removed definitions"
                             :handler (fn [_args]
-                                       (let [{:keys [registered-count errors]} (reload-definitions!)]
+                                       (let [{:keys [registered-count retired-definition-ids errors]} (reload-definitions!)]
                                          (log! (str "Reloaded: " registered-count " workflows"
+                                                    (when (seq retired-definition-ids)
+                                                      (str ", retired " (count retired-definition-ids) " definition(s)"))
                                                     (when (seq errors)
                                                       (str ", " (count errors) " errors"))))))})
 
