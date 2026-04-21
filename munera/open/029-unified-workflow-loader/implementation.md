@@ -39,3 +39,52 @@ Key design decisions:
   - sync/async → invocation-time `mode` parameter; background-job handles async management
   - skill prelude → already partially landed in child-session creation; surfaces through `:skills` in EDN config
 - No blocking gaps identified — all current agent capabilities map cleanly to the delegate tool + canonical workflow execution
+
+2026-04-20
+- Implementation started — 5 slices landed:
+
+1. **Parser** (`workflow_file_parser.clj`) — 2 tests, 41 assertions
+   - YAML frontmatter extraction via existing `extract-frontmatter`
+   - EDN prefix detection (first non-whitespace `{` → read first form)
+   - Body text extraction after EDN form
+   - Error reporting for missing fields and invalid EDN
+
+2. **Compiler** (`workflow_file_compiler.clj`) — 6 tests, 44 assertions
+   - Single-step: 1-step canonical definition with capability-policy + workflow-file-meta
+   - Multi-step: N-step definition with step-chained input bindings
+   - Batch compilation with error separation
+   - Step reference validation and name collision detection
+
+3. **Loader** (`workflow_file_loader.clj`) — 3 tests, 18 assertions
+   - Directory scanning for *.md files
+   - Merge by name (later directories win)
+   - Batch parse → compile → validate pipeline
+   - Directory precedence: legacy global < preferred global < project
+
+4. **Extension** (`workflow_loader.clj`) — 4 tests, 20 assertions
+   - Discovers, parses, compiles, registers definitions on init
+   - `delegate` tool with action=run|list|continue|remove
+   - `/delegate` and `/delegate-reload` commands
+   - Prompt contribution
+   - Session lifecycle cleanup
+
+5. **Migration** — 12 workflow files + 3 validation tests, 27 assertions
+   - All 8 agent profiles migrated (tools: YAML → {:tools [...]} EDN)
+   - All 4 chain definitions migrated (agent-chain.edn → individual .md files)
+   - Skills references added where agents had implicit skill usage
+   - All files parse, compile, validate with resolved references
+
+Architecture decisions:
+- `workflow-file-meta` carries source context (system-prompt, tools, skills, etc.) through
+  compilation into the canonical definition — this metadata is available to the execution bridge
+  for child-session creation without needing to re-parse files
+- The compiler produces standard canonical workflow definitions that satisfy `workflow-definition-schema`
+- No compatibility bridge — the old format simply isn't loaded once `.psi/agents/` is retired
+
+Remaining work:
+- Async/sync mode execution wiring through canonical workflow runtime mutations
+- fork_session and include_result_in_context plumbing
+- Consolidated widget for active/recent runs
+- Extension registration in .psi/extensions.edn
+- Extension removal (agent + agent-chain)
+- AGENTS.md prompt contribution update
