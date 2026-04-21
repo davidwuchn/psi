@@ -114,7 +114,9 @@
                (apply-root-state-update! ctx result)
                (is (= ["sch-b"] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))
                (is (= "sch-a" (get-in result [:return :schedule-id])))
-               (is (= [:runtime/dispatch-event]
+               (is (= [:runtime/dispatch-event-with-effect-result
+                       :runtime/dispatch-event
+                       :runtime/dispatch-event-with-effect-result]
                       (mapv :effect/type (:effects result))))))
 
            (testing "idle transitions emit scheduler drain effects"

@@ -107,14 +107,24 @@
      (let [{state' :state drained? :drained? schedule :schedule}
            (scheduler/drain-one
             (scheduler-state-in ctx session-id)
-            (ss/get-session-data-in ctx session-id))]
+            (ss/get-session-data-in ctx session-id))
+           user-msg (when schedule (scheduled-user-message schedule))]
        (cond-> {:root-state-update (scheduler-update session-id (constantly state'))
                 :return {:drained? drained?
                          :schedule-id (:schedule-id schedule)}}
          drained?
-         (update :effects (fnil conj [])
-                 {:effect/type :runtime/dispatch-event
-                  :event-type :scheduler/deliver
-                  :event-data {:session-id session-id
-                               :schedule-id (:schedule-id schedule)}
-                  :origin :core}))))))
+         (update :effects into [{:effect/type :runtime/dispatch-event-with-effect-result
+                                 :event-type :session/prompt-submit
+                                 :event-data {:session-id session-id
+                                              :user-msg user-msg}
+                                 :origin :core}
+                                {:effect/type :runtime/dispatch-event
+                                 :event-type :session/prompt
+                                 :event-data {:session-id session-id}
+                                 :origin :core}
+                                {:effect/type :runtime/dispatch-event-with-effect-result
+                                 :event-type :session/prompt-prepare-request
+                                 :event-data {:session-id session-id
+                                              :turn-id (str (java.util.UUID/randomUUID))
+                                              :user-msg user-msg}
+                                 :origin :core}]))))))
