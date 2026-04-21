@@ -2,6 +2,7 @@
   "EQL mutation surface for the agent-session extension API.
    Aggregates the focused mutation namespaces."
   (:require
+   [psi.agent-session.mutations.canonical-workflows :as canonical-workflows]
    [psi.agent-session.mutations.extensions :as extensions]
    [psi.agent-session.mutations.prompts :as prompts]
    [psi.agent-session.mutations.services :as services]
@@ -19,4 +20,5 @@
                 extensions/all-mutations
                 services/all-mutations
                 ui/all-mutations
-                workflow-mutations/all-mutations)))
+                workflow-mutations/all-mutations
+                canonical-workflows/all-mutations)))
