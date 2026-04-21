@@ -14,13 +14,18 @@
   (:require
    [clojure.string :as str]
    [psi.agent-session.workflow-file-loader :as loader]
-   [psi.agent-session.workflow-runtime :as workflow-runtime]))
+   [psi.agent-session.workflow-runtime :as workflow-runtime])
+  (:import
+   [java.util.concurrent Future]))
 
 ;;; Extension state
 
 (def ^:private state (atom nil))
 
 (def ^:private prompt-contribution-id "workflow-loader-workflows")
+
+;; Track active async runs: {run-id {:future ... :session-id ... :workflow ...}}
+(def ^:private active-runs (atom {}))
 
 ;;; Helpers
 
@@ -38,6 +43,20 @@
   (when-let [qf (query-fn)]
     (:psi.agent-session/session-id
      (qf [:psi.agent-session/session-id]))))
+
+(defn- context-last-role
+  "Get the last user/assistant message role in the current session."
+  []
+  (when-let [qf (query-fn)]
+    (let [result (qf [{:psi.agent-session/session-entries
+                       [:psi.session-entry/kind
+                        :psi.session-entry/data]}])]
+      (->> (:psi.agent-session/session-entries result)
+           (map :psi.session-entry/data)
+           (remove :custom-type)
+           (map :role)
+           (filter #{"user" "assistant"})
+           last))))
 
 ;;; Definition loading and registration
 
@@ -81,6 +100,124 @@
     (register-prompt-contribution!)
     result))
 
+;;; Result injection
+
+(defn- inject-result-into-context!
+  "Inject workflow result text into the parent session context as user+assistant messages.
+   Maintains strict user/assistant alternation."
+  [run-id result-text]
+  (let [mutate-fn (:mutate-fn @state)
+        last-role (context-last-role)
+        user-content (str "Workflow run " run-id " result:")
+        asst-content (or result-text "")]
+    ;; Bridge if last role is user
+    (when (= "user" last-role)
+      (try
+        (mutate-fn 'psi.extension/append-message
+                   {:role "assistant" :content "(workflow context bridge)"})
+        (catch Exception _ nil)))
+    (try
+      (mutate-fn 'psi.extension/append-message
+                 {:role "user" :content user-content})
+      (catch Exception _ nil))
+    (try
+      (mutate-fn 'psi.extension/append-message
+                 {:role "assistant" :content asst-content})
+      (catch Exception _ nil))))
+
+;;; Async execution
+
+(defn- workflow-run-terminal?
+  "Check if a workflow run has reached terminal status."
+  [run-id]
+  (let [result (mutate! 'psi.workflow/list-runs {})
+        runs (:psi.workflow/runs result)]
+    (when-let [run (some #(when (= run-id (:run-id %)) %) runs)]
+      (contains? #{:completed :failed :cancelled} (:status run)))))
+
+(defn- workflow-run-result-text
+  "Extract result text from a completed workflow run."
+  [run-id]
+  (let [result (mutate! 'psi.workflow/list-runs {})
+        runs (:psi.workflow/runs result)]
+    (when-let [run (some #(when (= run-id (:run-id %)) %) runs)]
+      ;; The execute mutation returns result text, but for async we need to
+      ;; re-query — the result is captured by the execution mutation
+      (:result run))))
+
+(defn- on-async-completion!
+  "Handle async workflow completion — notify, inject results, clean up."
+  [run-id workflow-name include-result? exec-result]
+  (let [status (:psi.workflow/status exec-result)
+        result-text (:psi.workflow/result exec-result)
+        ok? (= :completed status)]
+    ;; Inject result into parent context if requested
+    (when (and include-result? result-text)
+      (inject-result-into-context! run-id result-text))
+    ;; Notify completion
+    (notify! (str "Workflow '" workflow-name "' " (name (or status :unknown))
+                  " (run " run-id ")")
+             (if ok? :info :warn))
+    ;; Emit result entry
+    (when-let [mutate-fn (:mutate-fn @state)]
+      (let [heading (str "Workflow '" workflow-name "' — " (name (or status :unknown))
+                         " (run " run-id ")")
+            content (if (and result-text (not include-result?))
+                      (str heading "\n\nResult:\n"
+                           (if (> (count result-text) 8000)
+                             (str (subs result-text 0 8000) "\n\n... [truncated]")
+                             result-text))
+                      heading)]
+        (when-not include-result?
+          (try
+            (mutate-fn 'psi.extension/append-entry
+                       {:custom-type "delegate-result"
+                        :data content})
+            (catch Exception _ nil)))))
+    ;; Clean up tracking
+    (swap! active-runs dissoc run-id)))
+
+(defn- execute-async!
+  "Launch workflow execution asynchronously on a separate thread.
+   Returns immediately with the run-id."
+  [run-id session-id workflow-name include-result?]
+  (let [fut (future
+              (try
+                (let [exec-result (mutate! 'psi.workflow/execute-run
+                                           {:run-id run-id
+                                            :session-id session-id})]
+                  (on-async-completion! run-id workflow-name include-result? exec-result)
+                  exec-result)
+                (catch Exception e
+                  (notify! (str "Workflow '" workflow-name "' failed: " (ex-message e)) :error)
+                  (swap! active-runs dissoc run-id)
+                  {:psi.workflow/error (ex-message e)})))]
+    (swap! active-runs assoc run-id
+           {:future fut
+            :session-id session-id
+            :workflow workflow-name
+            :started-at (System/currentTimeMillis)})
+    run-id))
+
+;;; Sync execution
+
+(defn- await-run-completion
+  "Block until a workflow run completes or timeout is reached.
+   Returns the execution result."
+  [run-id timeout-ms]
+  (let [^Future fut (get-in @active-runs [run-id :future])]
+    (if fut
+      (try
+        (.get fut timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
+        (catch java.util.concurrent.TimeoutException _
+          {:psi.workflow/status :timeout
+           :psi.workflow/error (str "Timed out after " timeout-ms "ms")})
+        (catch Exception e
+          {:psi.workflow/status :failed
+           :psi.workflow/error (ex-message e)}))
+      ;; No future — must have been executed synchronously already
+      {:psi.workflow/error "Run not found in active tracking"})))
+
 ;;; Delegate tool implementation
 
 (defn- parse-mode [mode-str]
@@ -106,14 +243,17 @@
   "Return human-readable list of active/recent workflow runs."
   []
   (let [result (mutate! 'psi.workflow/list-runs {})
-        runs (:psi.workflow/runs result)]
-    (if (empty? runs)
+        runs (:psi.workflow/runs result)
+        tracked @active-runs]
+    (if (and (empty? runs) (empty? tracked))
       "No active runs."
-      (str/join "\n"
-                (for [{:keys [run-id status source-definition-id]} runs]
-                  (str "  " run-id " — " (name status)
-                       (when source-definition-id
-                         (str " (" source-definition-id ")"))))))))
+      (let [canonical (for [{:keys [run-id status source-definition-id]} runs]
+                        (let [async? (contains? tracked run-id)]
+                          (str "  " run-id " — " (name status)
+                               (when source-definition-id
+                                 (str " (" source-definition-id ")"))
+                               (when async? " [async]"))))]
+        (str/join "\n" canonical)))))
 
 (defn- delegate-list
   "Handle action=list: list available workflows and active runs."
@@ -122,11 +262,15 @@
        "\n\nActive runs:\n" (active-runs-text)))
 
 (defn- delegate-run
-  "Handle action=run: resolve workflow, create + execute canonical workflow run."
+  "Handle action=run: resolve workflow, create + execute canonical workflow run.
+   Supports async (default) and sync modes, fork_session, and include_result_in_context."
   [{:keys [workflow prompt name mode fork_session include_result_in_context timeout_ms]}]
   (let [workflow-name (some-> workflow str str/trim not-empty)
         prompt-text   (some-> prompt str str/trim not-empty)
-        mode*         (parse-mode mode)]
+        mode*         (parse-mode mode)
+        fork?         (true? fork_session)
+        include?      (true? include_result_in_context)
+        timeout       (or (when (number? timeout_ms) (long timeout_ms)) 300000)]
     (cond
       (nil? workflow-name)
       {:error "workflow is required"}
@@ -143,8 +287,9 @@
       :else
       (let [run-name    (or name (str workflow-name "-" (System/currentTimeMillis)))
             session-id  (current-session-id)
-            workflow-input {:input prompt-text
-                            :original prompt-text}
+            workflow-input (cond-> {:input prompt-text
+                                    :original prompt-text}
+                             fork? (assoc :fork-session true))
             ;; Create the canonical workflow run
             create-result (mutate! 'psi.workflow/create-run
                                    {:definition-id workflow-name
@@ -154,23 +299,46 @@
         (if-not run-id
           {:error (or (:psi.workflow/error create-result)
                       "Failed to create workflow run")}
-          ;; Execute
-          (let [exec-result (mutate! 'psi.workflow/execute-run
-                                     {:run-id run-id
-                                      :session-id session-id})]
-            (if (:psi.workflow/error exec-result)
-              {:error (:psi.workflow/error exec-result)
-               :run-id run-id}
+          ;; Execute based on mode
+          (case mode*
+            :async
+            (do
+              (execute-async! run-id session-id workflow-name include?)
               {:ok true
                :run-id run-id
-               :status (:psi.workflow/status exec-result)
-               :result (:psi.workflow/result exec-result)})))))))
+               :mode :async
+               :status :running})
+
+            :sync
+            (do
+              ;; Launch async then await completion
+              (execute-async! run-id session-id workflow-name include?)
+              (let [exec-result (await-run-completion run-id timeout)]
+                (cond
+                  (= :timeout (:psi.workflow/status exec-result))
+                  {:error (str "Timed out waiting for workflow '" workflow-name "' after " timeout "ms")
+                   :run-id run-id
+                   :mode :sync}
+
+                  (:psi.workflow/error exec-result)
+                  {:error (:psi.workflow/error exec-result)
+                   :run-id run-id
+                   :mode :sync}
+
+                  :else
+                  {:ok true
+                   :run-id run-id
+                   :mode :sync
+                   :status (:psi.workflow/status exec-result)
+                   :result (:psi.workflow/result exec-result)})))))))))
 
 (defn- delegate-continue
-  "Handle action=continue: resume a stopped/blocked run with new prompt."
+  "Handle action=continue: resume a stopped/blocked run with new prompt.
+   Resumes asynchronously and optionally injects result into context."
   [{:keys [id prompt include_result_in_context]}]
   (let [run-id (some-> id str str/trim not-empty)
-        prompt-text (some-> prompt str str/trim not-empty)]
+        prompt-text (some-> prompt str str/trim not-empty)
+        include? (true? include_result_in_context)]
     (cond
       (nil? run-id)
       {:error "id is required for continue"}
@@ -179,14 +347,28 @@
       {:error "prompt is required for continue"}
 
       :else
-      (let [result (mutate! 'psi.workflow/resume-run
-                            {:run-id run-id
-                             :session-id (current-session-id)})]
-        (if (:psi.workflow/error result)
-          {:error (:psi.workflow/error result)}
-          {:ok true
-           :run-id run-id
-           :status (:psi.workflow/status result)})))))
+      (let [session-id (current-session-id)
+            ;; Resume asynchronously
+            fut (future
+                  (try
+                    (let [result (mutate! 'psi.workflow/resume-run
+                                          {:run-id run-id
+                                           :session-id session-id})]
+                      (when-not (:psi.workflow/error result)
+                        (on-async-completion! run-id (str "resume-" run-id) include? result))
+                      result)
+                    (catch Exception e
+                      (notify! (str "Resume of run '" run-id "' failed: " (ex-message e)) :error)
+                      (swap! active-runs dissoc run-id)
+                      {:psi.workflow/error (ex-message e)})))]
+        (swap! active-runs assoc run-id
+               {:future fut
+                :session-id session-id
+                :workflow (str "resume-" run-id)
+                :started-at (System/currentTimeMillis)})
+        {:ok true
+         :run-id run-id
+         :status :resuming}))))
 
 (defn- delegate-remove
   "Handle action=remove: remove a run by id."
@@ -208,13 +390,24 @@
       "run"      (let [result (delegate-run args)]
                    (if (:error result)
                      (str "Error: " (:error result))
-                     (str "Workflow run " (:run-id result) " — status: " (name (:status result))
-                          (when (:result result)
-                            (str "\n\n" (:result result))))))
+                     (case (:mode result)
+                       :async
+                       (str "Workflow run " (:run-id result) " started asynchronously. "
+                            "Use action=list to check progress.")
+
+                       :sync
+                       (str "Workflow run " (:run-id result) " — " (name (:status result))
+                            (when (:result result)
+                              (str "\n\n" (:result result))))
+
+                       ;; fallback
+                       (str "Workflow run " (:run-id result) " — " (name (or (:status result) :unknown))
+                            (when (:result result)
+                              (str "\n\n" (:result result)))))))
       "continue" (let [result (delegate-continue args)]
                    (if (:error result)
                      (str "Error: " (:error result))
-                     (str "Resumed run " (:run-id result) " — status: " (name (:status result)))))
+                     (str "Resuming run " (:run-id result) " asynchronously.")))
       "remove"   (let [result (delegate-remove args)]
                    (if (:error result)
                      (str "Error: " (:error result))

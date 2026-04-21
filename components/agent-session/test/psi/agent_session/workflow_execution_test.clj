@@ -18,37 +18,169 @@
    :name "Plan Build"
    :step-order ["step-1-planner" "step-2-builder"]
    :steps {"step-1-planner" {:executor {:type :agent :profile "planner" :mode :sync}
-                              :prompt-template "$INPUT"
-                              :input-bindings {:input {:source :workflow-input :path [:input]}
-                                               :original {:source :workflow-input :path [:original]}}
-                              :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
-                              :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}}
+                             :prompt-template "$INPUT"
+                             :input-bindings {:input {:source :workflow-input :path [:input]}
+                                              :original {:source :workflow-input :path [:original]}}
+                             :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                             :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}}
            "step-2-builder" {:executor {:type :agent :profile "builder" :mode :sync}
-                              :prompt-template "Execute this plan:\n\n$INPUT\n\nOriginal request: $ORIGINAL"
-                              :input-bindings {:input {:source :step-output :path ["step-1-planner" :outputs :text]}
-                                               :original {:source :workflow-input :path [:original]}}
-                              :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
-                              :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}}}})
+                             :prompt-template "Execute this plan:\n\n$INPUT\n\nOriginal request: $ORIGINAL"
+                             :input-bindings {:input {:source :step-output :path ["step-1-planner" :outputs :text]}
+                                              :original {:source :workflow-input :path [:original]}}
+                             :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                             :retry-policy {:max-attempts 1 :retry-on #{:execution-failed :validation-failed}}}}})
 
 (def blocked-definition
   {:definition-id "blocked-review"
    :name "Blocked Review"
    :step-order ["step-1-review"]
    :steps {"step-1-review" {:executor {:type :agent :profile "reviewer" :mode :sync}
-                             :prompt-template "$INPUT"
-                             :input-bindings {:input {:source :workflow-input :path [:input]}}
-                             :result-schema :any
-                             :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}})
+                            :prompt-template "$INPUT"
+                            :input-bindings {:input {:source :workflow-input :path [:input]}}
+                            :result-schema :any
+                            :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}})
 
 (def retry-definition
   {:definition-id "retry-build"
    :name "Retry Build"
    :step-order ["step-1-builder"]
    :steps {"step-1-builder" {:executor {:type :agent :profile "builder" :mode :sync}
-                              :prompt-template "$INPUT"
-                              :input-bindings {:input {:source :workflow-input :path [:input]}}
-                              :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
-                              :retry-policy {:max-attempts 2 :retry-on #{:execution-failed}}}}})
+                             :prompt-template "$INPUT"
+                             :input-bindings {:input {:source :workflow-input :path [:input]}}
+                             :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                             :retry-policy {:max-attempts 2 :retry-on #{:execution-failed}}}}})
+
+(def single-step-definition-with-meta
+  {:definition-id "planner"
+   :name "planner"
+   :step-order ["step-1"]
+   :steps {"step-1" {:executor {:type :agent :profile "planner"}
+                     :prompt-template "$INPUT"
+                     :input-bindings {:input {:source :workflow-input :path [:input]}
+                                      :original {:source :workflow-input :path [:original]}}
+                     :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                     :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}
+                     :capability-policy {:tools #{"read" "bash"}}}}
+   :workflow-file-meta {:system-prompt "You are a planner."
+                        :tools ["read" "bash"]
+                        :skills ["clojure-coding-standards"]
+                        :thinking-level :medium}})
+
+(def builder-definition-with-meta
+  {:definition-id "builder"
+   :name "builder"
+   :step-order ["step-1"]
+   :steps {"step-1" {:executor {:type :agent :profile "builder"}
+                     :prompt-template "$INPUT"
+                     :input-bindings {:input {:source :workflow-input :path [:input]}}
+                     :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                     :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}
+                     :capability-policy {:tools #{"read" "bash" "edit" "write"}}}}
+   :workflow-file-meta {:system-prompt "You are a builder."
+                        :tools ["read" "bash" "edit" "write"]
+                        :thinking-level :off}})
+
+(def multi-step-definition-with-meta
+  {:definition-id "plan-build"
+   :name "plan-build"
+   :step-order ["step-1-planner" "step-2-builder"]
+   :steps {"step-1-planner" {:executor {:type :agent :profile "planner"}
+                             :prompt-template "$INPUT"
+                             :input-bindings {:input {:source :workflow-input :path [:input]}
+                                              :original {:source :workflow-input :path [:original]}}
+                             :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                             :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}
+           "step-2-builder" {:executor {:type :agent :profile "builder"}
+                             :prompt-template "Execute: $INPUT"
+                             :input-bindings {:input {:source :step-output :path ["step-1-planner" :outputs :text]}
+                                              :original {:source :workflow-input :path [:original]}}
+                             :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                             :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}
+   :workflow-file-meta {:framing-prompt "Coordinate a plan-build cycle."}})
+
+(deftest resolve-step-session-config-single-step-test
+  (testing "single-step workflow pulls config from its own workflow-file-meta"
+    (let [[ctx _] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state single-step-definition-with-meta)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "planner"
+                                                                   :run-id "run-1"
+                                                                   :workflow-input {:input "plan it"}})]
+                       s)))
+          workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")
+          config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1")]
+      (is (= "You are a planner." (:system-prompt config)))
+      (is (= ["read" "bash"] (:tool-defs config)))
+      (is (= :medium (:thinking-level config)))
+      (is (= ["clojure-coding-standards"] (:skills config))))))
+
+(deftest resolve-step-session-config-multi-step-test
+  (testing "multi-step workflow looks up referenced workflow definitions for each step"
+    (let [[ctx _] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state single-step-definition-with-meta)
+                           [s _ _] (workflow-runtime/register-definition s builder-definition-with-meta)
+                           [s _ _] (workflow-runtime/register-definition s multi-step-definition-with-meta)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "plan-build"
+                                                                   :run-id "run-2"
+                                                                   :workflow-input {:input "build it"
+                                                                                    :original "build this"}})]
+                       s)))
+          workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-2")
+
+          ;; Step 1 references "planner" → should get planner's meta
+          config1 (workflow-execution/resolve-step-session-config ctx workflow-run "step-1-planner")
+          ;; Step 2 references "builder" → should get builder's meta
+          config2 (workflow-execution/resolve-step-session-config ctx workflow-run "step-2-builder")]
+
+      ;; Step 1: planner config
+      (is (= "You are a planner." (:system-prompt config1)))
+      (is (= ["read" "bash"] (:tool-defs config1)))
+      (is (= :medium (:thinking-level config1)))
+      (is (= ["clojure-coding-standards"] (:skills config1)))
+
+      ;; Step 2: builder config
+      (is (= "You are a builder." (:system-prompt config2)))
+      (is (= ["read" "bash" "edit" "write"] (:tool-defs config2)))
+      (is (= :off (:thinking-level config2)))
+      (is (nil? (:skills config2))))))
+
+(deftest resolve-step-session-config-multi-step-framing-fallback-test
+  (testing "when referenced workflow has no system-prompt, framing-prompt from multi-step is used"
+    (let [[ctx _] (create-session-context {:persist? false})
+          ;; reviewer def with no system-prompt in meta
+          reviewer-def {:definition-id "reviewer"
+                        :name "reviewer"
+                        :step-order ["step-1"]
+                        :steps {"step-1" {:executor {:type :agent :profile "reviewer"}
+                                          :prompt-template "$INPUT"
+                                          :input-bindings {:input {:source :workflow-input :path [:input]}}
+                                          :result-schema :any
+                                          :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}
+                        :workflow-file-meta {}}
+          chain-def {:definition-id "review-chain"
+                     :name "review-chain"
+                     :step-order ["step-1-reviewer"]
+                     :steps {"step-1-reviewer" {:executor {:type :agent :profile "reviewer"}
+                                                :prompt-template "$INPUT"
+                                                :input-bindings {:input {:source :workflow-input :path [:input]}}
+                                                :result-schema :any
+                                                :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}
+                     :workflow-file-meta {:framing-prompt "Review carefully."}}
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state reviewer-def)
+                           [s _ _] (workflow-runtime/register-definition s chain-def)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "review-chain"
+                                                                   :run-id "run-3"
+                                                                   :workflow-input {:input "review this"}})]
+                       s)))
+          workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-3")
+          config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1-reviewer")]
+      ;; Falls back to framing-prompt from the chain definition
+      (is (= "Review carefully." (:system-prompt config))))))
 
 (deftest materialize-step-inputs-and-prompt-test
   (let [[state1 _ _] (workflow-runtime/register-definition {:workflows {:definitions {} :runs {} :run-order []}} definition)
@@ -74,9 +206,9 @@
                    (fn [state]
                      (let [[state1 _ _] (workflow-runtime/register-definition state definition)
                            [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "plan-build"
-                                                                            :run-id "run-1"
-                                                                            :workflow-input {:input "ship it"
-                                                                                             :original "build this feature"}})]
+                                                                             :run-id "run-1"
+                                                                             :workflow-input {:input "ship it"
+                                                                                              :original "build this feature"}})]
                        state2)))
           prompted* (atom [])]
       (with-redefs [psi.agent-session.prompt-control/prompt-in! (fn [_ctx child-session-id prompt]
@@ -102,9 +234,9 @@
                    (fn [state]
                      (let [[state1 _ _] (workflow-runtime/register-definition state definition)
                            [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "plan-build"
-                                                                            :run-id "run-1"
-                                                                            :workflow-input {:input "ship it"
-                                                                                             :original "build this feature"}})]
+                                                                             :run-id "run-1"
+                                                                             :workflow-input {:input "ship it"
+                                                                                              :original "build this feature"}})]
                        state2)))
           prompts*   (atom [])
           responses* (atom ["planner output" "builder output"])]
@@ -134,8 +266,8 @@
                    (fn [state]
                      (let [[state1 _ _] (workflow-runtime/register-definition state blocked-definition)
                            [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "blocked-review"
-                                                                            :run-id "run-b1"
-                                                                            :workflow-input {:input "need approval"}})]
+                                                                             :run-id "run-b1"
+                                                                             :workflow-input {:input "need approval"}})]
                        state2)))]
       (with-redefs [psi.agent-session.workflow-execution/execute-current-step! (fn [_ctx _sid _run-id]
                                                                                  (swap! (:state* ctx)
@@ -169,8 +301,8 @@
                    (fn [state]
                      (let [[state1 _ _] (workflow-runtime/register-definition state retry-definition)
                            [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "retry-build"
-                                                                            :run-id "run-r1"
-                                                                            :workflow-input {:input "retry me"}})]
+                                                                             :run-id "run-r1"
+                                                                             :workflow-input {:input "retry me"}})]
                        (-> state2
                            (assoc-in [:workflows :runs "run-r1" :step-runs "step-1-builder" :attempts]
                                      [{:attempt-id "a1"
@@ -227,8 +359,8 @@
                    (fn [state]
                      (let [[state1 _ _] (workflow-runtime/register-definition state blocked-definition)
                            [state2 _ _] (workflow-runtime/create-run state1 {:definition-id "blocked-review"
-                                                                            :run-id "run-resume"
-                                                                            :workflow-input {:input "need approval"}})]
+                                                                             :run-id "run-resume"
+                                                                             :workflow-input {:input "need approval"}})]
                        (-> state2
                            (assoc-in [:workflows :runs "run-resume" :status] :blocked)
                            (assoc-in [:workflows :runs "run-resume" :blocked] {:question "approve?"})

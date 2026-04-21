@@ -5,6 +5,7 @@
    session execution for workflow attempts. It now provides:
    - materialize step inputs from canonical bindings
    - render legacy-compatible prompt templates
+   - resolve step session config from workflow-file-meta
    - create one attempt child session for the current step
    - prompt that session
    - record a canonical structured result envelope back onto the workflow run
@@ -80,6 +81,34 @@
         (:content assistant-message))
       ""))
 
+(defn resolve-step-session-config
+  "Resolve child session configuration for a workflow step.
+
+   For single-step workflows, uses the run's own :workflow-file-meta.
+   For multi-step workflows, looks up the referenced workflow's definition
+   from registered definitions to get that step's :workflow-file-meta.
+
+   Returns a map with :system-prompt, :tool-defs, :thinking-level, :skills."
+  [ctx workflow-run step-id]
+  (let [step-def  (get-in workflow-run [:effective-definition :steps step-id])
+        profile   (get-in step-def [:executor :profile])
+        ;; For single-step, use the run's own meta; for multi-step, look up the
+        ;; referenced workflow's definition
+        run-meta  (get-in workflow-run [:effective-definition :workflow-file-meta])
+        step-meta (if (and profile
+                           (> (count (get-in workflow-run [:effective-definition :step-order])) 1))
+                    ;; Multi-step: look up the referenced workflow definition
+                    (let [ref-def (get-in @(:state* ctx)
+                                          [:workflows :definitions profile])]
+                      (or (:workflow-file-meta ref-def) {}))
+                    ;; Single-step: use the run's own workflow-file-meta
+                    (or run-meta {}))]
+    {:system-prompt  (or (:system-prompt step-meta)
+                         (:framing-prompt run-meta))
+     :tool-defs      (or (:tools step-meta) [])
+     :thinking-level (or (:thinking-level step-meta) :off)
+     :skills         (:skills step-meta)}))
+
 (defn execute-current-step!
   "Execute the current workflow step as one bounded child-session attempt.
 
@@ -93,15 +122,18 @@
   (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)
         step-id      (:current-step-id workflow-run)
         {:keys [prompt]} (step-prompt workflow-run step-id)
+        step-config  (resolve-step-session-config ctx workflow-run step-id)
         {:keys [attempt execution-session]}
         (workflow-attempts/create-step-attempt-session!
          ctx
          parent-session-id
-         {:workflow-run-id run-id
-          :workflow-step-id step-id
-          :session-name (str "workflow " step-id " attempt")
-          :tool-defs []
-          :thinking-level :off})]
+         (cond-> {:workflow-run-id run-id
+                  :workflow-step-id step-id
+                  :session-name (str "workflow " step-id " attempt")
+                  :tool-defs (:tool-defs step-config)
+                  :thinking-level (:thinking-level step-config)}
+           (:system-prompt step-config)
+           (assoc :system-prompt (:system-prompt step-config))))]
     (swap! (:state* ctx)
            (fn [state]
              (-> state
