@@ -1,0 +1,3 @@
+- [ ] Resolve design open questions
+- [ ] Plan implementation approach
+- [ ] Implement
