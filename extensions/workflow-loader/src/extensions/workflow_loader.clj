@@ -34,6 +34,11 @@
     (:psi.agent-session/worktree-path
      (qf [:psi.agent-session/worktree-path]))))
 
+(defn- current-session-id []
+  (when-let [qf (query-fn)]
+    (:psi.agent-session/session-id
+     (qf [:psi.agent-session/session-id]))))
+
 ;;; Definition loading and registration
 
 (defn- register-definitions!
@@ -97,10 +102,24 @@
                          (when (> step-count 1)
                            (str " (" step-count " steps)")))))))))
 
+(defn- active-runs-text
+  "Return human-readable list of active/recent workflow runs."
+  []
+  (let [result (mutate! 'psi.workflow/list-runs {})
+        runs (:psi.workflow/runs result)]
+    (if (empty? runs)
+      "No active runs."
+      (str/join "\n"
+                (for [{:keys [run-id status source-definition-id]} runs]
+                  (str "  " run-id " — " (name status)
+                       (when source-definition-id
+                         (str " (" source-definition-id ")"))))))))
+
 (defn- delegate-list
   "Handle action=list: list available workflows and active runs."
   []
-  (str "Available workflows:\n" (available-workflows-text)))
+  (str "Available workflows:\n" (available-workflows-text)
+       "\n\nActive runs:\n" (active-runs-text)))
 
 (defn- delegate-run
   "Handle action=run: resolve workflow, create + execute canonical workflow run."
@@ -123,14 +142,14 @@
 
       :else
       (let [run-name    (or name (str workflow-name "-" (System/currentTimeMillis)))
+            session-id  (current-session-id)
             workflow-input {:input prompt-text
                             :original prompt-text}
             ;; Create the canonical workflow run
             create-result (mutate! 'psi.workflow/create-run
                                    {:definition-id workflow-name
                                     :workflow-input workflow-input
-                                    :run-id run-name
-                                    :track-background-job? (= :async mode*)})
+                                    :run-id run-name})
             run-id (:psi.workflow/run-id create-result)]
         (if-not run-id
           {:error (or (:psi.workflow/error create-result)
@@ -138,10 +157,7 @@
           ;; Execute
           (let [exec-result (mutate! 'psi.workflow/execute-run
                                      {:run-id run-id
-                                      :include-result-in-context? (true? include_result_in_context)
-                                      :fork-session? (true? fork_session)
-                                      :timeout-ms (or timeout_ms 300000)
-                                      :mode mode*})]
+                                      :session-id session-id})]
             (if (:psi.workflow/error exec-result)
               {:error (:psi.workflow/error exec-result)
                :run-id run-id}
@@ -165,8 +181,7 @@
       :else
       (let [result (mutate! 'psi.workflow/resume-run
                             {:run-id run-id
-                             :prompt prompt-text
-                             :include-result-in-context? (true? include_result_in_context)})]
+                             :session-id (current-session-id)})]
         (if (:psi.workflow/error result)
           {:error (:psi.workflow/error result)}
           {:ok true
