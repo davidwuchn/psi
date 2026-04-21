@@ -146,6 +146,35 @@
       (is (= :pending-cancel (get-in f3 [:data :job :status])))
       (is (= "pending-cancel" (get-in f3 [:data :job :summary :status-label]))))))
 
+(deftest rpc-cancel-background-job-routes-scheduled-prompts-to-scheduler-test
+  (testing "cancel_background_job accepts scheduler-backed ids"
+    (let [[ctx session-id] (support/create-session-context)
+          _ (dispatch/dispatch! ctx :scheduler/create
+                                {:session-id session-id
+                                 :schedule-id "sch-rpc-1"
+                                 :label "rpc-cancel"
+                                 :message "cancel over rpc"
+                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :delay-ms 1000}
+                                {:origin :core})
+          state   (atom {:transport {:ready? true :pending {}}})
+          handler (support/make-handler ctx state)
+          {:keys [out-lines]}
+          (support/run-loop "{:id \"sched-cancel\" :kind :request :op \"cancel_background_job\" :params {:job-id \"schedule/sch-rpc-1\"}}\n"
+                            handler
+                            state)
+          [frame] (support/parse-frames out-lines)
+          result  (session/query-in ctx session-id
+                                    [{:psi.scheduler/schedules
+                                      [:psi.scheduler/schedule-id
+                                       :psi.scheduler/status]}])
+          schedule (first (:psi.scheduler/schedules result))]
+      (is (= :response (:kind frame)))
+      (is (= "cancel_background_job" (:op frame)))
+      (is (true? (get-in frame [:data :accepted])))
+      (is (= :cancelled (:psi.scheduler/status schedule))))))
+
 (deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
   (testing "subscribe ui/widgets-updated emits current widget projection immediately"
     (let [[ctx _] (support/create-session-context)

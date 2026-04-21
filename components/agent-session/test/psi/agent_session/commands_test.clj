@@ -232,6 +232,28 @@
       (is (= :text (:type cancel-usage)))
       (is (= "Usage: /cancel-job <job-id>" (:message cancel-usage))))))
 
+(deftest dispatch-scheduled-background-job-cancel-command-test
+  (let [[ctx session-id] (make-test-ctx)
+        _ (dispatch/dispatch! ctx :scheduler/create
+                              {:session-id session-id
+                               :schedule-id "sch-cancel-1"
+                               :label "cancel-me"
+                               :message "cancel me later"
+                               :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
+                               :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                               :delay-ms 1000}
+                              {:origin :core})
+        cancel-result (commands/dispatch-in ctx session-id "/cancel-job schedule/sch-cancel-1" cmd-opts)
+        result (session/query-in ctx session-id
+                                 [{:psi.scheduler/schedules
+                                   [:psi.scheduler/schedule-id
+                                    :psi.scheduler/status]}])
+        schedule (first (:psi.scheduler/schedules result))]
+    (is (= :text (:type cancel-result)))
+    (is (str/includes? (:message cancel-result) "Cancellation requested"))
+    (is (= "sch-cancel-1" (:psi.scheduler/schedule-id schedule)))
+    (is (= :cancelled (:psi.scheduler/status schedule)))))
+
 (deftest dispatch-model-no-arg-test
   (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/model" cmd-opts)]
