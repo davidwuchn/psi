@@ -14,11 +14,11 @@
   (:require
    [clojure.set :as set]
    [clojure.string :as str]
+   [extensions.workflow-loader.delivery :as delivery]
+   [extensions.workflow-loader.orchestration :as orchestration]
+   [extensions.workflow-loader.text :as text]
    [psi.agent-session.workflow-file-loader :as loader]
-   [psi.agent-session.workflow-runtime :as workflow-runtime])
-  (:import
-   (java.util UUID)
-   (java.util.concurrent Future)))
+   [psi.agent-session.workflow-runtime :as workflow-runtime]))
 
 ;;; Extension state
 
@@ -49,64 +49,14 @@
 (defn- query-session-fn [] (:query-session-fn @state))
 (defn- mutate-session-fn [] (:mutate-session-fn @state))
 
-(def ^:private workflow-loader-ext-path
-  "extensions/workflow-loader")
-
-(defn- background-job-tool-call-id
-  [run-id]
-  (str "delegate/" run-id))
-
 (defn- start-background-job!
   [session-id run-id workflow-name]
-  (let [job-id (str "job-" (UUID/randomUUID))
-        result (mutate! 'psi.extension/start-background-job
-                        {:session-id session-id
-                         :tool-call-id (background-job-tool-call-id run-id)
-                         :tool-name "delegate"
-                         :job-id job-id
-                         :job-kind :workflow
-                         :workflow-ext-path workflow-loader-ext-path
-                         :workflow-id run-id})]
-    {:job-id (:psi.background-job/job-id result)
-     :status (:psi.background-job/status result)}))
+  (orchestration/start-background-job! mutate! session-id run-id workflow-name))
 
 (defn- mark-background-job-terminal!
   [job-id status payload]
-  (let [outcome (case status
-                  :completed :completed
-                  :cancelled :cancelled
-                  :timeout :timed-out
-                  :timed-out :timed-out
-                  :failed :failed
-                  :failed)]
-    (mutate! 'psi.extension/mark-background-job-terminal
-             {:job-id job-id
-              :outcome outcome
-              :payload payload})))
+  (orchestration/mark-background-job-terminal! mutate! job-id status payload))
 
-(defn- session-last-role
-  "Get the last user/assistant message role for an explicit session id.
-   Falls back to ambient query when explicit session-targeting APIs are absent."
-  [session-id]
-  (let [query-result (cond
-                       (and session-id (query-session-fn))
-                       ((query-session-fn) session-id
-                        [{:psi.agent-session/session-entries
-                          [:psi.session-entry/kind
-                           :psi.session-entry/data]}])
-
-                       (query-fn)
-                       ((query-fn) [{:psi.agent-session/session-entries
-                                     [:psi.session-entry/kind
-                                      :psi.session-entry/data]}])
-
-                       :else nil)]
-    (->> (:psi.agent-session/session-entries query-result)
-         (map :psi.session-entry/data)
-         (remove :custom-type)
-         (map :role)
-         (filter #{"user" "assistant"})
-         last)))
 
 ;;; Definition loading and registration
 
@@ -141,13 +91,7 @@
 (defn- build-prompt-contribution
   "Build the prompt contribution text listing available workflows."
   []
-  (let [definitions (:loaded-definitions @state)]
-    (if (empty? definitions)
-      "tool: delegate\nNo workflows available."
-      (str "tool: delegate\navailable workflows:\n"
-           (str/join "\n"
-                     (for [[name defn-map] (sort-by key definitions)]
-                       (str "- " name ": " (or (:summary defn-map) (:description defn-map) ""))))))))
+  (text/build-prompt-contribution (:loaded-definitions @state)))
 
 (defn- register-prompt-contribution! []
   (when-let [register-fn (:register-prompt-contribution @state)]
@@ -166,205 +110,60 @@
 
 ;;; Result injection
 
-(defn- append-message-in-session!
-  [session-id role content]
-  (try
-    (cond
-      (and session-id (mutate-session-fn))
-      ((mutate-session-fn) session-id 'psi.extension/append-message
-       {:role role :content content})
-
-      (:mutate-fn @state)
-      ((:mutate-fn @state) 'psi.extension/append-message
-       {:role role :content content})
-
-      :else nil)
-    (catch Exception _ nil)))
-
 (defn- inject-result-into-context!
-  "Inject workflow result text into the parent session context as user+assistant messages.
-   Maintains strict user/assistant alternation and explicitly targets the
-   originating parent session when session-targeting APIs are available."
   [parent-session-id run-id result-text]
-  (let [last-role (session-last-role parent-session-id)
-        user-content (str "Workflow run " run-id " result:")
-        asst-content (or result-text "")]
-    ;; Bridge if last role is user
-    (when (= "user" last-role)
-      (append-message-in-session! parent-session-id "assistant" "(workflow context bridge)"))
-    (append-message-in-session! parent-session-id "user" user-content)
-    (append-message-in-session! parent-session-id "assistant" asst-content)))
+  (delivery/inject-result-into-context!
+   {:query-fn (query-fn)
+    :query-session-fn (query-session-fn)
+    :mutate-fn (:mutate-fn @state)
+    :mutate-session-fn (mutate-session-fn)}
+   parent-session-id
+   run-id
+   result-text))
 
 ;;; Async execution
 
-(defn- workflow-run-terminal?
-  "Check if a workflow run has reached terminal status."
-  [run-id]
-  (let [result (mutate! 'psi.workflow/list-runs {})
-        runs (:psi.workflow/runs result)]
-    (when-let [run (some #(when (= run-id (:run-id %)) %) runs)]
-      (contains? #{:completed :failed :cancelled} (:status run)))))
-
-(defn- workflow-run-result-text
-  "Extract result text from a completed workflow run."
-  [run-id]
-  (let [result (mutate! 'psi.workflow/list-runs {})
-        runs (:psi.workflow/runs result)]
-    (when-let [run (some #(when (= run-id (:run-id %)) %) runs)]
-      ;; The execute mutation returns result text, but for async we need to
-      ;; re-query — the result is captured by the execution mutation
-      (:result run))))
-
 (defn- on-async-completion!
-  "Handle async workflow completion — notify, inject results, update canonical job state, and clean up waits."
   [run-id workflow-name parent-session-id include-result? exec-result]
-  (let [status (:psi.workflow/status exec-result)
-        result-text (:psi.workflow/result exec-result)
-        ok? (= :completed status)
-        job-id (get-in @inflight-runs [run-id :job-id])]
-    (when job-id
-      (try
-        (mark-background-job-terminal!
-         job-id
-         status
-         {:run-id run-id
-          :workflow workflow-name
-          :status status
-          :result result-text
-          :error (:psi.workflow/error exec-result)})
-        (catch Exception _ nil)))
-    ;; Inject result into parent context if requested
-    (when (and include-result? result-text)
-      (inject-result-into-context! parent-session-id run-id result-text))
-    ;; Notify completion
-    (notify! (str "Workflow '" workflow-name "' " (name (or status :unknown))
-                  " (run " run-id ")")
-             (if ok? :info :warn))
-    ;; Emit result entry
-    (when-let [mutate-fn (:mutate-fn @state)]
-      (let [heading (str "Workflow '" workflow-name "' — " (name (or status :unknown))
-                         " (run " run-id ")")
-            content (if (and result-text (not include-result?))
-                      (str heading "\n\nResult:\n"
-                           (if (> (count result-text) 8000)
-                             (str (subs result-text 0 8000) "\n\n... [truncated]")
-                             result-text))
-                      heading)]
-        (when-not include-result?
-          (try
-            (mutate-fn 'psi.extension/append-entry
-                       {:custom-type "delegate-result"
-                        :data content})
-            (catch Exception _ nil)))))
-    ;; Clean up non-authoritative wait registry and refresh widgets
-    (swap! inflight-runs dissoc run-id)
-    (refresh-widgets!)))
+  (orchestration/on-async-completion!
+   {:mutate! (:mutate-fn @state)
+    :notify! notify!
+    :mark-background-job-terminal! mark-background-job-terminal!
+    :inject-result-into-context! inject-result-into-context!
+    :refresh-widgets! refresh-widgets!
+    :inflight-runs inflight-runs}
+   run-id workflow-name parent-session-id include-result? exec-result))
 
 (defn- execute-async!
-  "Launch workflow execution asynchronously on a separate thread.
-   Canonical job state is authoritative; inflight-runs only supports local sync waits."
   [run-id session-id workflow-name include-result?]
-  (let [parent-session-id session-id
-        {:keys [job-id]} (start-background-job! session-id run-id workflow-name)
-        fut (future
-              (try
-                (let [exec-result (mutate! 'psi.workflow/execute-run
-                                           {:run-id run-id
-                                            :session-id session-id})]
-                  (on-async-completion! run-id workflow-name parent-session-id include-result? exec-result)
-                  exec-result)
-                (catch Exception e
-                  (when job-id
-                    (try
-                      (mark-background-job-terminal!
-                       job-id
-                       :failed
-                       {:run-id run-id
-                        :workflow workflow-name
-                        :status :failed
-                        :error (ex-message e)})
-                      (catch Exception _ nil)))
-                  (notify! (str "Workflow '" workflow-name "' failed: " (ex-message e)) :error)
-                  (swap! inflight-runs dissoc run-id)
-                  (refresh-widgets!)
-                  {:psi.workflow/status :failed
-                   :psi.workflow/error (ex-message e)})))]
-    (swap! inflight-runs assoc run-id
-           {:future fut
-            :job-id job-id})
-    (refresh-widgets!)
-    run-id))
+  (orchestration/execute-async!
+   {:mutate! mutate!
+    :start-background-job! start-background-job!
+    :mark-background-job-terminal! mark-background-job-terminal!
+    :notify! notify!
+    :refresh-widgets! refresh-widgets!
+    :inflight-runs inflight-runs
+    :inject-result-into-context! inject-result-into-context!
+    :on-async-completion-fn on-async-completion!}
+   run-id session-id workflow-name include-result?))
 
 ;;; Sync execution
 
 (defn- await-run-completion
-  "Block until a workflow run completes or timeout is reached.
-   Returns the execution result."
   [run-id timeout-ms]
-  (let [^Future fut (get-in @inflight-runs [run-id :future])]
-    (if fut
-      (try
-        (.get fut timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
-        (catch java.util.concurrent.TimeoutException _
-          {:psi.workflow/status :timeout
-           :psi.workflow/error (str "Timed out after " timeout-ms "ms")})
-        (catch Exception e
-          {:psi.workflow/status :failed
-           :psi.workflow/error (ex-message e)}))
-      ;; No future — must have been executed synchronously already
-      {:psi.workflow/error "Run not found in active tracking"})))
+  (orchestration/await-run-completion inflight-runs run-id timeout-ms))
 
 ;;; Delegate tool implementation
 
-(defn- parse-mode [mode-str]
-  (case (some-> mode-str str str/lower-case str/trim)
-    ("sync" "synchronous") :sync
-    ("async" "asynchronous" nil) :async
-    ::invalid))
-
-(defn- available-workflows-text
-  "Return human-readable list of available workflows."
-  []
-  (let [definitions (:loaded-definitions @state)]
-    (if (empty? definitions)
-      "No workflows loaded."
-      (str/join "\n"
-                (for [[name defn-map] (sort-by key definitions)]
-                  (let [step-count (count (:step-order defn-map))]
-                    (str "  " name " — " (or (:summary defn-map) "")
-                         (when (> step-count 1)
-                           (str " (" step-count " steps)")))))))))
-
-(defn- active-runs-text
-  "Return human-readable list of active/recent workflow runs backed by canonical workflow + background-job state."
+(defn- delegate-list
+  "Handle action=list: list available workflows and active runs."
   []
   (let [runs-result (mutate! 'psi.workflow/list-runs {})
         runs (:psi.workflow/runs runs-result)
         jobs-result (when-let [qf (query-fn)]
                       (qf [:psi.agent-session/background-jobs]))
-        jobs (:psi.agent-session/background-jobs jobs-result)
-        async-run-ids (->> jobs
-                           (filter #(= "delegate" (:psi.background-job/tool-name %)))
-                           (filter #(contains? #{:running :pending-cancel}
-                                                (:psi.background-job/status %)))
-                           (map :psi.background-job/workflow-id)
-                           set)]
-    (if (empty? runs)
-      "No active runs."
-      (->> runs
-           (map (fn [{:keys [run-id status source-definition-id]}]
-                  (str "  " run-id " — " (name status)
-                       (when source-definition-id
-                         (str " (" source-definition-id ")"))
-                       (when (contains? async-run-ids run-id)
-                         " [async]"))))
-           (str/join "\n")))))
-
-(defn- delegate-list
-  "Handle action=list: list available workflows and active runs."
-  []
-  (str "Available workflows:\n" (available-workflows-text)
-       "\n\nActive runs:\n" (active-runs-text)))
+        jobs (:psi.agent-session/background-jobs jobs-result)]
+    (text/delegate-list-text (:loaded-definitions @state) runs jobs)))
 
 (defn- delegate-run
   "Handle action=run: resolve workflow, create + execute canonical workflow run.
@@ -372,7 +171,7 @@
   [{:keys [workflow prompt name mode fork_session include_result_in_context timeout_ms]}]
   (let [workflow-name (some-> workflow str str/trim not-empty)
         prompt-text   (some-> prompt str str/trim not-empty)
-        mode*         (parse-mode mode)
+        mode*         (text/parse-mode mode)
         fork?         (true? fork_session)
         include?      (true? include_result_in_context)
         timeout       (or (when (number? timeout_ms) (long timeout_ms)) 300000)]
@@ -569,63 +368,32 @@
       "list"     (delegate-list)
       "run"      (let [result (delegate-run args)]
                    (if (:error result)
-                     (str "Error: " (:error result))
+                     (text/error-text (:error result))
                      (case (:mode result)
                        :async
-                       (str "Workflow run " (:run-id result) " started asynchronously. "
-                            "Use action=list to check progress.")
+                       (text/workflow-run-started-text (:run-id result))
 
                        :sync
-                       (str "Workflow run " (:run-id result) " — " (name (:status result))
-                            (when (:result result)
-                              (str "\n\n" (:result result))))
+                       (text/workflow-run-result-text (:run-id result)
+                                                      (:status result)
+                                                      (:result result))
 
                        ;; fallback
-                       (str "Workflow run " (:run-id result) " — " (name (or (:status result) :unknown))
-                            (when (:result result)
-                              (str "\n\n" (:result result)))))))
+                       (text/workflow-run-result-text (:run-id result)
+                                                      (:status result)
+                                                      (:result result)))))
       "continue" (let [result (delegate-continue args)]
                    (if (:error result)
-                     (str "Error: " (:error result))
-                     (str "Resuming run " (:run-id result) " asynchronously.")))
+                     (text/error-text (:error result))
+                     (text/delegate-continued-text (:run-id result))))
       "remove"   (let [result (delegate-remove args)]
                    (if (:error result)
-                     (str "Error: " (:error result))
-                     (str "Removed run " (:run-id result))))
-      (str "Unknown action: " action ". Use: run, list, continue, remove"))))
+                     (text/error-text (:error result))
+                     (text/delegate-removed-text (:run-id result))))
+      (text/unknown-action-text action))))
 
 ;;; Widget
 
-(def ^:private widget-placement :bottom)
-
-(defn- run-status-icon [status]
-  (case status
-    :pending "○"
-    :running "▸"
-    :blocked "◆"
-    :completed "✓"
-    :failed "✗"
-    :cancelled "⊘"
-    "?"))
-
-(defn- run-widget-lines
-  "Build display lines for a single workflow run."
-  [run-id job-info run-info]
-  (let [status (or (:status run-info)
-                   (:psi.background-job/status job-info)
-                   :running)
-        started-at (or (:started-at job-info)
-                       (:psi.background-job/started-at job-info))
-        elapsed (when started-at
-                  (quot (- (System/currentTimeMillis)
-                           (.toEpochMilli ^java.time.Instant started-at))
-                        1000))
-        source (or (:source-definition-id run-info) (:workflow job-info))
-        top-line (str (run-status-icon status)
-                      " " run-id
-                      (when source (str " · @" source))
-                      (when elapsed (str " · " elapsed "s")))]
-    [top-line]))
 
 (defn- refresh-widgets!
   "Update widgets for workflow-loader background jobs using canonical workflow and background-job state."
@@ -654,22 +422,15 @@
         (let [run-id (:psi.background-job/workflow-id job)
               run-info (get run-info-by-id run-id)
               wid (str "delegate-" run-id)
-              lines (run-widget-lines run-id job (or run-info {}))]
-          ((:set-widget ui) wid widget-placement lines)))
+              lines (text/run-widget-lines run-id
+                                           (System/currentTimeMillis)
+                                           job
+                                           (or run-info {}))]
+          ((:set-widget ui) wid text/widget-placement lines)))
       (swap! state assoc :widget-ids current-wids))))
 
 ;;; Delegate command
 
-(defn- parse-delegate-command
-  "Parse `/delegate <workflow> <prompt>` args."
-  [args-str]
-  (let [trimmed (str/trim (or args-str ""))]
-    (when-not (str/blank? trimmed)
-      (let [space-idx (str/index-of trimmed " ")]
-        (if space-idx
-          {:workflow (subs trimmed 0 space-idx)
-           :prompt (str/trim (subs trimmed (inc space-idx)))}
-          {:workflow trimmed})))))
 
 ;;; Extension init
 
@@ -729,10 +490,12 @@
   ((:register-command api) "delegate"
                            {:description "Delegate to a workflow: /delegate <workflow> <prompt> (defaults to action=run)"
                             :handler (fn [args]
-                                       (let [{:keys [workflow prompt]} (parse-delegate-command args)]
+                                       (let [{:keys [workflow prompt]} (text/parse-delegate-command args)]
                                          (cond
                                            (nil? workflow)
-                                           (log! (str "Available workflows:\n" (available-workflows-text)))
+                                           (log! (str "Available workflows:\n"
+                                                      (text/available-workflows-text
+                                                       (:loaded-definitions @state))))
 
                                            (nil? prompt)
                                            (log! (str "Usage: /delegate " workflow " <prompt>"))
