@@ -174,6 +174,15 @@
                        :mark-workflow-jobs-terminal-fn bg-rt/maybe-mark-workflow-jobs-terminal!
                        :emit-background-job-terminal-messages-fn bg-rt/maybe-emit-background-job-terminal-messages!
                        :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
+                       :now-fn                       java.time.Instant/now
+                       :scheduler-run-after-delay-fn (fn [ctx delay-ms f]
+                                                       ((:daemon-thread-fn ctx)
+                                                        (fn []
+                                                          (Thread/sleep ^long delay-ms)
+                                                          (f))))
+                       :scheduler-cancel-delay-fn    (fn [_ctx handle]
+                                                       (when (instance? Thread handle)
+                                                         (.interrupt ^Thread handle)))
                        :daemon-thread-fn             (fn [f] (doto (Thread. ^Runnable f) (.setDaemon true) (.start)))
                        :effective-cwd-fn             (fn [ctx session-id] (ss/session-worktree-path-in ctx session-id))
                        :journal-append-fn            persistence/append-entry-in!}

@@ -228,32 +228,46 @@
        (sc/send-event! (:sc-env ctx) sc-session-id (:event effect))))))
 
 (defmethod execute-effect! :scheduler/start-timer [ctx effect]
-  (let [schedule-id (:schedule-id effect)
-        fire-at     (:fire-at effect)
-        delay-ms    (max 0 (.toMillis (java.time.Duration/between (java.time.Instant/now) fire-at)))
-        runner      (fn []
-                      (try
-                        (Thread/sleep ^long delay-ms)
-                        (dispatch/dispatch! ctx
-                                            :scheduler/fired
-                                            {:session-id (effect-session-id ctx effect)
-                                             :schedule-id schedule-id}
-                                            {:origin :core})
-                        (catch InterruptedException _
-                          nil)
-                        (finally
-                          (when-let [timers* (:scheduler-timers* ctx)]
-                            (swap! timers* dissoc schedule-id)))))]
+  (let [schedule-id    (:schedule-id effect)
+        fire-at        (:fire-at effect)
+        now-fn         (or (:now-fn ctx) java.time.Instant/now)
+        run-after-delay! (or (:scheduler-run-after-delay-fn ctx)
+                             (fn [ctx* delay-ms f]
+                               ((:daemon-thread-fn ctx*)
+                                (fn []
+                                  (Thread/sleep ^long delay-ms)
+                                  (f)))))
+        delay-ms       (max 0 (.toMillis (java.time.Duration/between (now-fn) fire-at)))
+        callback       (fn []
+                         (try
+                           (dispatch/dispatch! ctx
+                                               :scheduler/fired
+                                               {:session-id (effect-session-id ctx effect)
+                                                :schedule-id schedule-id}
+                                               {:origin :core})
+                           (catch InterruptedException _
+                             nil)
+                           (finally
+                             (when-let [timers* (:scheduler-timers* ctx)]
+                               (swap! timers* dissoc schedule-id)))))]
     (if-let [timers* (:scheduler-timers* ctx)]
-      (let [thread ((:daemon-thread-fn ctx) runner)]
-        (swap! timers* assoc schedule-id thread)
-        thread)
-      ((:daemon-thread-fn ctx) runner))))
+      (let [handle (run-after-delay! ctx delay-ms callback)]
+        (swap! timers* assoc schedule-id handle)
+        handle)
+      (run-after-delay! ctx delay-ms callback))))
 
 (defmethod execute-effect! :scheduler/cancel-timer [ctx effect]
-  (when-let [thread (some-> ctx :scheduler-timers* deref (get (:schedule-id effect)))]
+  (when-let [handle (some-> ctx :scheduler-timers* deref (get (:schedule-id effect)))]
     (try
-      (.interrupt ^Thread thread)
+      (cond
+        (instance? Thread handle)
+        (.interrupt ^Thread handle)
+
+        (:scheduler-cancel-delay-fn ctx)
+        ((:scheduler-cancel-delay-fn ctx) ctx handle)
+
+        :else
+        nil)
       (catch Exception _
         nil))
     (swap! (:scheduler-timers* ctx) dissoc (:schedule-id effect))

@@ -236,6 +236,15 @@
                                                                       {:callback :effective-cwd-fn})))
                                                      ([ctx session-id]
                                                       (ss/session-worktree-path-in ctx session-id)))
+   :now-fn                                         java.time.Instant/now
+   :scheduler-run-after-delay-fn                   (fn [ctx delay-ms f]
+                                                     ((:daemon-thread-fn ctx)
+                                                      (fn []
+                                                        (Thread/sleep ^long delay-ms)
+                                                        (f))))
+   :scheduler-cancel-delay-fn                      (fn [_ctx handle]
+                                                     (when (instance? Thread handle)
+                                                       (.interrupt ^Thread handle)))
    :daemon-thread-fn                               dispatch-handlers/daemon-thread
    :drop-trailing-overflow-error-fn                dispatch-effects/drop-trailing-overflow-error!
    :validate-dispatch-result-fn                    dispatch/validate-dispatch-schemas
