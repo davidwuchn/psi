@@ -84,3 +84,8 @@ This cleanup task is complete only when all of the following are true:
 ## Notes
 
 This task is a post-034 cleanup/follow-up task. It exists to address implementation review feedback before treating the manifest activation thread as fully closed.
+
+Closure note:
+- startup orchestration now lives in extension runtime via `psi.agent-session.extension-runtime/bootstrap-manifest-extensions-in!`
+- failed manifest activation now follows Option A from this design: failed activation is not retained as a live registry entry
+- startup tests now use shared helpers so the acceptance surface reads at the behavior level rather than repeating procedural bootstrap setup

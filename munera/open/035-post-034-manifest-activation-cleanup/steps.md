@@ -5,4 +5,4 @@
 - [x] Implement the chosen registry semantic consistently
 - [x] Update any registry/introspection/tests affected by the semantic choice
 - [x] Simplify startup manifest activation tests with shared helpers/fixtures
-- [ ] Update task/docs wording if needed after cleanup
+- [x] Update task/docs wording if needed after cleanup

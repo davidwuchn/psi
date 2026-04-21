@@ -36,3 +36,10 @@ The work should improve ownership, semantics, and test shape in small slices:
 ## Review target
 
 This task should make 034 closure-ready, not broaden the behavior surface.
+
+## Closure outcome
+
+Completed cleanup now establishes:
+- startup manifest activation ownership is extension-runtime-local rather than app-runtime-assembled
+- failed manifest activation is absent from the live registry and remains represented only through startup summary + persisted install state failure surfaces
+- startup acceptance coverage is shaped around reusable helpers rather than repeated procedural setup
