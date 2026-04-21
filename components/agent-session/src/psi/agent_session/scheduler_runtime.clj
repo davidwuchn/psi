@@ -58,7 +58,7 @@
              :completed-seq nil
              :status (case (:status schedule)
                        :pending :running
-                       :queued :pending-cancel
+                       :queued :running
                        :delivered :completed
                        :cancelled :cancelled
                        :running)

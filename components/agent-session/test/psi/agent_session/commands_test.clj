@@ -228,6 +228,24 @@
       (is (str/includes? (:message cancel-result) "Cancellation requested"))
       (is (= :pending-cancel (:status job))))
 
+    (let [_ (dispatch/dispatch! ctx :scheduler/create
+                                {:session-id thread-id
+                                 :schedule-id "sch-cmd-queued"
+                                 :label "queued"
+                                 :message "queued"
+                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :delay-ms 1000}
+                                {:origin :core})
+          _ (swap! (:state* ctx) (ss/session-update thread-id #(assoc % :is-streaming true)))
+          _ (dispatch/dispatch! ctx :scheduler/fired
+                                {:session-id thread-id
+                                 :schedule-id "sch-cmd-queued"}
+                                {:origin :core})
+          jobs-result (commands/dispatch-in ctx thread-id "/jobs running" cmd-opts)]
+      (is (= :text (:type jobs-result)))
+      (is (str/includes? (:message jobs-result) "schedule/sch-cmd-queued")))
+
     (let [cancel-usage (commands/dispatch-in ctx thread-id "/cancel-job" cmd-opts)]
       (is (= :text (:type cancel-usage)))
       (is (= "Usage: /cancel-job <job-id>" (:message cancel-usage))))))
