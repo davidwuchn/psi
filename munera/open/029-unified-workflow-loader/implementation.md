@@ -209,10 +209,23 @@ Validation:
   - `extensions.workflow-loader-delegate-test`
 - result after continue + remove slices: `26 tests, 95 assertions, 0 failures`
 
+2026-04-20
+- Third corrective alignment slice landed: explicit parent-session targeting for async result injection.
+
+What changed:
+- workflow-loader now stores and threads the originating parent session id through async execution/completion handling
+- result injection no longer depends on ambient session query/mutate access when explicit session-targeting APIs are available
+- workflow-loader now uses `:query-session` to inspect the origin session's last visible role and `:mutate-session` to append injected user/assistant messages into that specific session
+- ambient query/mutate remain as fallback behavior for narrower API contexts
+
+Validation:
+- focused suite green:
+  - `extensions.workflow-loader-delegate-test`
+- result for this slice: `13 tests, 40 assertions, 0 failures`
+
 Remaining work:
 - corrective alignment slice recorded in `plan.md` and `steps.md`:
   - framing prompt injection semantics
   - execution-time propagation for `:skills` and `:model`
-  - explicit parent-session targeting for result injection
   - reload retirement correctness
   - contract/doc/schema cleanup

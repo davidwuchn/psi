@@ -109,9 +109,10 @@ Corrective follow-up after implementation review:
   - make `:skills` reach child session creation/runtime
   - make `:model` overrides effective during execution
   - add tests that prove effective runtime config, not just stored metadata
-- [ ] Fix parent-session targeting for `include_result_in_context`
-  - target the originating parent session explicitly
-  - add test covering session switch before async completion
+- [x] Fix parent-session targeting for `include_result_in_context`
+  - async result injection now targets the originating parent session explicitly
+  - workflow-loader now uses explicit `query-session` / `mutate-session` when available
+  - focused tests now prove injection targets the origin session rather than ambient session state
 - [ ] Fix reload lifecycle correctness
   - ensure removed/renamed workflow files are retired from canonical runtime state
   - add reload tests for deletion/rename cases

@@ -13,13 +13,15 @@
 (defn- make-mock-api
   "Create a mock extension API that captures tool/command registrations
    and provides controllable mutate/query functions."
-  [{:keys [definitions mutate-results query-result]}]
+  [{:keys [definitions mutate-results query-result query-session-result]}]
   (let [tools (atom {})
         commands (atom {})
         logs (atom [])
         notifications (atom [])
         prompt-contributions (atom {})
         mutate-calls (atom [])
+        mutate-session-calls (atom [])
+        query-session-calls (atom [])
         mutate-results* (atom (or mutate-results {}))]
     (reset! test-state
             {:tools tools
@@ -28,12 +30,20 @@
              :notifications notifications
              :prompt-contributions prompt-contributions
              :mutate-calls mutate-calls
+             :mutate-session-calls mutate-session-calls
+             :query-session-calls query-session-calls
              :mutate-results* mutate-results*})
     {:query (fn [_query]
               (or query-result
                   {:psi.agent-session/worktree-path "/tmp/test-worktree"
                    :psi.agent-session/session-id "test-session-1"
                    :psi.agent-session/session-entries []}))
+     :query-session (fn [session-id query]
+                      (swap! query-session-calls conj {:session-id session-id :query query})
+                      (if (fn? query-session-result)
+                        (query-session-result session-id query)
+                        (or query-session-result
+                            {:psi.agent-session/session-entries []})))
      :mutate (fn [sym params]
                (swap! mutate-calls conj {:sym sym :params params})
                (let [results @mutate-results*
@@ -41,6 +51,13 @@
                  (if (fn? result)
                    (result params)
                    (or result {}))))
+     :mutate-session (fn [session-id sym params]
+                       (swap! mutate-session-calls conj {:session-id session-id :sym sym :params params})
+                       (let [results @mutate-results*
+                             result (get results sym)]
+                         (if (fn? result)
+                           (result (assoc (or params {}) :session-id session-id))
+                           (or result {}))))
      :log (fn [msg] (swap! logs conj msg))
      :notify (fn [msg level] (swap! notifications conj {:msg msg :level level}))
      :register-tool (fn [tool-def]
@@ -58,6 +75,12 @@
 
 (defn- get-mutate-calls []
   @(:mutate-calls @test-state))
+
+(defn- get-mutate-session-calls []
+  @(:mutate-session-calls @test-state))
+
+(defn- get-query-session-calls []
+  @(:query-session-calls @test-state))
 
 (defn- get-notifications []
   @(:notifications @test-state))
@@ -198,10 +221,18 @@
           (is (.contains ^String result "Timed out")))))))
 
 (deftest delegate-run-include-result-test
-  (testing "include_result_in_context injects messages after async completion"
+  (testing "include_result_in_context injects messages after async completion into the originating session"
     (let [appended-messages (atom [])
           api (make-mock-api
-               {:mutate-results
+               {:query-result {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                               :psi.agent-session/session-id "origin-session"
+                               :psi.agent-session/session-entries []}
+                :query-session-result (fn [session-id _query]
+                                        {:psi.agent-session/session-entries
+                                         (if (= session-id "origin-session")
+                                           [{:psi.session-entry/data {:role "assistant"}}]
+                                           [{:psi.session-entry/data {:role "user"}}])})
+                :mutate-results
                 {'psi.workflow/register-definition
                  (fn [_] {:psi.workflow/registered? true})
                  'psi.workflow/create-run
@@ -237,13 +268,15 @@
           (is (.contains ^String result "started asynchronously"))
           ;; Wait for async completion
           (Thread/sleep 200)
-          ;; Should have injected user + assistant messages
-          (let [msgs @appended-messages
-                roles (mapv :role msgs)]
-            (is (>= (count msgs) 2) "should inject at least user + assistant")
+          ;; Should have injected into the originating session explicitly
+          (let [session-calls (get-mutate-session-calls)
+                roles (mapv #(get-in % [:params :role]) session-calls)]
+            (is (>= (count session-calls) 2) "should inject at least user + assistant")
+            (is (every? #(= "origin-session" (:session-id %)) session-calls))
             (is (some #(= "user" %) roles))
             (is (some #(= "assistant" %) roles))
-            (is (some #(= "injected output" (:content %)) msgs))))))))
+            (is (some #(= "injected output" (get-in % [:params :content])) session-calls)))
+          (is (seq (get-query-session-calls))))))))
 
 (deftest delegate-run-fork-session-test
   (testing "fork_session passes through in workflow-input"

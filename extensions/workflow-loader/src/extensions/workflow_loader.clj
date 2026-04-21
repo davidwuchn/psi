@@ -45,19 +45,32 @@
     (:psi.agent-session/session-id
      (qf [:psi.agent-session/session-id]))))
 
-(defn- context-last-role
-  "Get the last user/assistant message role in the current session."
-  []
-  (when-let [qf (query-fn)]
-    (let [result (qf [{:psi.agent-session/session-entries
-                       [:psi.session-entry/kind
-                        :psi.session-entry/data]}])]
-      (->> (:psi.agent-session/session-entries result)
-           (map :psi.session-entry/data)
-           (remove :custom-type)
-           (map :role)
-           (filter #{"user" "assistant"})
-           last))))
+(defn- query-session-fn [] (:query-session-fn @state))
+(defn- mutate-session-fn [] (:mutate-session-fn @state))
+
+(defn- session-last-role
+  "Get the last user/assistant message role for an explicit session id.
+   Falls back to ambient query when explicit session-targeting APIs are absent."
+  [session-id]
+  (let [query-result (cond
+                       (and session-id (query-session-fn))
+                       ((query-session-fn) session-id
+                        [{:psi.agent-session/session-entries
+                          [:psi.session-entry/kind
+                           :psi.session-entry/data]}])
+
+                       (query-fn)
+                       ((query-fn) [{:psi.agent-session/session-entries
+                                     [:psi.session-entry/kind
+                                      :psi.session-entry/data]}])
+
+                       :else nil)]
+    (->> (:psi.agent-session/session-entries query-result)
+         (map :psi.session-entry/data)
+         (remove :custom-type)
+         (map :role)
+         (filter #{"user" "assistant"})
+         last)))
 
 ;;; Definition loading and registration
 
@@ -105,28 +118,34 @@
 
 ;;; Result injection
 
+(defn- append-message-in-session!
+  [session-id role content]
+  (try
+    (cond
+      (and session-id (mutate-session-fn))
+      ((mutate-session-fn) session-id 'psi.extension/append-message
+       {:role role :content content})
+
+      (:mutate-fn @state)
+      ((:mutate-fn @state) 'psi.extension/append-message
+       {:role role :content content})
+
+      :else nil)
+    (catch Exception _ nil)))
+
 (defn- inject-result-into-context!
   "Inject workflow result text into the parent session context as user+assistant messages.
-   Maintains strict user/assistant alternation."
-  [run-id result-text]
-  (let [mutate-fn (:mutate-fn @state)
-        last-role (context-last-role)
+   Maintains strict user/assistant alternation and explicitly targets the
+   originating parent session when session-targeting APIs are available."
+  [parent-session-id run-id result-text]
+  (let [last-role (session-last-role parent-session-id)
         user-content (str "Workflow run " run-id " result:")
         asst-content (or result-text "")]
     ;; Bridge if last role is user
     (when (= "user" last-role)
-      (try
-        (mutate-fn 'psi.extension/append-message
-                   {:role "assistant" :content "(workflow context bridge)"})
-        (catch Exception _ nil)))
-    (try
-      (mutate-fn 'psi.extension/append-message
-                 {:role "user" :content user-content})
-      (catch Exception _ nil))
-    (try
-      (mutate-fn 'psi.extension/append-message
-                 {:role "assistant" :content asst-content})
-      (catch Exception _ nil))))
+      (append-message-in-session! parent-session-id "assistant" "(workflow context bridge)"))
+    (append-message-in-session! parent-session-id "user" user-content)
+    (append-message-in-session! parent-session-id "assistant" asst-content)))
 
 ;;; Async execution
 
@@ -150,13 +169,13 @@
 
 (defn- on-async-completion!
   "Handle async workflow completion — notify, inject results, clean up."
-  [run-id workflow-name include-result? exec-result]
+  [run-id workflow-name parent-session-id include-result? exec-result]
   (let [status (:psi.workflow/status exec-result)
         result-text (:psi.workflow/result exec-result)
         ok? (= :completed status)]
     ;; Inject result into parent context if requested
     (when (and include-result? result-text)
-      (inject-result-into-context! run-id result-text))
+      (inject-result-into-context! parent-session-id run-id result-text))
     ;; Notify completion
     (notify! (str "Workflow '" workflow-name "' " (name (or status :unknown))
                   " (run " run-id ")")
@@ -185,12 +204,13 @@
   "Launch workflow execution asynchronously on a separate thread.
    Returns immediately with the run-id."
   [run-id session-id workflow-name include-result?]
-  (let [fut (future
+  (let [parent-session-id session-id
+        fut (future
               (try
                 (let [exec-result (mutate! 'psi.workflow/execute-run
                                            {:run-id run-id
                                             :session-id session-id})]
-                  (on-async-completion! run-id workflow-name include-result? exec-result)
+                  (on-async-completion! run-id workflow-name parent-session-id include-result? exec-result)
                   exec-result)
                 (catch Exception e
                   (notify! (str "Workflow '" workflow-name "' failed: " (ex-message e)) :error)
@@ -199,6 +219,7 @@
     (swap! active-runs assoc run-id
            {:future fut
             :session-id session-id
+            :parent-session-id parent-session-id
             :workflow workflow-name
             :started-at (System/currentTimeMillis)})
     (refresh-widgets!)
@@ -372,14 +393,15 @@
 
 (defn- continue-blocked-run-async!
   [run-id session-id prompt-text include?]
-  (let [fut (future
+  (let [parent-session-id session-id
+        fut (future
               (try
                 (let [result (mutate! 'psi.workflow/resume-run
                                       {:run-id run-id
                                        :session-id session-id
                                        :workflow-input (continue-workflow-input prompt-text)})]
                   (when-not (:psi.workflow/error result)
-                    (on-async-completion! run-id (str "resume-" run-id) include? result))
+                    (on-async-completion! run-id (str "resume-" run-id) parent-session-id include? result))
                   result)
                 (catch Exception e
                   (notify! (str "Resume of run '" run-id "' failed: " (ex-message e)) :error)
@@ -388,6 +410,7 @@
     (swap! active-runs assoc run-id
            {:future fut
             :session-id session-id
+            :parent-session-id parent-session-id
             :workflow (str "resume-" run-id)
             :started-at (System/currentTimeMillis)})
     {:ok true
@@ -551,7 +574,9 @@
   (swap! state assoc
          :api api
          :query-fn (:query api)
+         :query-session-fn (:query-session api)
          :mutate-fn (:mutate api)
+         :mutate-session-fn (:mutate-session api)
          :log-fn (or (:log api) println)
          :notify-fn (or (:notify api) (fn [m _] (println m)))
          :ui (:ui api)
