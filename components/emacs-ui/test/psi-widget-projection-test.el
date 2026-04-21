@@ -277,8 +277,8 @@
 (ert-deftest pwpt-parse-widget-id-splits-correctly ()
   (should (equal '("ext" . "w1")
                  (psi-widget-projection--parse-widget-id "ext/w1")))
-  (should (equal '("my-ext" . "agent-chain")
-                 (psi-widget-projection--parse-widget-id "my-ext/agent-chain"))))
+  (should (equal '("my-ext" . "delegate-run")
+                 (psi-widget-projection--parse-widget-id "my-ext/delegate-run"))))
 
 (ert-deftest pwpt-parse-widget-id-returns-nil-without-slash ()
   (should (null (psi-widget-projection--parse-widget-id "nowidgetid")))
@@ -348,18 +348,18 @@
     (should (null (psi-widget-projection--spec-query-string spec)))))
 
 (ert-deftest pwpt-spec-query-string-formats-keywords ()
-  (let* ((spec   (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains]))
+  (let* ((spec   (pwpt--make-spec-with-query "w1" [:psi.workflow/definitions]))
          (result (psi-widget-projection--spec-query-string spec)))
     (should (stringp result))
     (should (string-prefix-p "[" result))
     (should (string-suffix-p "]" result))
-    (should (string-match-p "psi.agent-chain/chains" result))))
+    (should (string-match-p "psi.workflow/definitions" result))))
 
 (ert-deftest pwpt-spec-query-string-formats-multiple-keywords ()
-  (let* ((spec   (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains :psi.agent-chain/count]))
+  (let* ((spec   (pwpt--make-spec-with-query "w1" [:psi.workflow/definitions :psi.workflow/runs]))
          (result (psi-widget-projection--spec-query-string spec)))
-    (should (string-match-p "psi.agent-chain/chains" result))
-    (should (string-match-p "psi.agent-chain/count" result))))
+    (should (string-match-p "psi.workflow/definitions" result))
+    (should (string-match-p "psi.workflow/runs" result))))
 
 (ert-deftest pwpt-spec-query-string-formats-join-map ()
   "A join {:psi.extension.workflow/detail [...]} encodes as EDN map."
@@ -387,7 +387,7 @@
 
 (ert-deftest pwpt-get-set-spec-data-roundtrip ()
   (pwpt--with-state
-   (let ((data '((:psi.agent-chain/count . 3))))
+   (let ((data '((:psi.workflow/run-count . 3))))
      (psi-widget-projection--set-spec-data "ext/w1" data)
      (should (equal data (psi-widget-projection--get-spec-data "ext/w1"))))))
 
@@ -410,7 +410,7 @@
 
 (ert-deftest pwpt-fetch-spec-data-sends-query-for-spec-with-query ()
   (pwpt--with-state
-   (let* ((spec (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains])))
+   (let* ((spec (pwpt--make-spec-with-query "w1" [:psi.workflow/definitions])))
      (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
      (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block) #'ignore))
        (let ((calls (pwpt--capture-query-sends
@@ -418,11 +418,11 @@
          (should (= 1 (length calls)))
          (should (equal "query_eql" (car (car calls))))
          (let ((query (cdr (assq :query (cadr (car calls))))))
-           (should (string-match-p "psi.agent-chain/chains" query))))))))
+           (should (string-match-p "psi.workflow/definitions" query))))))))
 
 (ert-deftest pwpt-fetch-spec-data-stores-result-and-rerenders ()
   (pwpt--with-state
-   (let* ((spec         (pwpt--make-spec-with-query "w1" [:psi.agent-chain/count]))
+   (let* ((spec         (pwpt--make-spec-with-query "w1" [:psi.workflow/run-count]))
           (render-count 0)
           (captured-cb  nil))
      (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
@@ -436,16 +436,16 @@
        (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block)
                   (lambda () (cl-incf render-count))))
          (funcall captured-cb
-                  '((:data . ((:result . ((:psi.agent-chain/count . 5)))))))))
-     (should (equal '((:psi.agent-chain/count . 5))
+                  '((:data . ((:result . ((:psi.workflow/run-count . 5)))))))))
+     (should (equal '((:psi.workflow/run-count . 5))
                     (psi-widget-projection--get-spec-data "ext/w1")))
      (should (> render-count 0)))))
 
 (ert-deftest pwpt-fetch-spec-data-multiple-specs-fires-per-spec ()
   "Two specs with queries → two query_eql sends."
   (pwpt--with-state
-   (let* ((spec1 (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains]))
-          (spec2 (pwpt--make-spec-with-query "w2" [:psi.agent-chain/count])))
+   (let* ((spec1 (pwpt--make-spec-with-query "w1" [:psi.workflow/definitions]))
+          (spec2 (pwpt--make-spec-with-query "w2" [:psi.workflow/run-count])))
      (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block) #'ignore))
        (let ((calls (pwpt--capture-query-sends
                      (lambda ()
@@ -456,11 +456,11 @@
   "render-specs passes stored data for content-path resolution."
   (pwpt--with-state
    (let* ((spec (pwpt--make-spec-with-query
-                 "w1" [:psi.agent-chain/count]
-                 '((:type . text) (:content-path . (:psi.agent-chain/count))))))
+                 "w1" [:psi.workflow/run-count]
+                 '((:type . text) (:content-path . (:psi.workflow/run-count))))))
      (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
      (psi-widget-projection--sync-lstates (list spec))
-     (psi-widget-projection--set-spec-data "ext/w1" '((:psi.agent-chain/count . 42)))
+     (psi-widget-projection--set-spec-data "ext/w1" '((:psi.workflow/run-count . 42)))
      (let ((result (substring-no-properties
                     (psi-widget-projection-render-specs psi-emacs--state))))
        (should (string-match-p "42" result))))))

@@ -390,11 +390,11 @@
                                                                store
                                                                {:tool-call-id "tc-bg-1"
                                                                 :thread-id    thread-id
-                                                                :tool-name    "workflow/agent"
+                                                                :tool-name    "delegate"
                                                                 :job-id       "job-bg-1"
                                                                 :job-kind     :workflow
-                                                                :workflow-ext-path "extensions/agent.clj"
-                                                                :workflow-id  "wf-1"})))}
+                                                                :workflow-ext-path "extensions/workflow_loader.clj"
+                                                                :workflow-id  "planner"})))}
                                         {:origin :core})
           result    (session/query-in ctx session-id
                                       [:psi.agent-session/background-job-count
@@ -418,7 +418,7 @@
       (is (= "job-bg-1" (:psi.background-job/id job)))
       (is (= thread-id (:psi.background-job/thread-id job)))
       (is (= "tc-bg-1" (:psi.background-job/tool-call-id job)))
-      (is (= "workflow/agent" (:psi.background-job/tool-name job)))
+      (is (= "delegate" (:psi.background-job/tool-name job)))
       (is (= :workflow (:psi.background-job/job-kind job)))
       (is (= :running (:psi.background-job/status job)))
       (is (false? (:psi.background-job/is-terminal job)))

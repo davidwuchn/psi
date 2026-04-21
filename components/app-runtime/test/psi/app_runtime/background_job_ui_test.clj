@@ -21,7 +21,7 @@
                                                      store
                                                      {:tool-call-id "tc-1"
                                                       :thread-id session-id
-                                                      :tool-name "agent-chain"
+                                                      :tool-name "delegate"
                                                       :job-id "job-1"}))) }
                               {:origin :test})
         _ (dispatch/dispatch! ctx :session/update-background-jobs-state
@@ -30,7 +30,7 @@
                                                      store
                                                      {:tool-call-id "tc-2"
                                                       :thread-id session-id
-                                                      :tool-name "agent-run"
+                                                      :tool-name "delegate"
                                                       :job-id "job-2"}))) }
                               {:origin :test})
         _ (dispatch/dispatch! ctx :session/update-background-jobs-state
@@ -40,8 +40,8 @@
         _ (bg-ui/refresh-background-jobs-ui! ctx session-id)
         ui-state (ss/get-state-value-in ctx (ss/state-path :ui-state))
         widget (get-in ui-state [:widgets ["psi-background-jobs" "background-jobs"]])]
-    (is (= ["job-1  [running]  agent-chain"
-            "job-2  [pending-cancel]  agent-run"]
+    (is (= ["job-1  [running]  delegate"
+            "job-2  [pending-cancel]  delegate"]
            (:content widget)))
     (is (= "job-1 running"
            (get-in ui-state [:statuses "psi-background-jobs/job-1" :text])))

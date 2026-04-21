@@ -1,0 +1,7 @@
+- [x] Audit background-job tests and projections for retired `agent-chain` / `agent-run` / `workflow/agent` vocabulary
+- [x] Replace obsolete workflow identity fixtures such as `extensions/agent.clj`
+- [x] Normalize Emacs/UI command examples away from `/chain*` when not testing a real compatibility path
+- [x] Replace stale `:psi.agent-chain/*` examples in generic formatting/query tests with current or neutral attrs
+- [x] Run targeted searches for remaining legacy references and classify any kept ones as intentional
+- [x] Run focused tests for touched app-runtime, agent-session, and Emacs/UI areas
+- [x] Update `munera/plan.md` ordering if this task becomes active work

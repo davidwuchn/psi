@@ -71,7 +71,7 @@
                   store
                   {:tool-call-id "tc-bg-1"
                    :thread-id "thread-a"
-                   :tool-name "agent-chain"
+                   :tool-name "delegate"
                    :job-id "job-1"})
           job    (bj/get-job-in store "job-1")]
       (is (= :background (:mode result)))
@@ -80,14 +80,14 @@
       (is (nil? (:result result)))
       (is (= "thread-a" (:thread-id job)))
       (is (= "tc-bg-1" (:tool-call-id job)))
-      (is (= "agent-chain" (:tool-name job)))
+      (is (= "delegate" (:tool-name job)))
       (is (= :running (:status job)))
       (is (false? (:terminal-message-emitted job))))))
 
 (deftest n3-terminal-status-transition-test
   (testing "N3: terminal outcome updates status/completed-at/payload"
     (let [store (bj/create-store)
-          _     (start-job! store "tc-bg-2" "thread-a" "agent-chain" "job-2")
+          _     (start-job! store "tc-bg-2" "thread-a" "delegate" "job-2")
           job   (bj/mark-terminal-in!
                  store
                  {:job-id "job-2"
@@ -421,7 +421,7 @@
          store
          {:tool-call-id (str "tc-b2-" i)
           :thread-id "thread-scale"
-          :tool-name "agent-chain"
+          :tool-name "delegate"
           :job-id nil}))
       (let [jobs (vals (:jobs-by-id @store))
             ids  (map :job-id jobs)]
@@ -430,7 +430,7 @@
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
            #"Duplicate job-id"
-           (start-job! store "tc-b2-collision" "thread-scale" "agent-chain"
+           (start-job! store "tc-b2-collision" "thread-scale" "delegate"
                        (-> (vals (:jobs-by-id @store)) first :job-id)))))))
 
 (deftest b3-same-timestamp-ordering-tie-test

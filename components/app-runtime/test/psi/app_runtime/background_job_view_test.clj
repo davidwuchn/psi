@@ -32,7 +32,7 @@
 
 (deftest job-detail-and-cancel-summary-render-canonical-text-test
   (let [job {:job-id "job-1"
-             :tool-name "agent-chain"
+             :tool-name "delegate"
              :status :pending-cancel
              :thread-id "s1"}
         detail (bg/job-detail job)

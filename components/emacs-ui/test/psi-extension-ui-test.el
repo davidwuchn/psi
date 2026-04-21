@@ -95,14 +95,14 @@
                                (:content-lines . [((:text . "Plain line"))
                                                   ((:text . "Delete run-1")
                                                    (:action . ((:type . "command")
-                                                               (:command . "/chain-rm run-1"))))]))])))))
+                                                               (:command . "/delegate remove run-1"))))]))])))))
     (let ((buf (buffer-string)))
       (should (string-match-p "Plain line" buf))
       (should (string-match-p "Delete run-1" buf)))
     (goto-char (point-min))
     (should (search-forward "Delete run-1" nil t))
     (let ((cmd (get-text-property (max (point-min) (1- (point))) 'psi-widget-command)))
-      (should (equal "/chain-rm run-1" cmd)))))
+      (should (equal "/delegate remove run-1" cmd)))))
 
 (ert-deftest psi-projection-widget-action-activates-command-via-command-op ()
   (with-temp-buffer
@@ -114,11 +114,11 @@
                    (push (list op params) calls)
                    t)))
         (insert (propertize "Delete run-1"
-                            'psi-widget-command "/chain-rm run-1"
+                            'psi-widget-command "/delegate remove run-1"
                             'keymap psi-emacs--projection-widget-action-keymap))
         (goto-char (point-min))
         (psi-emacs--projection-activate-widget-action)
-        (should (equal '(("command" ((:text . "/chain-rm run-1"))))
+        (should (equal '(("command" ((:text . "/delegate remove run-1"))))
                        calls))))))
 
 (ert-deftest psi-projection-tree-widget-action-uses-switch-session-by-id ()

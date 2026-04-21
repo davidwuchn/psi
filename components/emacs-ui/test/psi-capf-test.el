@@ -60,14 +60,14 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state
-                (make-psi-emacs-state :extension-command-names '("chain" "/chain-list")))
-    (insert "/ch")
+                (make-psi-emacs-state :extension-command-names '("delegate" "/delegate-reload")))
+    (insert "/de")
     (let* ((capf (psi-emacs-prompt-capf))
            (table (nth 2 capf))
-           (cands (all-completions "/ch" table)))
+           (cands (all-completions "/de" table)))
       (should capf)
-      (should (member "/chain" cands))
-      (should (member "/chain-list" cands)))))
+      (should (member "/delegate" cands))
+      (should (member "/delegate-reload" cands)))))
 
 (ert-deftest psi-capf-at-reference-context-returns-file-candidates-and-category ()
   (let* ((tmp (make-temp-file "psi-capf-ref-" t))
