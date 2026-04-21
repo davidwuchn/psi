@@ -74,12 +74,23 @@
 
 ;;; Definition loading and registration
 
+(defn- retire-removed-definitions!
+  [old-definitions new-definitions]
+  (let [old-ids (set (map (comp :definition-id val) old-definitions))
+        new-ids (set (map (comp :definition-id val) new-definitions))
+        retired-ids (sort (set/difference old-ids new-ids))]
+    (doseq [definition-id retired-ids]
+      (mutate! 'psi.workflow/remove-definition {:definition-id definition-id}))
+    retired-ids))
+
 (defn- register-definitions!
   "Load workflow files from disk and register them with the canonical workflow runtime.
-   Returns {:registered-count ... :errors [...] :warnings [...]}."
+   Returns {:registered-count ... :errors [...] :warnings [...] :retired-definition-ids [...]}"
   []
   (let [wtp (worktree-path)
-        {:keys [definitions errors warnings]} (loader/load-workflow-definitions wtp)]
+        old-definitions (:loaded-definitions @state)
+        {:keys [definitions errors warnings]} (loader/load-workflow-definitions wtp)
+        retired-definition-ids (retire-removed-definitions! old-definitions definitions)]
     ;; Register each definition via mutation
     (doseq [[_name definition] definitions]
       (mutate! 'psi.workflow/register-definition {:definition definition}))
@@ -87,6 +98,7 @@
     (swap! state assoc :loaded-definitions definitions)
     {:registered-count (count definitions)
      :definition-names (sort (keys definitions))
+     :retired-definition-ids retired-definition-ids
      :errors errors
      :warnings warnings}))
 

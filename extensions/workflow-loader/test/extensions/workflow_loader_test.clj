@@ -1,6 +1,7 @@
 (ns extensions.workflow-loader-test
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is testing use-fixtures]]
+   [extensions.workflow-loader :as wl]
    [psi.agent-session.workflow-file-loader :as loader]
    [psi.agent-session.workflow-file-parser :as parser]
    [psi.agent-session.workflow-file-compiler :as compiler]
@@ -29,6 +30,39 @@
        "         {:workflow \"builder\" :prompt \"Execute: $INPUT\\nOriginal: $ORIGINAL\"}\n"
        "         {:workflow \"reviewer\" :prompt \"Review: $INPUT\\nOriginal: $ORIGINAL\"}]}\n\n"
        "Coordinate a plan-build-review cycle."))
+
+(defn reset-extension-state [f]
+  (reset! @#'wl/active-runs {})
+  (reset! @#'wl/state nil)
+  (f)
+  (reset! @#'wl/active-runs {}))
+
+(use-fixtures :each reset-extension-state)
+
+(defn- make-loader-api
+  [mutate-results]
+  (let [tools (atom {})
+        commands (atom {})
+        notifications (atom [])
+        mutate-calls (atom [])]
+    {:api {:query (fn [_] {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                           :psi.agent-session/session-id "test-session-1"})
+           :mutate (fn [sym params]
+                     (swap! mutate-calls conj {:sym sym :params params})
+                     (let [result (get mutate-results sym)]
+                       (if (fn? result)
+                         (result params)
+                         (or result {}))))
+           :log (fn [_] nil)
+           :notify (fn [msg level] (swap! notifications conj {:msg msg :level level}))
+           :register-tool (fn [tool-def] (swap! tools assoc (:name tool-def) tool-def))
+           :register-command (fn [name cmd-def] (swap! commands assoc name cmd-def))
+           :register-prompt-contribution (fn [_] nil)
+           :on (fn [_ _] nil)}
+     :tools tools
+     :commands commands
+     :mutate-calls mutate-calls
+     :notifications notifications}))
 
 (deftest end-to-end-single-step-test
   (testing "raw planner file → parse → compile → valid canonical definition"
@@ -89,3 +123,55 @@
       ;; Note: tools: from YAML frontmatter is not auto-migrated to EDN config —
       ;; migration step will handle that conversion
       )))
+
+(deftest reload-definitions-retires-removed-definition-test
+  (testing "reload retires definitions removed from disk"
+    (let [{:keys [api commands mutate-calls]} (make-loader-api
+                                               {'psi.workflow/register-definition (fn [_] {:psi.workflow/registered? true})
+                                                'psi.workflow/remove-definition (fn [_] {:psi.workflow/removed? true})})
+          load-call* (atom 0)]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      (case (swap! load-call* inc)
+                        1 {:definitions {"planner" {:definition-id "planner"
+                                                     :name "planner"
+                                                     :summary "Plans"
+                                                     :step-order ["step-1"]
+                                                     :steps {"step-1" {:label "planner"}}}}
+                           :errors []
+                           :warnings []}
+                        2 {:definitions {}
+                           :errors []
+                           :warnings []}))]
+        (wl/init api)
+        ((:handler (get @commands "delegate-reload")) nil)
+        (is (some #(= 'psi.workflow/remove-definition (:sym %)) @mutate-calls))))))
+
+(deftest reload-definitions-retires-renamed-definition-test
+  (testing "reload retires old definition id when a workflow is renamed on disk"
+    (let [{:keys [api commands mutate-calls]} (make-loader-api
+                                               {'psi.workflow/register-definition (fn [_] {:psi.workflow/registered? true})
+                                                'psi.workflow/remove-definition (fn [_] {:psi.workflow/removed? true})})
+          load-call* (atom 0)]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      (case (swap! load-call* inc)
+                        1 {:definitions {"planner" {:definition-id "planner"
+                                                     :name "planner"
+                                                     :summary "Plans"
+                                                     :step-order ["step-1"]
+                                                     :steps {"step-1" {:label "planner"}}}}
+                           :errors []
+                           :warnings []}
+                        2 {:definitions {"planner-v2" {:definition-id "planner-v2"
+                                                         :name "planner-v2"
+                                                         :summary "Plans v2"
+                                                         :step-order ["step-1"]
+                                                         :steps {"step-1" {:label "planner-v2"}}}}
+                           :errors []
+                           :warnings []}))]
+        (wl/init api)
+        ((:handler (get @commands "delegate-reload")) nil)
+        (is (some #(and (= 'psi.workflow/remove-definition (:sym %))
+                        (= "planner" (get-in % [:params :definition-id])))
+                  @mutate-calls))))))

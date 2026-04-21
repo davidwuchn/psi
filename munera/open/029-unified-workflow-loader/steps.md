@@ -113,9 +113,10 @@ Corrective follow-up after implementation review:
   - async result injection now targets the originating parent session explicitly
   - workflow-loader now uses explicit `query-session` / `mutate-session` when available
   - focused tests now prove injection targets the origin session rather than ambient session state
-- [ ] Fix reload lifecycle correctness
-  - ensure removed/renamed workflow files are retired from canonical runtime state
-  - add reload tests for deletion/rename cases
+- [x] Fix reload lifecycle correctness
+  - removed/renamed workflow files are now retired from canonical runtime state during reload
+  - added canonical definition removal support plus workflow-loader reload diffing
+  - focused tests now cover deletion and rename retirement cases
 - [ ] Reconcile public contract drift
   - schema vs behavior for default `action`
   - docs/help text/prompt contribution consistency

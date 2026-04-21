@@ -56,6 +56,16 @@
      definition-id
      stored-definition]))
 
+(defn remove-definition
+  "Return [state removed-definition] after removing a registered workflow definition."
+  [state definition-id]
+  (let [definition-id' (normalize-id definition-id)
+        definition (workflow-definition-in state definition-id')]
+    (when-not definition
+      (throw (ex-info "Workflow definition not found" {:definition-id definition-id'})))
+    [(update-in state (definitions-path) dissoc definition-id')
+     definition]))
+
 (defn- resolve-effective-definition
   [state {:keys [definition definition-id]}]
   (cond

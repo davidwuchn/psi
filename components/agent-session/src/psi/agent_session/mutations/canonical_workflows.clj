@@ -30,6 +30,26 @@
        :psi.workflow/registered? false
        :psi.workflow/error (ex-message e)})))
 
+(pco/defmutation remove-workflow-definition
+  "Remove a registered canonical workflow definition from root state."
+  [_ {:keys [psi/agent-session-ctx definition-id]}]
+  {::pco/op-name 'psi.workflow/remove-definition
+   ::pco/params  [:psi/agent-session-ctx :definition-id]
+   ::pco/output  [:psi.workflow/definition-id
+                  :psi.workflow/removed?
+                  :psi.workflow/error]}
+  (try
+    (let [[new-state _removed-definition]
+          (workflow-runtime/remove-definition @(:state* agent-session-ctx) definition-id)]
+      (reset! (:state* agent-session-ctx) new-state)
+      {:psi.workflow/definition-id definition-id
+       :psi.workflow/removed? true
+       :psi.workflow/error nil})
+    (catch Exception e
+      {:psi.workflow/definition-id definition-id
+       :psi.workflow/removed? false
+       :psi.workflow/error (ex-message e)})))
+
 (pco/defmutation create-workflow-run
   "Create a canonical workflow run from a registered definition."
   [_ {:keys [psi/agent-session-ctx definition-id workflow-input run-id]}]
@@ -210,6 +230,7 @@
 
 (def all-mutations
   [register-workflow-definition
+   remove-workflow-definition
    create-workflow-run
    execute-workflow-run
    resume-workflow-run

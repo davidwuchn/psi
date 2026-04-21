@@ -34,6 +34,16 @@
       (is (= stored (workflow-runtime/workflow-definition-in state definition-id)))
       (is (= [stored] (vals (get-in state [:workflows :definitions])))))))
 
+(deftest remove-definition-test
+  (testing "remove-definition removes a registered definition from canonical state"
+    (let [[state1 definition-id stored]
+          (workflow-runtime/register-definition {:workflows (workflow-model/initial-workflow-state)}
+                                                registered-definition)
+          [state2 removed]
+          (workflow-runtime/remove-definition state1 definition-id)]
+      (is (= stored removed))
+      (is (nil? (workflow-runtime/workflow-definition-in state2 definition-id))))))
+
 (deftest create-run-from-registered-definition-test
   (testing "create-run captures immutable effective definition snapshot and initializes per-step runs"
     (let [[state1 definition-id _]

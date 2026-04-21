@@ -252,7 +252,21 @@ Validation:
   - `psi.agent-session.workflow-execution-test`
 - result for this slice: `10 tests, 55 assertions, 0 failures`
 
+2026-04-20
+- Sixth corrective alignment slice landed: reload retirement correctness.
+
+What changed:
+- added pure canonical workflow runtime support for registered definition removal
+- added canonical mutation `psi.workflow/remove-definition`
+- workflow-loader reload now diffs previously loaded definitions vs newly discovered definitions and retires missing definition ids before re-registering the new set
+- deletion and rename scenarios now retire stale canonical definitions instead of leaving them resident after reload
+
+Validation:
+- focused suites green:
+  - `psi.agent-session.workflow-runtime-test`
+  - `extensions.workflow-loader-test`
+- result for this slice: `12 tests, 45 assertions, 0 failures`
+
 Remaining work:
 - corrective alignment slice recorded in `plan.md` and `steps.md`:
-  - reload retirement correctness
   - contract/doc/schema cleanup
