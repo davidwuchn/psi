@@ -66,7 +66,7 @@
       (is (= 1 (:extension-loaded-count summary)))
       (is (some #(re-find #"startup_ext.clj" %)
                 (map str (ext/extensions-in (:extension-registry ctx)))))
-      (is (= :configured
+      (is (= :loaded
              (get-in (installs/extension-installs-state-in ctx)
                      [:psi.extensions/effective :entries-by-lib 'psi/test-startup-ext :status]))))))
 

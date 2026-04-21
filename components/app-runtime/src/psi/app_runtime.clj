@@ -351,18 +351,18 @@ Available: " (str/join ", " (map name (keys all))))
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt base-prompt} {:origin :core})
          install-state    (installs/compute-install-state cwd)
-         _                (installs/persist-install-state-in! ctx install-state)
-         install-plan     (installs/activation-plan install-state)
-         _                (extension-runtime/sync-non-local-extension-deps! (:deps-to-realize install-plan))
-         activation-targets (vec (:activation-targets install-plan))
-         ext-paths        (vec (:extension-paths install-plan))
+         install-plan0    (installs/activation-plan install-state)
+         deps-result      (extension-runtime/sync-non-local-extension-deps! (:deps-to-realize install-plan0))
+         install-plan     (-> install-plan0
+                              (assoc :entries-by-lib (get-in install-state [:psi.extensions/effective :entries-by-lib]))
+                              (assoc :restart-required-libs #{}))
          psi-tool         (tools/make-psi-tool (fn
                                                  ([q] (session/query-in ctx session-id q))
                                                  ([q entity] (session/query-in ctx q entity)))
                                                {:ctx ctx
                                                 :session-id session-id
                                                 :cwd cwd})
-         summary          (session-bootstrap/bootstrap-in!
+         summary-base     (session-bootstrap/bootstrap-in!
                            ctx session-id
                            {:register-global-query? false
                             :base-tools             (conj (vec tools/all-tools) psi-tool)
@@ -371,8 +371,16 @@ Available: " (str/join ", " (map name (keys all))))
                             :developer-prompt-source (if developer-prompt :env :fallback)
                             :templates              templates
                             :skills                 skills
-                            :extension-paths        ext-paths
-                            :extension-targets      activation-targets})
+                            :extension-paths        []
+                            :extension-targets      []})
+         manifest-result  (extension-runtime/activate-manifest-extensions-in! ctx session-id install-plan deps-result)
+         summary          (-> summary-base
+                              (update :extension-loaded-count (fnil + 0) (count (:loaded manifest-result)))
+                              (update :extension-error-count (fnil + 0) (count (:errors manifest-result)))
+                              (update :extension-errors (fnil into []) (:errors manifest-result)))
+         finalized-state  (installs/finalize-apply-state install-state install-plan manifest-result)
+         _                (installs/persist-install-state-in! ctx finalized-state)
+         _                (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:session-id session-id :summary summary} {:origin :core})
          _                (bootstrap/register-all-domains!)
          graph-caps       (graph-capabilities-in ctx session-id)
          build-opts       (assoc base-prompt-opts :graph-capabilities graph-caps)
