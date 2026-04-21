@@ -81,10 +81,36 @@ Architecture decisions:
 - The compiler produces standard canonical workflow definitions that satisfy `workflow-definition-schema`
 - No compatibility bridge — the old format simply isn't loaded once `.psi/agents/` is retired
 
+2026-04-20
+- Async/sync/fork/include-result implementation landed:
+
+6. **Execution bridge enrichment** (`workflow_execution.clj`)
+   - `resolve-step-session-config` resolves child session config from workflow-file-meta
+   - Single-step: uses run's own :workflow-file-meta (system-prompt, tools, skills, thinking-level)
+   - Multi-step: looks up referenced workflow definition's :workflow-file-meta per step
+   - Fallback: multi-step framing-prompt used when referenced def has no system-prompt
+   - `execute-current-step!` now passes resolved config to child session creation
+   - 3 new tests (single-step config, multi-step config, framing-prompt fallback)
+
+7. **Delegate tool mode/option support** (`workflow_loader.clj`)
+   - mode=async (default): launches execution on a future, returns run-id immediately
+   - mode=sync: launches async + awaits future with configurable timeout
+   - fork_session: passes through in workflow-input for downstream canonical execution
+   - include_result_in_context: injects user+assistant messages after async completion
+   - on-async-completion! handler: notify, inject results, emit entries, clean up
+   - active-runs tracking atom for lifecycle management
+   - delegate-continue now resumes asynchronously
+   - delegate-list shows [async] tag for tracked runs
+   - 9 new delegate-tool tests (async default, sync, timeout, include, fork, errors, list, continue)
+
+Architecture decisions:
+- Async execution uses Clojure futures — lightweight, no thread pool management needed
+- Sync mode reuses async path + Future.get(timeout) — single code path, clean timeout
+- fork_session is passed as workflow-input data rather than per-step config — it's a run-level concern
+- include_result_in_context maintains strict user/assistant alternation via bridge messages
+- Result injection happens on the async completion thread, not the calling thread
+
 Remaining work:
-- Async/sync mode execution wiring through canonical workflow runtime mutations
-- fork_session and include_result_in_context plumbing
 - Consolidated widget for active/recent runs
-- Extension registration in .psi/extensions.edn
-- Extension removal (agent + agent-chain)
+- Extension cleanup: remove old `agent` and `agent-chain` extensions
 - AGENTS.md prompt contribution update

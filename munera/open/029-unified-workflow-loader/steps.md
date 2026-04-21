@@ -49,10 +49,19 @@ Tool:
 - [x] Implement action=continue — resumes blocked run
 - [x] Register tool in workflow-loader init
 - [x] Wire session-id from parent session to execute/resume mutations
-- [ ] mode=async: background execution, return immediately
-- [ ] mode=sync: block until completion or timeout, return result inline
-- [ ] fork_session: create child session from fork of parent conversation
-- [ ] include_result_in_context: inject result as user+assistant messages into parent context
+- [x] Enrich execute-current-step! to resolve session config from workflow-file-meta
+  - resolve-step-session-config: single-step uses own meta; multi-step looks up referenced definition
+  - child sessions now get system-prompt, tools, thinking-level from definition metadata
+- [x] mode=async: background execution, return immediately
+  - launches execution on future, returns run-id immediately
+  - on-async-completion handler: notify, inject results, emit entries, clean up
+  - active-runs tracking atom for lifecycle management
+- [x] mode=sync: block until completion or timeout, return result inline
+  - launches async + awaits future with timeout
+  - returns result text or timeout error
+- [x] fork_session: passes through in workflow-input for canonical execution
+- [x] include_result_in_context: inject result as user+assistant messages into parent context
+  - maintains strict user/assistant alternation with bridge messages
 
 Command:
 - [x] Implement `/delegate` command
@@ -77,8 +86,4 @@ Cleanup — deferred to later slice:
 
 Remaining for full feature parity:
 - Widget consolidation for active/recent runs
-- Async mode (background-job integration for fire-and-forget)
-- Sync mode (blocking with timeout)
-- fork_session plumbing through canonical execution
-- include_result_in_context plumbing through canonical execution
 - Extension cleanup (removing old extensions and legacy code)
