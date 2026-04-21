@@ -32,10 +32,10 @@
        "Coordinate a plan-build-review cycle."))
 
 (defn reset-extension-state [f]
-  (reset! @#'wl/active-runs {})
+  (reset! @#'wl/inflight-runs {})
   (reset! @#'wl/state nil)
   (f)
-  (reset! @#'wl/active-runs {}))
+  (reset! @#'wl/inflight-runs {}))
 
 (use-fixtures :each reset-extension-state)
 

@@ -11,8 +11,7 @@ Open tasks in suggested execution order:
 7. `munera/open/006-agent-tool-skill-prelude-follow-on/`
 8. `munera/open/029-unified-workflow-loader/`
 9. `munera/open/030-post-029-legacy-surface-cleanup/`  ← follow-on cleanup after 029 convergence
-10. `munera/open/031-workflow-loader-async-run-management/`  ← architectural follow-on after 029
-11. `munera/open/033-psi-tool-scheduler-surface/`
+10. `munera/open/033-psi-tool-scheduler-surface/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.

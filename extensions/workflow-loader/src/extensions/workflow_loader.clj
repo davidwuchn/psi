@@ -17,7 +17,8 @@
    [psi.agent-session.workflow-file-loader :as loader]
    [psi.agent-session.workflow-runtime :as workflow-runtime])
   (:import
-   [java.util.concurrent Future]))
+   (java.util UUID)
+   (java.util.concurrent Future)))
 
 ;;; Extension state
 
@@ -25,8 +26,8 @@
 
 (def ^:private prompt-contribution-id "workflow-loader-workflows")
 
-;; Track active async runs: {run-id {:future ... :session-id ... :workflow ...}}
-(def ^:private active-runs (atom {}))
+;; Minimal non-authoritative sync wait registry: {run-id {:future ... :job-id ...}}
+(def ^:private inflight-runs (atom {}))
 
 ;;; Helpers
 
@@ -47,6 +48,41 @@
 
 (defn- query-session-fn [] (:query-session-fn @state))
 (defn- mutate-session-fn [] (:mutate-session-fn @state))
+
+(def ^:private workflow-loader-ext-path
+  "extensions/workflow-loader")
+
+(defn- background-job-tool-call-id
+  [run-id]
+  (str "delegate/" run-id))
+
+(defn- start-background-job!
+  [session-id run-id workflow-name]
+  (let [job-id (str "job-" (UUID/randomUUID))
+        result (mutate! 'psi.extension/start-background-job
+                        {:session-id session-id
+                         :tool-call-id (background-job-tool-call-id run-id)
+                         :tool-name "delegate"
+                         :job-id job-id
+                         :job-kind :workflow
+                         :workflow-ext-path workflow-loader-ext-path
+                         :workflow-id run-id})]
+    {:job-id (:psi.background-job/job-id result)
+     :status (:psi.background-job/status result)}))
+
+(defn- mark-background-job-terminal!
+  [job-id status payload]
+  (let [outcome (case status
+                  :completed :completed
+                  :cancelled :cancelled
+                  :timeout :timed-out
+                  :timed-out :timed-out
+                  :failed :failed
+                  :failed)]
+    (mutate! 'psi.extension/mark-background-job-terminal
+             {:job-id job-id
+              :outcome outcome
+              :payload payload})))
 
 (defn- session-last-role
   "Get the last user/assistant message role for an explicit session id.
@@ -180,11 +216,23 @@
       (:result run))))
 
 (defn- on-async-completion!
-  "Handle async workflow completion — notify, inject results, clean up."
+  "Handle async workflow completion — notify, inject results, update canonical job state, and clean up waits."
   [run-id workflow-name parent-session-id include-result? exec-result]
   (let [status (:psi.workflow/status exec-result)
         result-text (:psi.workflow/result exec-result)
-        ok? (= :completed status)]
+        ok? (= :completed status)
+        job-id (get-in @inflight-runs [run-id :job-id])]
+    (when job-id
+      (try
+        (mark-background-job-terminal!
+         job-id
+         status
+         {:run-id run-id
+          :workflow workflow-name
+          :status status
+          :result result-text
+          :error (:psi.workflow/error exec-result)})
+        (catch Exception _ nil)))
     ;; Inject result into parent context if requested
     (when (and include-result? result-text)
       (inject-result-into-context! parent-session-id run-id result-text))
@@ -208,15 +256,16 @@
                        {:custom-type "delegate-result"
                         :data content})
             (catch Exception _ nil)))))
-    ;; Clean up tracking and refresh widgets
-    (swap! active-runs dissoc run-id)
+    ;; Clean up non-authoritative wait registry and refresh widgets
+    (swap! inflight-runs dissoc run-id)
     (refresh-widgets!)))
 
 (defn- execute-async!
   "Launch workflow execution asynchronously on a separate thread.
-   Returns immediately with the run-id."
+   Canonical job state is authoritative; inflight-runs only supports local sync waits."
   [run-id session-id workflow-name include-result?]
   (let [parent-session-id session-id
+        {:keys [job-id]} (start-background-job! session-id run-id workflow-name)
         fut (future
               (try
                 (let [exec-result (mutate! 'psi.workflow/execute-run
@@ -225,15 +274,24 @@
                   (on-async-completion! run-id workflow-name parent-session-id include-result? exec-result)
                   exec-result)
                 (catch Exception e
+                  (when job-id
+                    (try
+                      (mark-background-job-terminal!
+                       job-id
+                       :failed
+                       {:run-id run-id
+                        :workflow workflow-name
+                        :status :failed
+                        :error (ex-message e)})
+                      (catch Exception _ nil)))
                   (notify! (str "Workflow '" workflow-name "' failed: " (ex-message e)) :error)
-                  (swap! active-runs dissoc run-id)
-                  {:psi.workflow/error (ex-message e)})))]
-    (swap! active-runs assoc run-id
+                  (swap! inflight-runs dissoc run-id)
+                  (refresh-widgets!)
+                  {:psi.workflow/status :failed
+                   :psi.workflow/error (ex-message e)})))]
+    (swap! inflight-runs assoc run-id
            {:future fut
-            :session-id session-id
-            :parent-session-id parent-session-id
-            :workflow workflow-name
-            :started-at (System/currentTimeMillis)})
+            :job-id job-id})
     (refresh-widgets!)
     run-id))
 
@@ -243,7 +301,7 @@
   "Block until a workflow run completes or timeout is reached.
    Returns the execution result."
   [run-id timeout-ms]
-  (let [^Future fut (get-in @active-runs [run-id :future])]
+  (let [^Future fut (get-in @inflight-runs [run-id :future])]
     (if fut
       (try
         (.get fut timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
@@ -278,20 +336,29 @@
                            (str " (" step-count " steps)")))))))))
 
 (defn- active-runs-text
-  "Return human-readable list of active/recent workflow runs."
+  "Return human-readable list of active/recent workflow runs backed by canonical workflow + background-job state."
   []
-  (let [result (mutate! 'psi.workflow/list-runs {})
-        runs (:psi.workflow/runs result)
-        tracked @active-runs]
-    (if (and (empty? runs) (empty? tracked))
+  (let [runs-result (mutate! 'psi.workflow/list-runs {})
+        runs (:psi.workflow/runs runs-result)
+        jobs-result (when-let [qf (query-fn)]
+                      (qf [:psi.agent-session/background-jobs]))
+        jobs (:psi.agent-session/background-jobs jobs-result)
+        async-run-ids (->> jobs
+                           (filter #(= "delegate" (:psi.background-job/tool-name %)))
+                           (filter #(contains? #{:running :pending-cancel}
+                                                (:psi.background-job/status %)))
+                           (map :psi.background-job/workflow-id)
+                           set)]
+    (if (empty? runs)
       "No active runs."
-      (let [canonical (for [{:keys [run-id status source-definition-id]} runs]
-                        (let [async? (contains? tracked run-id)]
-                          (str "  " run-id " — " (name status)
-                               (when source-definition-id
-                                 (str " (" source-definition-id ")"))
-                               (when async? " [async]"))))]
-        (str/join "\n" canonical)))))
+      (->> runs
+           (map (fn [{:keys [run-id status source-definition-id]}]
+                  (str "  " run-id " — " (name status)
+                       (when source-definition-id
+                         (str " (" source-definition-id ")"))
+                       (when (contains? async-run-ids run-id)
+                         " [async]"))))
+           (str/join "\n")))))
 
 (defn- delegate-list
   "Handle action=list: list available workflows and active runs."
@@ -406,6 +473,8 @@
 (defn- continue-blocked-run-async!
   [run-id session-id prompt-text include?]
   (let [parent-session-id session-id
+        workflow-name (str "resume-" run-id)
+        {:keys [job-id]} (start-background-job! session-id run-id workflow-name)
         fut (future
               (try
                 (let [result (mutate! 'psi.workflow/resume-run
@@ -413,18 +482,28 @@
                                        :session-id session-id
                                        :workflow-input (continue-workflow-input prompt-text)})]
                   (when-not (:psi.workflow/error result)
-                    (on-async-completion! run-id (str "resume-" run-id) parent-session-id include? result))
+                    (on-async-completion! run-id workflow-name parent-session-id include? result))
                   result)
                 (catch Exception e
+                  (when job-id
+                    (try
+                      (mark-background-job-terminal!
+                       job-id
+                       :failed
+                       {:run-id run-id
+                        :workflow workflow-name
+                        :status :failed
+                        :error (ex-message e)})
+                      (catch Exception _ nil)))
                   (notify! (str "Resume of run '" run-id "' failed: " (ex-message e)) :error)
-                  (swap! active-runs dissoc run-id)
-                  {:psi.workflow/error (ex-message e)})))]
-    (swap! active-runs assoc run-id
+                  (swap! inflight-runs dissoc run-id)
+                  (refresh-widgets!)
+                  {:psi.workflow/status :failed
+                   :psi.workflow/error (ex-message e)})))]
+    (swap! inflight-runs assoc run-id
            {:future fut
-            :session-id session-id
-            :parent-session-id parent-session-id
-            :workflow (str "resume-" run-id)
-            :started-at (System/currentTimeMillis)})
+            :job-id job-id})
+    (refresh-widgets!)
     {:ok true
      :run-id run-id
      :status :resuming}))
@@ -463,7 +542,11 @@
           {:error (str "Run '" run-id "' is not stopped; current status is " (name (or status :unknown)))})))))
 
 (defn- delegate-remove
-  "Handle action=remove: remove a run by id."
+  "Handle action=remove: remove a run by id.
+
+   Removal clears the canonical workflow run. Delegate projection then derives
+   disappearance from canonical workflow + non-terminal background-job state,
+   so terminal background-job history does not keep removed runs visible here."
   [{:keys [id]}]
   (let [run-id (some-> id str str/trim not-empty)]
     (if (nil? run-id)
@@ -472,7 +555,7 @@
         (if (:psi.workflow/error result)
           {:error (:psi.workflow/error result)}
           (do
-            (swap! active-runs dissoc run-id)
+            (swap! inflight-runs dissoc run-id)
             (refresh-widgets!)
             {:ok true :run-id run-id}))))))
 
@@ -527,11 +610,17 @@
 
 (defn- run-widget-lines
   "Build display lines for a single workflow run."
-  [run-id {:keys [workflow started-at]} run-info]
-  (let [status (or (:status run-info) :running)
+  [run-id job-info run-info]
+  (let [status (or (:status run-info)
+                   (:psi.background-job/status job-info)
+                   :running)
+        started-at (or (:started-at job-info)
+                       (:psi.background-job/started-at job-info))
         elapsed (when started-at
-                  (quot (- (System/currentTimeMillis) (long started-at)) 1000))
-        source (or (:source-definition-id run-info) workflow)
+                  (quot (- (System/currentTimeMillis)
+                           (.toEpochMilli ^java.time.Instant started-at))
+                        1000))
+        source (or (:source-definition-id run-info) (:workflow job-info))
         top-line (str (run-status-icon status)
                       " " run-id
                       (when source (str " · @" source))
@@ -539,33 +628,33 @@
     [top-line]))
 
 (defn- refresh-widgets!
-  "Update widgets for all tracked and canonical workflow runs."
+  "Update widgets for workflow-loader background jobs using canonical workflow and background-job state."
   []
   (when-let [ui (:ui @state)]
-    (let [tracked @active-runs
-          ;; Query canonical runs
-          runs-result (try
+    (let [runs-result (try
                         (mutate! 'psi.workflow/list-runs {})
                         (catch Exception _ {:psi.workflow/runs []}))
           canonical-runs (:psi.workflow/runs runs-result)
-          ;; Build run info map from canonical runs
           run-info-by-id (into {} (map (fn [r] [(:run-id r) r]) canonical-runs))
-          ;; All known run-ids (tracked + canonical)
-          all-run-ids (into (set (keys tracked)) (map :run-id canonical-runs))
-          ;; Current widget ids
-          current-wids (into #{} (map #(str "delegate-" %)) all-run-ids)
+          jobs-result (try
+                        (when-let [qf (query-fn)]
+                          (qf [:psi.agent-session/background-jobs]))
+                        (catch Exception _ nil))
+          delegate-jobs (->> (:psi.agent-session/background-jobs jobs-result)
+                             (filter #(= "delegate" (:psi.background-job/tool-name %)))
+                             (filter #(contains? #{:running :pending-cancel}
+                                                  (:psi.background-job/status %)))
+                             (sort-by :psi.background-job/started-at)
+                             vec)
+          current-wids (into #{} (map #(str "delegate-" (:psi.background-job/workflow-id %)) delegate-jobs))
           old-wids (or (:widget-ids @state) #{})]
-      ;; Clear removed widgets
       (doseq [wid (set/difference old-wids current-wids)]
         ((:clear-widget ui) wid))
-      ;; Set/update widgets for active runs
-      (doseq [run-id all-run-ids]
-        (let [tracking (get tracked run-id)
+      (doseq [job delegate-jobs]
+        (let [run-id (:psi.background-job/workflow-id job)
               run-info (get run-info-by-id run-id)
               wid (str "delegate-" run-id)
-              lines (run-widget-lines run-id
-                                      (or tracking {})
-                                      (or run-info {:status :running}))]
+              lines (run-widget-lines run-id job (or run-info {}))]
           ((:set-widget ui) wid widget-placement lines)))
       (swap! state assoc :widget-ids current-wids))))
 

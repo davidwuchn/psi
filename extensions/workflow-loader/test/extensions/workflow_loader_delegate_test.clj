@@ -34,7 +34,8 @@
              :query-session-calls query-session-calls
              :mutate-results* mutate-results*})
     {:query (fn [_query]
-              (or query-result
+              (or (:query-result @test-state)
+                  query-result
                   {:psi.agent-session/worktree-path "/tmp/test-worktree"
                    :psi.agent-session/session-id "test-session-1"
                    :psi.agent-session/session-entries []}))
@@ -89,14 +90,14 @@
 
 (defn reset-extension-state [f]
   ;; Reset the module-level atoms between tests to avoid leakage
-  (reset! @#'wl/active-runs {})
+  (reset! @#'wl/inflight-runs {})
   (reset! @#'wl/state nil)
   (f)
   ;; Clean up any lingering futures
-  (doseq [[_ {:keys [future]}] @(deref #'wl/active-runs)]
+  (doseq [[_ {:keys [future]}] @(deref #'wl/inflight-runs)]
     (when (instance? Future future)
       (future-cancel future)))
-  (reset! @#'wl/active-runs {}))
+  (reset! @#'wl/inflight-runs {}))
 
 (use-fixtures :each reset-extension-state)
 
@@ -117,6 +118,14 @@
                    (reset! run-created true)
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-1"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    (reset! execute-called true)
@@ -158,6 +167,14 @@
                  (fn [params]
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-sync"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    (Thread/sleep 50)
@@ -194,6 +211,14 @@
                  (fn [params]
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-slow"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    ;; Simulate slow execution
@@ -239,6 +264,14 @@
                  (fn [params]
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-include"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    {:psi.workflow/status :completed
@@ -290,6 +323,14 @@
                    (reset! create-params params)
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-fork"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    {:psi.workflow/status :completed})
@@ -363,6 +404,45 @@
           (is (.contains ^String result "Removed run run-1"))
           (is (= {:run-id "run-1"} @remove-params)))))))
 
+(deftest delegate-remove-hides-terminal-background-job-projection-test
+  (testing "remove/list does not keep removed runs visible from terminal delegate background-job history"
+    (let [removed? (atom false)
+          api (make-mock-api
+               {:query-result {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                               :psi.agent-session/session-id "test-session-1"
+                               :psi.agent-session/background-jobs
+                               [{:psi.background-job/tool-name "delegate"
+                                 :psi.background-job/workflow-id "run-1"
+                                 :psi.background-job/status :completed}]}
+                :mutate-results
+                {'psi.workflow/register-definition
+                 (fn [_] {:psi.workflow/registered? true})
+                 'psi.workflow/remove-run
+                 (fn [_]
+                   (reset! removed? true)
+                   {:psi.workflow/run-id "run-1"
+                    :psi.workflow/removed? true})
+                 'psi.workflow/list-runs
+                 (fn [_]
+                   {:psi.workflow/runs (if @removed?
+                                         []
+                                         [{:run-id "run-1"
+                                           :status :completed
+                                           :source-definition-id "planner"}] )})}})]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      {:definitions {"planner" {:definition-id "planner"
+                                                 :name "planner"
+                                                 :summary "Plans"
+                                                 :step-order ["step-1"]
+                                                 :steps {"step-1" {:label "planner"}}}}
+                       :errors []
+                       :warnings []})]
+        (wl/init api)
+        (is (.contains ^String (execute-tool {:action "list"}) "run-1 — completed (planner)"))
+        (is (.contains ^String (execute-tool {:action "remove" :id "run-1"}) "Removed run run-1"))
+        (is (.contains ^String (execute-tool {:action "list"}) "No active runs."))))))
+
 (deftest delegate-run-missing-params-test
   (testing "run without workflow or prompt returns appropriate errors"
     (let [api (make-mock-api
@@ -398,6 +478,14 @@
                    (reset! created-run-id (:run-id params))
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-list"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    (Thread/sleep 5000)
@@ -420,11 +508,18 @@
                        :errors []
                        :warnings []})]
         (wl/init api)
-        ;; Start an async run with explicit name to populate active-runs
+        ;; Start an async run with explicit name to populate canonical background-job state
         (execute-tool {:action "run"
                        :workflow "planner"
                        :prompt "plan it"
                        :name "my-plan-run"})
+        ;; Simulate canonical background-job visibility for the list query
+        (swap! test-state assoc :query-result {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                                               :psi.agent-session/session-id "test-session-1"
+                                               :psi.agent-session/background-jobs
+                                               [{:psi.background-job/tool-name "delegate"
+                                                 :psi.background-job/workflow-id "my-plan-run"
+                                                 :psi.background-job/status :running}]})
         ;; Now list — should show [async] tag
         (let [list-result (execute-tool {:action "list"})]
           (is (string? list-result))
@@ -443,6 +538,14 @@
                  (fn [params]
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-widget"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [_]
                    (Thread/sleep 50)
@@ -474,6 +577,13 @@
                               (swap! widget-calls conj {:wid wid :placement placement :lines lines}))
                 :clear-widget (fn [wid]
                                 (swap! clear-calls conj wid))})
+        (swap! test-state assoc :query-result {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                                               :psi.agent-session/session-id "test-session-1"
+                                               :psi.agent-session/background-jobs
+                                               [{:psi.background-job/tool-name "delegate"
+                                                 :psi.background-job/workflow-id "widget-test-run"
+                                                 :psi.background-job/status :running
+                                                 :psi.background-job/started-at (java.time.Instant/now)}]})
         (execute-tool {:action "run"
                        :workflow "planner"
                        :prompt "plan it"
@@ -485,8 +595,8 @@
             "widget id should be delegate-<run-id>")
         ;; Wait for completion
         (Thread/sleep 300)
-        ;; After completion, tracking is cleared
-        (is (empty? @(deref #'wl/active-runs)))))))
+        ;; After completion, only non-authoritative inflight wait state is cleared
+        (is (empty? @(deref #'wl/inflight-runs)))))))
 
 (deftest delegate-continue-blocked-run-test
   (testing "continue on blocked run uses the supplied prompt and resumes asynchronously"
@@ -495,6 +605,14 @@
                {:mutate-results
                 {'psi.workflow/register-definition
                  (fn [_] {:psi.workflow/registered? true})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-resume"
+                    :psi.background-job/status :completed})
                  'psi.workflow/resume-run
                  (fn [params]
                    (reset! resume-params params)
@@ -537,6 +655,14 @@
                    (reset! create-params params)
                    {:psi.workflow/run-id (:run-id params)
                     :psi.workflow/status :pending})
+                 'psi.extension/start-background-job
+                 (fn [params]
+                   {:psi.background-job/job-id (:job-id params)
+                    :psi.background-job/status :running})
+                 'psi.extension/mark-background-job-terminal
+                 (fn [_]
+                   {:psi.background-job/job-id "job-continue"
+                    :psi.background-job/status :completed})
                  'psi.workflow/execute-run
                  (fn [params]
                    (reset! execute-params params)

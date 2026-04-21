@@ -5,6 +5,7 @@
    [psi.ai.models :as models]
    [psi.ai.model-registry :as model-registry]
    [psi.agent-core.core :as agent]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as core]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
@@ -307,6 +308,55 @@
     {:psi.background-job/job-id (:job-id job)
      :psi.background-job/status (:status job)}))
 
+(pco/defmutation start-background-job
+  "Create a canonical background job entry for extension-owned async work."
+  [_ {:keys [psi/agent-session-ctx session-id tool-call-id tool-name job-id job-kind
+             workflow-ext-path workflow-id]}]
+  {::pco/op-name 'psi.extension/start-background-job
+   ::pco/params  [:psi/agent-session-ctx :session-id :tool-call-id :tool-name]
+   ::pco/output  [:psi.background-job/job-id
+                  :psi.background-job/status]}
+  (let [store  (ss/get-state-value-in agent-session-ctx (ss/state-path :background-jobs))
+        state' (:state (bg-jobs/start-background-job
+                        store
+                        {:tool-call-id      tool-call-id
+                         :thread-id         session-id
+                         :tool-name         tool-name
+                         :job-id            job-id
+                         :job-kind          job-kind
+                         :workflow-ext-path workflow-ext-path
+                         :workflow-id       workflow-id}))
+        job    (bg-jobs/find-job-by-tool-call-in state' tool-call-id)]
+    (dispatch/dispatch! agent-session-ctx
+                        :session/update-background-jobs-state
+                        {:update-fn (constantly state')}
+                        {:origin :mutations})
+    {:psi.background-job/job-id (:job-id job)
+     :psi.background-job/status (:status job)}))
+
+(pco/defmutation mark-background-job-terminal
+  "Mark a canonical background job as terminal for extension-owned async work."
+  [_ {:keys [psi/agent-session-ctx job-id outcome payload terminal-history-max-per-thread]}]
+  {::pco/op-name 'psi.extension/mark-background-job-terminal
+   ::pco/params  [:psi/agent-session-ctx :job-id :outcome]
+   ::pco/output  [:psi.background-job/job-id
+                  :psi.background-job/status]}
+  (let [store  (ss/get-state-value-in agent-session-ctx (ss/state-path :background-jobs))
+        state' (bg-jobs/mark-terminal
+                store
+                (cond-> {:job-id job-id
+                         :outcome outcome
+                         :payload payload}
+                  terminal-history-max-per-thread
+                  (assoc :terminal-history-max-per-thread terminal-history-max-per-thread)))
+        job    (bg-jobs/get-job-in state' job-id)]
+    (dispatch/dispatch! agent-session-ctx
+                        :session/update-background-jobs-state
+                        {:update-fn (constantly state')}
+                        {:origin :mutations})
+    {:psi.background-job/job-id (:job-id job)
+     :psi.background-job/status (:status job)}))
+
 (pco/defmutation remember
   "Capture a memory note for future sessions."
   [_ {:keys [psi/agent-session-ctx session-id text]}]
@@ -351,6 +401,8 @@
    reload-models
    reload-extension-installs
    cancel-job
+   start-background-job
+   mark-background-job-terminal
    remember
    login-begin
    logout])
