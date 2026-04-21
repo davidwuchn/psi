@@ -4,6 +4,7 @@
    steering/follow-up messages, compaction, runtime projections, interrupt,
    tool execution, skills, context usage, etc."
   (:require
+   [clojure.set :as set]
    [clojure.string :as str]
    [psi.agent-core.core :as agent]
    [psi.agent-session.background-jobs :as bg-jobs]
@@ -17,6 +18,39 @@
 
 (defn- register-core-handler! [event handler]
   (dispatch/register-handler! event handler))
+
+(defn- remove-queue-entry
+  [queue schedule-id]
+  (->> (or queue [])
+       (remove #(= schedule-id %))
+       vec))
+
+(defn- scheduler-schedules
+  [session-data]
+  (get-in session-data [:scheduler :schedules] {}))
+
+(defn- scheduler-queue
+  [session-data]
+  (get-in session-data [:scheduler :queue] []))
+
+(defn- update-scheduler-record
+  [session-data schedule-id f]
+  (if (get-in session-data [:scheduler :schedules schedule-id])
+    (update-in session-data [:scheduler :schedules schedule-id] f)
+    session-data))
+
+(defn- schedule-record
+  [session-data schedule-id]
+  (get-in session-data [:scheduler :schedules schedule-id]))
+
+(defn- delivered-scheduled-user-message
+  [schedule]
+  {:role "user"
+   :content [{:type :text :text (:message schedule)}]
+   :timestamp (java.time.Instant/now)
+   :source :scheduled
+   :schedule-id (:schedule-id schedule)
+   :label (:label schedule)})
 
 (defn- register-session-config-handlers! []
   (register-core-handler!
@@ -480,7 +514,167 @@
                          :count  (if existing? (count tools) (inc (count tools)))}}
          (not existing?)
          (assoc :effects [{:effect/type :runtime/agent-set-tools
-                           :tool-maps (conj (vec tools) tool)}]))))))
+                           :tool-maps (conj (vec tools) tool)}])))))
+
+  (register-core-handler!
+   :scheduler/create
+   (fn [_ctx {:keys [session-id schedule-id label message fire-at]}]
+     (let [created-at (java.time.Instant/now)
+           schedule   {:schedule-id schedule-id
+                       :label label
+                       :message message
+                       :source :scheduled
+                       :created-at created-at
+                       :fire-at fire-at
+                       :status :pending
+                       :session-id session-id}]
+       {:root-state-update
+        (session/session-update session-id
+                                #(assoc-in % [:scheduler :schedules schedule-id] schedule))
+        :effects [{:effect/type :scheduler/start-timer
+                   :schedule-id schedule-id
+                   :fire-at fire-at}]
+        :return schedule})))
+
+  (register-core-handler!
+   :scheduler/cancel
+   (fn [ctx {:keys [session-id schedule-id]}]
+     (let [sd       (session/get-session-data-in ctx session-id)
+           schedule (schedule-record sd schedule-id)]
+       (if-not (contains? #{:pending :queued} (:status schedule))
+         {:return {:cancelled? false
+                   :schedule-id schedule-id
+                   :status (:status schedule)}}
+         {:root-state-update
+          (session/session-update session-id
+                                  #(-> %
+                                       (update-scheduler-record schedule-id (fn [s]
+                                                                              (assoc s :status :cancelled)))
+                                       (update-in [:scheduler :queue] remove-queue-entry schedule-id)))
+          :effects [{:effect/type :scheduler/cancel-timer
+                     :schedule-id schedule-id}]
+          :return {:cancelled? true
+                   :schedule-id schedule-id
+                   :status :cancelled}}))))
+
+  (register-core-handler!
+   :scheduler/fired
+   (fn [ctx {:keys [session-id schedule-id]}]
+     (let [sd       (session/get-session-data-in ctx session-id)
+           schedule (schedule-record sd schedule-id)]
+       (cond
+         (nil? schedule)
+         {:return {:fired? false
+                   :schedule-id schedule-id
+                   :reason :missing}}
+
+         (not= :pending (:status schedule))
+         {:return {:fired? false
+                   :schedule-id schedule-id
+                   :status (:status schedule)}}
+
+         (session/idle-in? ctx session-id)
+         {:effects [{:effect/type :runtime/dispatch-event
+                     :event-type :scheduler/deliver
+                     :event-data {:session-id session-id
+                                  :schedule-id schedule-id}
+                     :origin :core}]
+          :return {:fired? true
+                   :schedule-id schedule-id
+                   :delivery :immediate}}
+
+         :else
+         {:root-state-update
+          (session/session-update session-id
+                                  #(-> %
+                                       (update-scheduler-record schedule-id (fn [s]
+                                                                              (assoc s :status :queued)))
+                                       (update-in [:scheduler :queue] (fnil conj []) schedule-id)))
+          :return {:fired? true
+                   :schedule-id schedule-id
+                   :delivery :queued}}))))
+
+  (register-core-handler!
+   :scheduler/deliver
+   (fn [ctx {:keys [session-id schedule-id]}]
+     (let [sd       (session/get-session-data-in ctx session-id)
+           schedule (schedule-record sd schedule-id)]
+       (cond
+         (nil? schedule)
+         {:return {:delivered? false
+                   :schedule-id schedule-id
+                   :reason :missing}}
+
+         (not (contains? #{:pending :queued} (:status schedule)))
+         {:return {:delivered? false
+                   :schedule-id schedule-id
+                   :status (:status schedule)}}
+
+         (not (session/idle-in? ctx session-id))
+         {:return {:delivered? false
+                   :schedule-id schedule-id
+                   :reason :session-busy}}
+
+         :else
+         {:root-state-update
+          (session/session-update session-id
+                                  #(-> %
+                                       (update-scheduler-record schedule-id (fn [s]
+                                                                              (assoc s :status :delivered)))
+                                       (update-in [:scheduler :queue] remove-queue-entry schedule-id)))
+          :effects [{:effect/type :runtime/dispatch-event-with-effect-result
+                     :event-type :session/prompt-submit
+                     :event-data {:session-id session-id
+                                  :user-msg (delivered-scheduled-user-message schedule)}
+                     :origin :core}
+                    {:effect/type :runtime/dispatch-event
+                     :event-type :session/prompt
+                     :event-data {:session-id session-id}
+                     :origin :core}
+                    {:effect/type :runtime/dispatch-event-with-effect-result
+                     :event-type :session/prompt-prepare-request
+                     :event-data {:session-id session-id
+                                  :turn-id (str (java.util.UUID/randomUUID))
+                                  :user-msg (delivered-scheduled-user-message schedule)}
+                     :origin :core}]
+          :return {:delivered? true
+                   :schedule-id schedule-id
+                   :status :delivered}}))))
+
+  (register-core-handler!
+   :scheduler/drain-queue
+   (fn [ctx {:keys [session-id]}]
+     (let [sd          (session/get-session-data-in ctx session-id)
+           queue       (scheduler-queue sd)
+           schedules   (scheduler-schedules sd)
+           queued-ids  (->> queue
+                            (filter #(= :queued (get-in schedules [% :status])))
+                            vec)
+           oldest-id   (->> queued-ids
+                            (sort-by (fn [schedule-id]
+                                       (let [schedule (get schedules schedule-id)]
+                                         [(:fire-at schedule)
+                                          (:created-at schedule)
+                                          schedule-id])))
+                            first)
+           stale-ids   (vec (set/difference (set queue) (set queued-ids)))]
+       (cond-> {:return {:drained? (boolean oldest-id)
+                         :schedule-id oldest-id}}
+         (seq stale-ids)
+         (assoc :root-state-update
+                (session/session-update session-id
+                                        #(update-in % [:scheduler :queue]
+                                                    (fn [xs]
+                                                      (vec (remove (set stale-ids) (or xs [])))))))
+
+         oldest-id
+         (update :effects (fnil conj []) {:effect/type :runtime/dispatch-event
+                                          :event-type :scheduler/deliver
+                                          :event-data {:session-id session-id
+                                                       :schedule-id oldest-id}
+                                          :origin :core})))))
+
+  )
 
 (defn register!
   "Register all session mutation handlers. Called once during context creation."

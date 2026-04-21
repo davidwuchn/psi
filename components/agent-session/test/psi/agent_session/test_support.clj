@@ -13,6 +13,9 @@
    [psi.agent-session.project-nrepl-runtime :as project-nrepl-runtime]
    [psi.agent-session.services :as services]
    [psi.agent-session.session :as session-data]
+   [psi.agent-session.persistence :as persistence]
+   [psi.agent-session.prompt-recording :as prompt-recording]
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as session-sc]
    [psi.agent-session.tool-plan :as tool-plan]
@@ -120,12 +123,27 @@
                        :post-tool-registry           (post-tool/create-registry)
                        :tool-batch-executor          tool-batch-executor
                        :extension-run-fn-atom        (atom nil)
+                       :scheduler-timers*            (atom {})
                        :apply-root-state-update-fn   ss/apply-root-state-update-in!
                        :read-session-state-fn        ss/get-state-value-in
                        :execute-dispatch-effect-fn   (fn [ctx effect] (dispatch-effects/execute-effect! ctx effect))
                        :dispatch-statechart-event-fn dispatch-statechart-event-fn
                        :runtime-tool-executor-fn     tool-plan/default-execute-runtime-tool-in!
                        :execute-tool-runtime-fn      #'tool-plan/execute-tool-runtime-in!
+                       :build-prepared-request-fn    #'prompt-request/build-prepared-request
+                       :build-record-response-fn     #'prompt-recording/build-record-response
+                       :continue-prompt-chain-fn     (fn [_ctx _session-id _execution-result _progress-queue]
+                                                       {:continued? true})
+                       :execute-prepared-request-fn  (fn [_ai-ctx _ctx sid prepared _progress-queue]
+                                                       {:execution-result/turn-id (:prepared-request/id prepared)
+                                                        :execution-result/session-id sid
+                                                        :execution-result/assistant-message {:role "assistant"
+                                                                                             :content [{:type :text :text "ok"}]
+                                                                                             :stop-reason :stop
+                                                                                             :timestamp (java.time.Instant/now)}
+                                                        :execution-result/turn-outcome :turn.outcome/stop
+                                                        :execution-result/tool-calls []
+                                                        :execution-result/stop-reason :stop})
                        :persist?                     false
                        :notify-extension-fn         (fn
                                                        ([ctx role content custom-type]
@@ -158,7 +176,7 @@
                        :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
                        :daemon-thread-fn             (fn [f] (doto (Thread. ^Runnable f) (.setDaemon true) (.start)))
                        :effective-cwd-fn             (fn [ctx session-id] (ss/session-worktree-path-in ctx session-id))
-                       :journal-append-fn            (fn [_ctx _session-id _entry] nil)}
+                       :journal-append-fn            persistence/append-entry-in!}
         _             (dispatch-handlers/register-all! ctx)
         actions-fn     (dispatch-handlers/make-actions-fn ctx)
         ctx            (assoc ctx :session-actions-fn actions-fn)]

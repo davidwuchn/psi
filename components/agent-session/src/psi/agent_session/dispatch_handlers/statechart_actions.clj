@@ -81,7 +81,8 @@
                                                          :interrupt-pending false
                                                          :interrupt-requested-at nil))
       :effects [{:effect/type :runtime/mark-workflow-jobs-terminal}
-                {:effect/type :runtime/emit-background-job-terminal-messages}]}))
+                {:effect/type :runtime/emit-background-job-terminal-messages}
+                {:effect/type :scheduler/drain-queue}]}))
 
   (dispatch/register-handler!
    :on-abort
@@ -90,7 +91,8 @@
                                                          :is-streaming false
                                                          :interrupt-pending false
                                                          :interrupt-requested-at nil))
-      :effects [{:effect/type :runtime/agent-abort}]}))
+      :effects [{:effect/type :runtime/agent-abort}
+                {:effect/type :scheduler/drain-queue}]}))
 
   (dispatch/register-handler!
    :on-auto-compact-triggered
@@ -110,7 +112,8 @@
   (dispatch/register-handler!
    :on-compact-done
    (fn [_ctx {:keys [session-id]}]
-     {:root-state-update (session/session-update session-id #(assoc % :is-compacting false))}))
+     {:root-state-update (session/session-update session-id #(assoc % :is-compacting false))
+      :effects [{:effect/type :scheduler/drain-queue}]}))
 
   (dispatch/register-handler!
    :on-retry-triggered

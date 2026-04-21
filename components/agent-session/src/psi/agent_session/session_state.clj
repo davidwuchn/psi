@@ -68,6 +68,21 @@
   [sid]
   [:agent-session :sessions sid :turn :ctx])
 
+(defn- session-scheduler-path
+  "Build the path to scheduler state within a session."
+  [sid]
+  [:agent-session :sessions sid :data :scheduler])
+
+(defn- session-scheduler-schedules-path
+  "Build the path to scheduler schedule map within a session."
+  [sid]
+  [:agent-session :sessions sid :data :scheduler :schedules])
+
+(defn- session-scheduler-queue-path
+  "Build the path to scheduler delivery queue within a session."
+  [sid]
+  [:agent-session :sessions sid :data :scheduler :queue])
+
 (def ^:private static-state-paths
   {:workflow-state  [:workflows]
    :workflow-definitions [:workflows :definitions]
@@ -91,12 +106,16 @@
    :provider-replies         #(session-telemetry-path % :provider-replies)
    :journal                  session-journal-path
    :flush-state              session-flush-state-path
-   :turn-ctx                 session-turn-ctx-path})
+   :turn-ctx                 session-turn-ctx-path
+   :scheduler                session-scheduler-path
+   :scheduler-schedules      session-scheduler-schedules-path
+   :scheduler-queue          session-scheduler-queue-path})
 
 (defn state-path
   "Return the canonical root-state path vector for the named state key.
    Session-scoped keys (:session-data, :provider-error-replies, :journal,
-   :flush-state, :turn-ctx, :tool-output-stats, :tool-call-attempts,
+   :flush-state, :turn-ctx, :scheduler, :scheduler-schedules,
+   :scheduler-queue, :tool-output-stats, :tool-call-attempts,
    :tool-lifecycle-events, :provider-requests, :provider-replies) require
    a session-id `sid` and return nil when none is provided.
    Non-session keys work with one arg.

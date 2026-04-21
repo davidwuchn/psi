@@ -280,6 +280,7 @@
                               :tool-batch-executor        tool-batch-executor
                               :extension-run-fn-atom      (atom nil)
                               :background-job-ui-refresh-fn (atom nil)
+                              :scheduler-timers*          (atom {})
                               :projection-listeners*      projection-listeners*}
                              (callback-fns mutations projection-listeners*))
         _                   (dispatch-handlers/register-all! ctx0)
@@ -316,5 +317,10 @@
 (defn shutdown-context!
   "Release runtime resources owned by ctx. Safe to call multiple times."
   [ctx]
+  (doseq [[_ thread] @(or (:scheduler-timers* ctx) (atom {}))]
+    (try
+      (.interrupt ^Thread thread)
+      (catch Exception _
+        nil)))
   (shutdown-tool-batch-executor! (:tool-batch-executor ctx))
   nil)

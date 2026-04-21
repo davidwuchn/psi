@@ -83,6 +83,15 @@
    [:runtime/schedule-thread-sleep-send-event
     [:map [:effect/type [:= :runtime/schedule-thread-sleep-send-event]]
      [:delay-ms pos-int?] [:event :any]]]
+   [:scheduler/start-timer
+    [:map [:effect/type [:= :scheduler/start-timer]]
+     [:schedule-id :string]
+     [:fire-at inst?]]]
+   [:scheduler/cancel-timer
+    [:map [:effect/type [:= :scheduler/cancel-timer]]
+     [:schedule-id :string]]]
+   [:scheduler/drain-queue
+    [:map [:effect/type [:= :scheduler/drain-queue]]]]
    [:persist/journal-append-model-entry
     [:map [:effect/type [:= :persist/journal-append-model-entry]]
      [:provider :string] [:model-id :string]]]

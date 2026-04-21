@@ -227,6 +227,44 @@
        (Thread/sleep ^long (:delay-ms effect))
        (sc/send-event! (:sc-env ctx) sc-session-id (:event effect))))))
 
+(defmethod execute-effect! :scheduler/start-timer [ctx effect]
+  (let [schedule-id (:schedule-id effect)
+        fire-at     (:fire-at effect)
+        delay-ms    (max 0 (.toMillis (java.time.Duration/between (java.time.Instant/now) fire-at)))
+        runner      (fn []
+                      (try
+                        (Thread/sleep ^long delay-ms)
+                        (dispatch/dispatch! ctx
+                                            :scheduler/fired
+                                            {:session-id (effect-session-id ctx effect)
+                                             :schedule-id schedule-id}
+                                            {:origin :core})
+                        (catch InterruptedException _
+                          nil)
+                        (finally
+                          (when-let [timers* (:scheduler-timers* ctx)]
+                            (swap! timers* dissoc schedule-id)))))]
+    (if-let [timers* (:scheduler-timers* ctx)]
+      (let [thread ((:daemon-thread-fn ctx) runner)]
+        (swap! timers* assoc schedule-id thread)
+        thread)
+      ((:daemon-thread-fn ctx) runner))))
+
+(defmethod execute-effect! :scheduler/cancel-timer [ctx effect]
+  (when-let [thread (some-> ctx :scheduler-timers* deref (get (:schedule-id effect)))]
+    (try
+      (.interrupt ^Thread thread)
+      (catch Exception _
+        nil))
+    (swap! (:scheduler-timers* ctx) dissoc (:schedule-id effect))
+    true))
+
+(defmethod execute-effect! :scheduler/drain-queue [ctx effect]
+  (dispatch/dispatch! ctx
+                      :scheduler/drain-queue
+                      {:session-id (effect-session-id ctx effect)}
+                      {:origin :core}))
+
 ;;; Statechart
 
 (defmethod execute-effect! :statechart/send-event [ctx effect]
