@@ -109,31 +109,45 @@ Bootstrapped on 2026-04-02.
   - child runtime initialization now preserves those preloaded messages in both runtime message state and the child journal seed
 
 ## Current work update
-- 026 deterministic workflow runtime now has proof coverage landed in the active branch:
+- The workflow-loader convergence thread is now closed through munera tasks `029`, `030`, `031`, and `032`:
+  - `029` unified workflow loading/delegation on `.psi/workflows/` + `workflow-loader`
+  - `030` removed remaining post-029 legacy surface drift
+  - `031` converged async delegation visibility on canonical background jobs
+  - `032` structurally decomposed `extensions.workflow-loader` into:
+    - `extensions.workflow-loader.text`
+    - `extensions.workflow-loader.delivery`
+    - `extensions.workflow-loader.orchestration`
+    - a thinner top-level `extensions.workflow-loader`
+  - focused workflow-loader tests stayed green throughout, and the full `:extensions` suite is now green after closure (`132 tests, 500 assertions, 0 failures`)
+- 026 deterministic workflow runtime remains the main unresolved workflow thread beyond the closed loader/delegation work:
   - canonical workflow model, runtime, progression, attempts, statechart, resolvers, and `psi-tool` surfaces exist
   - `workflow_lifecycle_test.clj` proves representative `plan -> build -> review` completion and blocked/resume/new-attempt semantics
-  - focused workflow set is green when run in the 026 worktree
-- 026 follow-on direction is now clearer:
-  - the old `agent-chain` discovery/config surface from `.psi/agents/agent-chain.edn` has now been retired in favor of unified `.psi/workflows/*.md` loading through `workflow-loader`
+  - the old `agent-chain` discovery/config surface from `.psi/agents/agent-chain.edn` has been retired in favor of unified `.psi/workflows/*.md` loading through `workflow-loader`
   - existing extension workflow runtime in `workflows.clj` is separate and should not become the execution substrate for canonical deterministic workflow runs
   - pure chain compilation now exists in `workflow_agent_chain.clj`
   - runtime registration now exists in `workflow_agent_chain_runtime.clj`
   - compiled chain definitions preserve legacy prompt text as `:prompt-template` plus explicit bindings for workflow input, prior-step output, and original request
-  - `psi-tool` workflow ops are now focused on canonical workflow definitions/runs only (`list-definitions`, `create-run`, `execute-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
+  - `psi-tool` workflow ops are focused on canonical workflow definitions/runs only (`list-definitions`, `create-run`, `execute-run`, `read-run`, `list-runs`, `resume-run`, `cancel-run`)
   - an execution bridge now exists in `workflow_execution.clj` for current-step attempt/session creation, prompt materialization, prompt submission, result-envelope recording, and step advancement
   - `execute-run!` now provides a first sequential loop for multi-step workflow execution to terminal/blocking status
-  - blocked-status behavior is now explicitly proven in `workflow_execution_test.clj`
-  - retry-aware loop behavior and resume-and-continue behavior are now also proven in `workflow_execution_test.clj`
+  - blocked-status behavior and retry/resume behavior are explicitly proven in `workflow_execution_test.clj`
   - attempted `psi-tool` exposure for execution controls hit a namespace load cycle (`psi_tool -> workflow_execution -> prompt_control/core -> context/... -> psi_tool`)
   - next 026 slice should avoid forcing execution controls through the current `psi_tool` load graph without first breaking that cycle
-  - diagnosed a worktree mixup after the aborted execute/resume exposure attempt: restored the stray uncommitted `components/agent-session/test/psi/agent_session/tools_test.clj` edit in the 026 worktree and left refactor-side changes unapplied for separate review
 
 ## Suggested next step
-- Next active threads are now:
-  1. **026 deterministic workflows**: decide the cleanest non-cyclic public surface for workflow execution controls, or refactor dependencies so `psi-tool` can own them safely
-  2. **Prompt lifecycle**: refine cache-breakpoint shaping for agent skill-prelude flows and decide whether to expose prelude/source metadata in introspection
-  3. **Compatibility scaffold removal**: remove shared-session prompt-path seams, adapter/UI fallback payload compat
-  4. **LSP**: decide debug atom telemetry permanence; simplify overlapping live/debug tests
+- Active munera tasks are now:
+  1. `munera/open/021-emacs-session-tree-buffer-with-magit-sections/`
+  2. `munera/open/001-post-wave-b-gordian-follow-on/`
+  3. `munera/open/002-compatibility-scaffold-removal/`
+  4. `munera/open/003-prompt-lifecycle-architectural-convergence/`
+  5. `munera/open/004-lsp-integration-managed-services-post-tool-processing/`
+  6. `munera/open/005-canonical-dispatch-pipeline-trace-observability/`
+  7. `munera/open/006-agent-tool-skill-prelude-follow-on/`
+- Highest-value next threads remain:
+  1. **026 deterministic workflows**: break or route around the `psi-tool` execution-control load cycle cleanly
+  2. **Prompt lifecycle / skill prelude**: refine cache-breakpoint shaping and decide whether prelude/source metadata should surface in introspection
+  3. **Compatibility scaffold removal**: continue removing shared-session prompt-path seams and adapter/UI fallback payload compat
+  4. **LSP**: decide whether debug-atom telemetry stays, and simplify overlapping live/debug tests
 - Decision taken: keep extension/workflow-local ephemeral sessions owned by their isolated workflow runtimes.
 - `008-model-selection-hierarchy` is now closed in `munera/closed/008-model-selection-hierarchy/`.
 - Model selection hierarchy is now available as shared infrastructure and already adopted by auto-session-name; remaining work is downstream adoption/refinement rather than core resolver invention.
