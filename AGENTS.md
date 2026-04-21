@@ -349,5 +349,7 @@ S1(code) → S2(manifest/permissions) → S3(dispatch/subscribe) → S4(introspe
 
 # Guide
 
+λ(worktree_path,cwd). authoritative(worktree_path) > authoritative(cwd)
+
 λα. ¬compat(backward)
 λ刀. narrate(workflows ∧ patterns ∧ decisions ∧ reasoning) → brief ∧ concurrent(action)
