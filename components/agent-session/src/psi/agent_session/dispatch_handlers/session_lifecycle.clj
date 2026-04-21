@@ -1,7 +1,8 @@
 (ns psi.agent-session.dispatch-handlers.session-lifecycle
-  "Handlers for session creation, resumption, forking, and child creation:
+  "Handlers for session creation, resumption, forking, child creation,
+   and context-level close notifications:
    new-initialize, resume-loaded, fork-initialize, create-child,
-   resume-missing-initialize."
+   resume-missing-initialize, context-closed."
   (:require
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-handlers.session-state :as ss]
@@ -100,4 +101,15 @@
    (fn [ctx {:keys [session-id session-path]}]
      (let [current-sd (session/get-session-data-in ctx session-id)]
        {:root-state-update #(ss/initialize-resume-missing-state % current-sd session-path)
-        :return-key        (ss/session-data-path session-id)}))))
+        :return-key        (ss/session-data-path session-id)})))
+
+  (dispatch/register-handler!
+   :session/context-closed
+   (fn [_ctx {:keys [session-id active-session-id]}]
+     {:effects [{:effect/type :projection/context-changed
+                 :session-id session-id
+                 :active-session-id active-session-id
+                 :reason :session/context-closed}]
+      :return {:closed? true
+               :session-id session-id
+               :active-session-id active-session-id}})))

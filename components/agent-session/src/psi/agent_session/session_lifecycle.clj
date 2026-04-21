@@ -1,5 +1,5 @@
 (ns psi.agent-session.session-lifecycle
-  "Session lifecycle operations — create, resume, fork, switch."
+  "Session lifecycle operations — create, resume, fork, switch, close."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -7,6 +7,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.session-close :as session-close]
    [psi.agent-session.session-runtime :as runtime]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.workflows :as wf]))
@@ -249,3 +250,9 @@
         (throw (ex-info "session id not found in context session index"
                         {:error-code "request/not-found"
                          :session-id session-id}))))))
+
+(defn close-session-in!
+  "Detach a single session from the in-memory context.
+   Returns {:closed? bool :session-id sid :active-session-id sid-or-nil}."
+  [ctx session-id]
+  (session-close/close-session-in! ctx session-id))

@@ -52,6 +52,10 @@
   [ctx source-session-id session-id]
   (lifecycle/ensure-session-loaded-in! ctx source-session-id session-id))
 
+(defn close-session-in!
+  [ctx session-id]
+  (lifecycle/close-session-in! ctx session-id))
+
 (defn prompt-in!
   ([ctx session-id text]
    (prompt-control/prompt-in! ctx session-id text))

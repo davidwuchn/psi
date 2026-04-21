@@ -69,6 +69,5 @@ Relevant files:
   - `psi.agent-session.scheduler-cancel-job-test`
 
 ## Remaining gaps
-- session-close semantics are only covered at full context shutdown right now; there is not yet a dedicated per-session close path that cancels pending/queued schedules for one session while leaving sibling sessions intact
-- no full end-to-end timer-fire integration test yet for create → sleep → fire → deliver → idle on real time
-- no dedicated queued-cancel integration test yet beyond direct cancellation/projection coverage
+- no wall-clock sleep-based live timer integration test; current coverage drives canonical `:scheduler/fired` deterministically instead of waiting on real elapsed time
+- close semantics are runtime detachment only; persisted session files are intentionally preserved

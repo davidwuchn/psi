@@ -44,15 +44,15 @@ Slice 6 — Background-job integration:
 - [x] Ensure projected background-job status/display derives from scheduler state
 - [x] Route background-job cancel to `:scheduler/cancel`
 - [x] Clean up timer handles on session close
-- [ ] Cancel pending/queued schedules on session close
+- [x] Cancel pending/queued schedules on session close
 - [x] Integration test: schedule appears in background jobs widget
-- [ ] Integration test: session close cancels owned schedules and cleans up timer handles
+- [x] Integration test: session close cancels owned schedules and cleans up timer handles
 
 Slice 7 — End-to-end tests:
-- [ ] Full lifecycle: create → fire → deliver → agent responds → idle
+- [x] Full lifecycle: create → fire → deliver → agent responds → idle
 - [x] Busy session: create → fire → queue → idle → deliver
 - [x] Cancel pending schedule
-- [ ] Cancel queued schedule
+- [x] Cancel queued schedule
 - [x] Past absolute time → immediate fire
 - [x] Bounds rejection (too short, too long)
 - [x] Cap rejection (51st schedule)
