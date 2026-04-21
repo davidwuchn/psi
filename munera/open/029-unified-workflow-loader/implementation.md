@@ -110,7 +110,39 @@ Architecture decisions:
 - include_result_in_context maintains strict user/assistant alternation via bridge messages
 - Result injection happens on the async completion thread, not the calling thread
 
+2026-04-20
+- Deferred cleanup slice landed:
+
+8. **Legacy surface removal**
+   - removed `extensions/agent/` and `extensions/agent-chain/`
+   - removed legacy canonical workflow compatibility compiler/runtime:
+     - `workflow_agent_chain.clj`
+     - `workflow_agent_chain_runtime.clj`
+   - retired `.psi/agents/` directory from the project worktree
+   - removed `:psi.agent-chain/*` discovery resolver attrs and their tests
+   - removed `psi-tool` workflow compatibility ops:
+     - `register-agent-chains`
+     - `create-run-from-agent-chain`
+   - updated `psi_tool` request validation/docs to canonical workflow ops only
+   - removed agent/agent-chain source + test paths from:
+     - `deps.edn`
+     - `tests.edn`
+     - `extensions/deps.edn`
+   - updated docs/current-surface references:
+     - `doc/extensions.md`
+     - `components/agent-session/extensions.clj` tool-name examples
+     - `mementum/state.md`
+     - bootstrap invariant / tool validation tests
+
+Validation:
+- focused cleanup-related suite green:
+  - `psi.agent-session.workflow-tools-test`
+  - `psi.agent-session.tools-test`
+  - `psi.agent-session.resolvers-test`
+  - `psi.bootstrap-extension-invariant-test`
+  - `extensions.workflow-loader-test`
+  - `extensions.workflow-loader-delegate-test`
+- result: `51 tests, 394 assertions, 0 failures`
+
 Remaining work:
-- Consolidated widget for active/recent runs
-- Extension cleanup: remove old `agent` and `agent-chain` extensions
-- AGENTS.md prompt contribution update
+- none for task 029 feature parity; branch now includes both unified workflow-loader implementation and legacy surface removal

@@ -80,12 +80,15 @@ Migration:
 - [x] Verify all migrated workflows load and compile correctly (27 assertions)
 
 Cleanup — deferred to later slice:
-- [ ] Remove `agent` extension from `extensions/`
-- [ ] Remove `agent-chain` extension from `extensions/`
-- [ ] Remove legacy `workflow-agent-chain` compiler
-- [ ] Retire `.psi/agents/` directory
-- [ ] Retire `:psi.agent-chain/*` discovery resolver attrs
-- [ ] Update docs
+- [x] Remove `agent` extension from `extensions/`
+- [x] Remove `agent-chain` extension from `extensions/`
+- [x] Remove legacy `workflow-agent-chain` compiler
+- [x] Retire `.psi/agents/` directory
+- [x] Retire `:psi.agent-chain/*` discovery resolver attrs
+- [x] Update docs
+  - `doc/extensions.md` now documents `workflow-loader` + `delegate`
+  - `psi-tool` workflow ops/docs now expose canonical-only workflow operations
+  - `deps.edn`, `tests.edn`, and `extensions/deps.edn` no longer include agent/agent-chain paths
 
 Remaining for full feature parity:
-- Extension cleanup (removing old extensions and legacy code)
+- none
