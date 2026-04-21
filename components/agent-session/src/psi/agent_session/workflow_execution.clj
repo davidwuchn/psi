@@ -14,6 +14,9 @@
   (:require
    [clojure.string :as str]
    [psi.agent-session.prompt-control :as prompt-control]
+   [psi.agent-session.session-state :as session-state]
+   [psi.agent-session.skills :as skills]
+   [psi.agent-session.tool-defs :as tool-defs]
    [psi.agent-session.workflow-attempts :as workflow-attempts]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
@@ -95,6 +98,40 @@
 
     :else nil))
 
+(defn- resolve-step-skills
+  [ctx parent-session-id skill-config]
+  (let [session-skills (vec (or (:skills (session-state/get-session-data-in ctx parent-session-id)) []))]
+    (when (some? skill-config)
+      (mapv (fn [skill]
+              (cond
+                (map? skill) skill
+                (string? skill)
+                (or (skills/find-skill session-skills skill)
+                    {:name skill
+                     :description ""
+                     :file-path ""
+                     :base-dir ""
+                     :source :project
+                     :disable-model-invocation false})
+                :else skill))
+            skill-config))))
+
+(defn- resolve-step-tool-defs
+  [ctx parent-session-id tool-config]
+  (let [session-tool-defs (vec (or (:tool-defs (session-state/get-session-data-in ctx parent-session-id)) []))]
+    (when (some? tool-config)
+      (mapv (fn [tool]
+              (cond
+                (map? tool)
+                (tool-defs/normalize-tool-def tool)
+
+                (string? tool)
+                (or (some #(when (= tool (:name %)) %) session-tool-defs)
+                    (tool-defs/normalize-tool-def {:name tool}))
+
+                :else tool))
+            tool-config))))
+
 (defn resolve-step-session-config
   "Resolve child session configuration for a workflow step.
 
@@ -103,25 +140,29 @@
    from registered definitions to get that step's :workflow-file-meta.
 
    Returns a map with composed prompt/config for child session creation."
-  [ctx workflow-run step-id]
-  (let [step-def  (get-in workflow-run [:effective-definition :steps step-id])
-        profile   (get-in step-def [:executor :profile])
-        run-meta  (get-in workflow-run [:effective-definition :workflow-file-meta])
-        delegated-workflow? (and profile
-                                 (not= profile (:definition-id (:effective-definition workflow-run))))
-        step-meta (if delegated-workflow?
-                    (let [ref-def (get-in @(:state* ctx)
-                                          [:workflows :definitions profile])]
-                      (or (:workflow-file-meta ref-def) {}))
-                    (or run-meta {}))
-        framing-prompt (when delegated-workflow? (:framing-prompt run-meta))]
-    {:base-system-prompt (:system-prompt step-meta)
-     :framing-prompt framing-prompt
-     :system-prompt  (compose-system-prompt (:system-prompt step-meta) framing-prompt)
-     :tool-defs      (or (:tools step-meta) [])
-     :thinking-level (or (:thinking-level step-meta) :off)
-     :skills         (:skills step-meta)
-     :model          (:model step-meta)}))
+  ([ctx workflow-run step-id]
+   (resolve-step-session-config ctx nil workflow-run step-id))
+  ([ctx parent-session-id workflow-run step-id]
+   (let [step-def  (get-in workflow-run [:effective-definition :steps step-id])
+         profile   (get-in step-def [:executor :profile])
+         run-meta  (get-in workflow-run [:effective-definition :workflow-file-meta])
+         delegated-workflow? (and profile
+                                  (not= profile (:definition-id (:effective-definition workflow-run))))
+         step-meta (if delegated-workflow?
+                     (let [ref-def (get-in @(:state* ctx)
+                                           [:workflows :definitions profile])]
+                       (or (:workflow-file-meta ref-def) {}))
+                     (or run-meta {}))
+         framing-prompt (when delegated-workflow? (:framing-prompt run-meta))
+         parent-session-id (or parent-session-id
+                               (some->> (session-state/list-context-sessions-in ctx) first :session-id))]
+     {:base-system-prompt (:system-prompt step-meta)
+      :framing-prompt framing-prompt
+      :system-prompt  (compose-system-prompt (:system-prompt step-meta) framing-prompt)
+      :tool-defs      (resolve-step-tool-defs ctx parent-session-id (:tools step-meta))
+      :thinking-level (or (:thinking-level step-meta) :off)
+      :skills         (resolve-step-skills ctx parent-session-id (:skills step-meta))
+      :model          (:model step-meta)})))
 
 (defn execute-current-step!
   "Execute the current workflow step as one bounded child-session attempt.
@@ -136,7 +177,7 @@
   (let [workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) run-id)
         step-id      (:current-step-id workflow-run)
         {:keys [prompt]} (step-prompt workflow-run step-id)
-        step-config  (resolve-step-session-config ctx workflow-run step-id)
+        step-config  (resolve-step-session-config ctx parent-session-id workflow-run step-id)
         {:keys [attempt execution-session]}
         (workflow-attempts/create-step-attempt-session!
          ctx

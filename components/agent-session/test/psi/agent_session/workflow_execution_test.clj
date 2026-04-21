@@ -2,6 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session :as session-model]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.workflow-execution :as workflow-execution]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
@@ -112,9 +113,17 @@
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")
           config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1")]
       (is (= "You are a planner." (:system-prompt config)))
-      (is (= ["read" "bash"] (:tool-defs config)))
+      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "bash" :label "bash" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}]
+             (:tool-defs config)))
       (is (= :medium (:thinking-level config)))
-      (is (= ["clojure-coding-standards"] (:skills config)))
+      (is (= [{:name "clojure-coding-standards"
+               :description ""
+               :file-path ""
+               :base-dir ""
+               :source :project
+               :disable-model-invocation false}]
+             (:skills config)))
       (is (= {:provider :anthropic :id "claude-test"} (:model config))))))
 
 (deftest resolve-step-session-config-multi-step-test
@@ -141,15 +150,27 @@
       (is (= "You are a planner.\n\nCoordinate a plan-build cycle." (:system-prompt config1)))
       (is (= "You are a planner." (:base-system-prompt config1)))
       (is (= "Coordinate a plan-build cycle." (:framing-prompt config1)))
-      (is (= ["read" "bash"] (:tool-defs config1)))
+      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "bash" :label "bash" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}]
+             (:tool-defs config1)))
       (is (= :medium (:thinking-level config1)))
-      (is (= ["clojure-coding-standards"] (:skills config1)))
+      (is (= [{:name "clojure-coding-standards"
+               :description ""
+               :file-path ""
+               :base-dir ""
+               :source :project
+               :disable-model-invocation false}]
+             (:skills config1)))
 
       ;; Step 2: builder config + chain framing
       (is (= "You are a builder.\n\nCoordinate a plan-build cycle." (:system-prompt config2)))
       (is (= "You are a builder." (:base-system-prompt config2)))
       (is (= "Coordinate a plan-build cycle." (:framing-prompt config2)))
-      (is (= ["read" "bash" "edit" "write"] (:tool-defs config2)))
+      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "bash" :label "bash" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "edit" :label "edit" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "write" :label "write" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}]
+             (:tool-defs config2)))
       (is (= :off (:thinking-level config2)))
       (is (nil? (:skills config2))))))
 
@@ -307,11 +328,92 @@
           (is (= ["You are a planner.\n\nCoordinate a plan-build cycle."
                   "You are a builder.\n\nCoordinate a plan-build cycle."]
                  (mapv :system-prompt @child-create-opts*)))
-          (is (= [["clojure-coding-standards"] nil]
+          (is (= [[{:name "clojure-coding-standards"
+                    :description ""
+                    :file-path ""
+                    :base-dir ""
+                    :source :project
+                    :disable-model-invocation false}]
+                  nil]
                  (mapv :skills @child-create-opts*)))
           (is (= [{:provider :anthropic :id "claude-plan"}
                   {:provider :anthropic :id "claude-build"}]
                  (mapv :model @child-create-opts*))))))))
+
+(deftest execute-current-step-resolves-workflow-skill-names-before-child-session-test
+  (testing "delegated workflow skill names are resolved to canonical skill maps before child session creation"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          skill {:name "clojure-coding-standards"
+                 :description "Clojure coding standards"
+                 :file-path "/tmp/clojure-coding-standards/SKILL.md"
+                 :base-dir "/tmp/clojure-coding-standards"
+                 :source :project
+                 :disable-model-invocation false}
+          planner-with-skill (assoc single-step-definition-with-meta :workflow-file-meta
+                                    {:system-prompt "You are a planner."
+                                     :tools [{:name "read" :description "Read" :parameters {:type "object"}}
+                                             {:name "bash" :description "Bash" :parameters {:type "object"}}]
+                                     :skills ["clojure-coding-standards"]
+                                     :thinking-level :medium})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state planner-with-skill)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "planner"
+                                                                   :run-id "run-skill-1"
+                                                                   :workflow-input {:input "plan it"}})
+                           s (assoc-in s [:agent-session :sessions session-id :data :skills] [skill])
+                           s (assoc-in s [:agent-session :sessions session-id :data :tool-defs]
+                                       [{:name "read" :description "Read" :parameters {:type "object"}}
+                                        {:name "bash" :description "Bash" :parameters {:type "object"}}])]
+                       s)))
+          child-create-opts* (atom nil)]
+      (with-redefs [psi.agent-session.workflow-attempts/create-step-attempt-session!
+                    (fn [_ctx _parent-session-id opts]
+                      (reset! child-create-opts* opts)
+                      {:attempt {:attempt-id "a1" :status :pending :execution-session-id "child-1"}
+                       :execution-session {:session-id "child-1"}})
+                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
+                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                                 {:content "planner output"})]
+        (let [result (workflow-execution/execute-current-step! ctx session-id "run-skill-1")]
+          (is (= "step-1" (:step-id result)))
+          (is (= [skill] (:skills @child-create-opts*)))
+          (is (true? (session-model/valid-skill? (first (:skills @child-create-opts*))))))))))
+
+(deftest execute-current-step-resolves-workflow-tool-names-before-child-session-test
+  (testing "delegated workflow tool names are resolved to canonical tool defs before child session creation"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          tool-defs [{:name "read" :description "Read" :parameters {:type "object"}}
+                     {:name "bash" :description "Bash" :parameters {:type "object"}}]
+          planner-with-tools (assoc single-step-definition-with-meta :workflow-file-meta
+                                    {:system-prompt "You are a planner."
+                                     :tools ["read" "bash"]
+                                     :thinking-level :medium})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state planner-with-tools)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "planner"
+                                                                   :run-id "run-tool-1"
+                                                                   :workflow-input {:input "plan it"}})
+                           s (assoc-in s [:agent-session :sessions session-id :data :tool-defs] tool-defs)]
+                       s)))
+          child-create-opts* (atom nil)]
+      (with-redefs [psi.agent-session.workflow-attempts/create-step-attempt-session!
+                    (fn [_ctx _parent-session-id opts]
+                      (reset! child-create-opts* opts)
+                      {:attempt {:attempt-id "a1"
+                                 :status :pending
+                                 :execution-session-id "child-1"}
+                       :execution-session {:session-id "child-1"}})
+                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
+                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                                 {:content "planner output"})]
+        (let [result (workflow-execution/execute-current-step! ctx session-id "run-tool-1")]
+          (is (= "step-1" (:step-id result)))
+          (is (= [{:name "read" :description "Read" :parameters {:type "object"}}
+                  {:name "bash" :description "Bash" :parameters {:type "object"}}]
+                 (mapv #(select-keys % [:name :description :parameters])
+                       (:tool-defs @child-create-opts*)))))))))
 
 (deftest execute-run-blocked-test
   (testing "execute-run! stops and reports blocked runs"

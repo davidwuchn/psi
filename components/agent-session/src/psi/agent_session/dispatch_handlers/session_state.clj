@@ -180,6 +180,7 @@
         normalized-developer-prompt-source (let [source (or developer-prompt-source (:developer-prompt-source parent-sd))]
                                              (when (not= :fallback source)
                                                source))
+        ts (java.time.Instant/now)
         child-sd (merge (session-data-ns/initial-session
                          {:worktree-path (:worktree-path parent-sd)})
                         {:session-id                child-session-id
@@ -201,7 +202,8 @@
                          :cache-breakpoints         (or cache-breakpoints (:cache-breakpoints parent-sd))
                          :prompt-component-selection prompt-component-selection
                          :model                     (or model (:model parent-sd))
-                         :created-at                (java.time.Instant/now)})]
+                         :created-at                ts
+                         :updated-at                ts})]
     (-> state
         (assoc-in (session-data-path child-session-id) child-sd)
         (assoc-in [:agent-session :sessions child-session-id :persistence]
