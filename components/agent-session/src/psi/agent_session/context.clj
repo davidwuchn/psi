@@ -136,7 +136,7 @@
   "Create a child session for workflow step attempt execution.
    Extracted from mutations/session to avoid a load cycle through
    context → workflow-execution → workflow-attempts → mutations/session → core → context."
-  [ctx parent-session-id {:keys [child-session-id session-name system-prompt tool-defs thinking-level
+  [ctx parent-session-id {:keys [child-session-id session-name system-prompt tool-defs thinking-level model skills
                                   developer-prompt developer-prompt-source preloaded-messages
                                   cache-breakpoints prompt-component-selection
                                   workflow-run-id workflow-step-id workflow-attempt-id workflow-owned?]}]
@@ -148,6 +148,12 @@
                                 :system-prompt    system-prompt
                                 :tool-defs        tool-defs
                                 :thinking-level   thinking-level}
+                        (some? model)
+                        (assoc :model model)
+
+                        (some? skills)
+                        (assoc :skills skills)
+
                         (some? preloaded-messages)
                         (assoc :preloaded-messages preloaded-messages)
 

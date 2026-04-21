@@ -238,8 +238,21 @@ Validation:
   - `psi.agent-session.workflow-execution-test`
 - result for this slice: `10 tests, 52 assertions, 0 failures`
 
+2026-04-20
+- Fifth corrective alignment slice landed: execution-time propagation for `:skills` and `:model`.
+
+What changed:
+- workflow execution now carries `:model` and `:skills` out of workflow-file metadata into resolved step session config
+- workflow-attempt child-session creation now accepts and forwards `:model` and `:skills`
+- context/session child-creation pipeline now threads `:model` and `:skills` into child session initialization
+- child session state now preserves explicit `:model` overrides and explicit `:skills` rather than always inheriting only from the parent session
+
+Validation:
+- focused suite green:
+  - `psi.agent-session.workflow-execution-test`
+- result for this slice: `10 tests, 55 assertions, 0 failures`
+
 Remaining work:
 - corrective alignment slice recorded in `plan.md` and `steps.md`:
-  - execution-time propagation for `:skills` and `:model`
   - reload retirement correctness
   - contract/doc/schema cleanup

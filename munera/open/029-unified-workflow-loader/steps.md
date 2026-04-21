@@ -105,10 +105,10 @@ Corrective follow-up after implementation review:
   - delegated child sessions now compose referenced workflow system prompt with orchestration framing prompt by default
   - framing no longer relies on fallback-only behavior when referenced workflows already have system prompts
   - focused execution tests now prove prompt composition and framing-only fallback behavior
-- [ ] Propagate execution-time workflow config completely
-  - make `:skills` reach child session creation/runtime
-  - make `:model` overrides effective during execution
-  - add tests that prove effective runtime config, not just stored metadata
+- [x] Propagate execution-time workflow config completely
+  - `:skills` now reach child session creation/runtime for workflow-attempt sessions
+  - `:model` overrides now flow through the workflow execution bridge into child-session creation
+  - focused execution tests now prove effective child-session config, not just stored metadata
 - [x] Fix parent-session targeting for `include_result_in_context`
   - async result injection now targets the originating parent session explicitly
   - workflow-loader now uses explicit `query-session` / `mutate-session` when available

@@ -120,7 +120,8 @@
      :system-prompt  (compose-system-prompt (:system-prompt step-meta) framing-prompt)
      :tool-defs      (or (:tools step-meta) [])
      :thinking-level (or (:thinking-level step-meta) :off)
-     :skills         (:skills step-meta)}))
+     :skills         (:skills step-meta)
+     :model          (:model step-meta)}))
 
 (defn execute-current-step!
   "Execute the current workflow step as one bounded child-session attempt.
@@ -146,7 +147,13 @@
                   :tool-defs (:tool-defs step-config)
                   :thinking-level (:thinking-level step-config)}
            (:system-prompt step-config)
-           (assoc :system-prompt (:system-prompt step-config))))]
+           (assoc :system-prompt (:system-prompt step-config))
+
+           (:skills step-config)
+           (assoc :skills (:skills step-config))
+
+           (:model step-config)
+           (assoc :model (:model step-config))))]
     (swap! (:state* ctx)
            (fn [state]
              (-> state

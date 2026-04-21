@@ -101,9 +101,10 @@
 (deftest resolve-step-session-config-single-step-test
   (testing "single-step workflow pulls config from its own workflow-file-meta"
     (let [[ctx _] (create-session-context {:persist? false})
+          single-step-with-model (assoc-in single-step-definition-with-meta [:workflow-file-meta :model] {:provider :anthropic :id "claude-test"})
           _ (swap! (:state* ctx)
                    (fn [state]
-                     (let [[s _ _] (workflow-runtime/register-definition state single-step-definition-with-meta)
+                     (let [[s _ _] (workflow-runtime/register-definition state single-step-with-model)
                            [s _ _] (workflow-runtime/create-run s {:definition-id "planner"
                                                                    :run-id "run-1"
                                                                    :workflow-input {:input "plan it"}})]
@@ -113,7 +114,8 @@
       (is (= "You are a planner." (:system-prompt config)))
       (is (= ["read" "bash"] (:tool-defs config)))
       (is (= :medium (:thinking-level config)))
-      (is (= ["clojure-coding-standards"] (:skills config))))))
+      (is (= ["clojure-coding-standards"] (:skills config)))
+      (is (= {:provider :anthropic :id "claude-test"} (:model config))))))
 
 (deftest resolve-step-session-config-multi-step-test
   (testing "multi-step workflow composes referenced workflow system prompt with framing prompt"
@@ -273,12 +275,14 @@
                  (mapv :prompt @prompts*))))))))
 
 (deftest execute-current-step-multi-step-composes-child-system-prompt-test
-  (testing "multi-step execution injects framing prompt into delegated child session context by default"
+  (testing "multi-step execution injects framing prompt and execution config into delegated child session context"
     (let [[ctx session-id] (create-session-context {:persist? false})
+          planner-with-model (assoc-in single-step-definition-with-meta [:workflow-file-meta :model] {:provider :anthropic :id "claude-plan"})
+          builder-with-model (assoc-in builder-definition-with-meta [:workflow-file-meta :model] {:provider :anthropic :id "claude-build"})
           _ (swap! (:state* ctx)
                    (fn [state]
-                     (let [[s _ _] (workflow-runtime/register-definition state single-step-definition-with-meta)
-                           [s _ _] (workflow-runtime/register-definition s builder-definition-with-meta)
+                     (let [[s _ _] (workflow-runtime/register-definition state planner-with-model)
+                           [s _ _] (workflow-runtime/register-definition s builder-with-model)
                            [s _ _] (workflow-runtime/register-definition s multi-step-definition-with-meta)
                            [s _ _] (workflow-runtime/create-run s {:definition-id "plan-build"
                                                                    :run-id "run-4"
@@ -302,7 +306,12 @@
           (is (= :completed (:status result)))
           (is (= ["You are a planner.\n\nCoordinate a plan-build cycle."
                   "You are a builder.\n\nCoordinate a plan-build cycle."]
-                 (mapv :system-prompt @child-create-opts*))))))))
+                 (mapv :system-prompt @child-create-opts*)))
+          (is (= [["clojure-coding-standards"] nil]
+                 (mapv :skills @child-create-opts*)))
+          (is (= [{:provider :anthropic :id "claude-plan"}
+                  {:provider :anthropic :id "claude-build"}]
+                 (mapv :model @child-create-opts*))))))))
 
 (deftest execute-run-blocked-test
   (testing "execute-run! stops and reports blocked runs"
