@@ -70,6 +70,30 @@
                       :schedule-id "sch-1"}]
                     (:effects result)))))
 
+         (testing "cancel-all cancels all non-terminal schedules and emits one timer-cancel effect per schedule"
+           (let [create-a (invoke-handler ctx :scheduler/create {:session-id session-id
+                                                                 :schedule-id "sch-bulk-a"
+                                                                 :message "a"
+                                                                 :created-at (instant "2026-04-21T18:20:00Z")
+                                                                 :fire-at (instant "2026-04-21T18:21:00Z")
+                                                                 :delay-ms 1000})
+                 _ (apply-root-state-update! ctx create-a)
+                 create-b (invoke-handler ctx :scheduler/create {:session-id session-id
+                                                                 :schedule-id "sch-bulk-b"
+                                                                 :message "b"
+                                                                 :created-at (instant "2026-04-21T18:20:01Z")
+                                                                 :fire-at (instant "2026-04-21T18:21:01Z")
+                                                                 :delay-ms 1000})
+                 _ (apply-root-state-update! ctx create-b)
+                 bulk-r (invoke-handler ctx :scheduler/cancel-all {:session-id session-id})]
+             (apply-root-state-update! ctx bulk-r)
+             (is (= :cancelled (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-bulk-a" :status])))
+             (is (= :cancelled (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-bulk-b" :status])))
+             (is (= [] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))
+             (is (= 2 (count (:effects bulk-r))))
+             (is (= #{"sch-bulk-a" "sch-bulk-b"}
+                    (set (map :schedule-id (:effects bulk-r)))))))
+
          (testing "deliver marks delivered and routes through canonical prompt lifecycle"
            (let [create-r (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                  :schedule-id "sch-2"

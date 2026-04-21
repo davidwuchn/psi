@@ -78,6 +78,20 @@
         :return schedule})))
 
   (register-core-handler!
+   :scheduler/cancel-all
+   (fn [ctx {:keys [session-id]}]
+     (let [{state' :state cancelled-ids :cancelled-ids cancelled-schedules :cancelled-schedules}
+           (scheduler/cancel-all-schedules (scheduler-state-in ctx session-id))]
+       {:root-state-update (scheduler-update session-id (constantly state'))
+        :effects (mapv (fn [schedule-id]
+                         {:effect/type :scheduler/cancel-timer
+                          :schedule-id schedule-id})
+                       cancelled-ids)
+        :return {:cancelled-count (count cancelled-ids)
+                 :cancelled-schedule-ids cancelled-ids
+                 :cancelled-schedules cancelled-schedules}})))
+
+  (register-core-handler!
    :scheduler/fired
    (fn [ctx {:keys [session-id schedule-id]}]
      (let [{state' :state action :action schedule :schedule}

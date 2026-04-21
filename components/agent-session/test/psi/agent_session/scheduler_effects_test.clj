@@ -64,8 +64,18 @@
                          :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
                          :delay-ms 500}
                         {:origin :core})
-    (is (= 1 (dispatch-effects/scheduler-timer-handle-count)))
+    (dispatch/dispatch! ctx :scheduler/create
+                        {:session-id session-id
+                         :schedule-id "sch-4"
+                         :message "shutdown cleanup 2"
+                         :created-at (java.time.Instant/parse "2026-04-21T18:00:01Z")
+                         :fire-at (java.time.Instant/parse "2026-04-21T18:05:01Z")
+                         :delay-ms 500}
+                        {:origin :core})
+    (is (= 2 (dispatch-effects/scheduler-timer-handle-count)))
     (session/shutdown-context! ctx)
     (is (= 0 (dispatch-effects/scheduler-timer-handle-count)))
     (is (= :cancelled
-           (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-3" :status])))))
+           (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-3" :status])))
+    (is (= :cancelled
+           (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-4" :status])))))

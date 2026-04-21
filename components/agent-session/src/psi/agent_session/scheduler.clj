@@ -139,6 +139,29 @@
                    (update :queue (fn [q] (vec (remove #{schedule-id} (or q []))))))
      :schedule (assoc schedule :status :cancelled)}))
 
+(defn cancel-all-schedules
+  [scheduler-state]
+  (let [state         (or scheduler-state (empty-state))
+        cancellable   (->> (vals (:schedules state))
+                           (filter #(contains? non-terminal-statuses (:status %)))
+                           (sort-by (juxt :fire-at :created-at :schedule-id))
+                           vec)
+        schedule-ids  (mapv :schedule-id cancellable)
+        cancelled-set (set schedule-ids)]
+    {:state (-> state
+                (update :schedules
+                        (fn [schedules]
+                          (into {}
+                                (map (fn [[schedule-id schedule]]
+                                       [schedule-id
+                                        (if (contains? cancelled-set schedule-id)
+                                          (assoc schedule :status :cancelled)
+                                          schedule)]))
+                                (or schedules {}))))
+                (assoc :queue []))
+     :cancelled-schedules (mapv #(assoc % :status :cancelled) cancellable)
+     :cancelled-ids schedule-ids}))
+
 (defn fire-schedule
   [scheduler-state session-data schedule-id]
   (let [state    (or scheduler-state (empty-state))
