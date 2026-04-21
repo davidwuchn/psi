@@ -366,7 +366,7 @@ Available: " (str/join ", " (map name (keys all))))
                             :skills                 skills
                             :extension-paths        []
                             :extension-targets      []})
-         {:keys [manifest-result summary-updates]}
+         {:keys [summary-updates]}
          (extension-runtime/bootstrap-manifest-extensions-in! ctx session-id cwd)
          summary          (merge-with
                            (fn [base delta]
