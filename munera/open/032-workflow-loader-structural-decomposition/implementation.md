@@ -54,11 +54,12 @@ Progress:
 - extracted `extensions.workflow-loader.orchestration`
   - background-job start/terminal shaping
   - async execute/wait completion helpers
-- top-level `extensions.workflow-loader` now delegates those concerns outward and retains extension wiring plus workflow-specific control flow
+  - blocked-run and terminal-run continue execution paths
+- top-level `extensions.workflow-loader` now delegates those concerns outward and retains extension wiring plus workflow-specific policy/control flow
 
 Trade-offs:
-- blocked-run resume flow still lives in the top-level namespace because it remains closely coupled to current workflow-loader-specific continue semantics and local refresh/wait wiring
-- definition loading/registration also remains top-level for now because it is already compact and directly tied to extension init/reload wiring
+- definition loading/registration still remains top-level because it is already compact and directly tied to extension init/reload wiring
+- `delegate-continue` remains top-level as the policy/validation dispatcher, but its blocked-run and terminal-run execution branches now live in orchestration
 
 Cleanup follow-on completed:
 - removed unused top-level `workflow-runtime` require after decomposition

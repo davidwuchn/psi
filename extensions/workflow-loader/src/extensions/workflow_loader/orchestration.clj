@@ -40,6 +40,11 @@
               :outcome outcome
               :payload payload})))
 
+(defn continue-workflow-input
+  [prompt-text]
+  {:input prompt-text
+   :original prompt-text})
+
 (defn on-async-completion!
   "Handle async workflow completion — notify, inject results, update canonical job state, and clean up waits."
   [{:keys [mutate! notify! mark-background-job-terminal! inject-result-into-context!
@@ -114,6 +119,69 @@
             :job-id job-id})
     (refresh-widgets!)
     run-id))
+
+(defn continue-terminal-run-async!
+  [{:keys [mutate! execute-async! find-run-summary-fn]}
+   run-id session-id prompt-text include?]
+  (let [{:keys [source-definition-id]} (find-run-summary-fn run-id)]
+    (when-not source-definition-id
+      (throw (ex-info "Cannot continue run without source definition" {:run-id run-id})))
+    (let [new-run-name (str source-definition-id "-continue-" (System/currentTimeMillis))
+          create-result (mutate! 'psi.workflow/create-run
+                                 {:definition-id source-definition-id
+                                  :workflow-input (continue-workflow-input prompt-text)
+                                  :run-id new-run-name})
+          new-run-id (:psi.workflow/run-id create-result)]
+      (when-not new-run-id
+        (throw (ex-info (or (:psi.workflow/error create-result)
+                            "Failed to create continuation run")
+                        {:run-id run-id
+                         :definition-id source-definition-id})))
+      (execute-async! new-run-id session-id source-definition-id include?)
+      {:ok true
+       :run-id new-run-id
+       :status :running
+       :continued-from run-id})))
+
+(defn continue-blocked-run-async!
+  [{:keys [mutate! start-background-job! mark-background-job-terminal! notify!
+           refresh-widgets! inflight-runs on-async-completion-fn]}
+   run-id session-id prompt-text include?]
+  (let [parent-session-id session-id
+        workflow-name (str "resume-" run-id)
+        {:keys [job-id]} (start-background-job! session-id run-id workflow-name)
+        fut (future
+              (try
+                (let [result (mutate! 'psi.workflow/resume-run
+                                      {:run-id run-id
+                                       :session-id session-id
+                                       :workflow-input (continue-workflow-input prompt-text)})]
+                  (when-not (:psi.workflow/error result)
+                    (on-async-completion-fn run-id workflow-name parent-session-id include? result))
+                  result)
+                (catch Exception e
+                  (when job-id
+                    (try
+                      (mark-background-job-terminal!
+                       job-id
+                       :failed
+                       {:run-id run-id
+                        :workflow workflow-name
+                        :status :failed
+                        :error (ex-message e)})
+                      (catch Exception _ nil)))
+                  (notify! (str "Resume of run '" run-id "' failed: " (ex-message e)) :error)
+                  (swap! inflight-runs dissoc run-id)
+                  (refresh-widgets!)
+                  {:psi.workflow/status :failed
+                   :psi.workflow/error (ex-message e)})))]
+    (swap! inflight-runs assoc run-id
+           {:future fut
+            :job-id job-id})
+    (refresh-widgets!)
+    {:ok true
+     :run-id run-id
+     :status :resuming}))
 
 (defn await-run-completion
   "Block until a workflow run completes or timeout is reached.
