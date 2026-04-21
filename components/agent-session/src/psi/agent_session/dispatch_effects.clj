@@ -23,9 +23,33 @@
 
 (defonce ^:private scheduler-timer-handles* (atom {}))
 
-(defmulti execute-effect!
-  (fn [_ctx effect] (:effect/type effect)))
+(defn scheduler-timer-handle-count [] (count @scheduler-timer-handles*))
 
+(defn cancel-scheduler-timer! [schedule-id]
+  (let [handle (get @scheduler-timer-handles* schedule-id)]
+    (when handle
+      (try
+        (cond
+          (map? handle)
+          (when-let [thread (:thread handle)]
+            (.interrupt ^Thread thread))
+
+          (instance? Thread handle)
+          (.interrupt ^Thread handle)
+
+          :else nil)
+        (catch Exception _ nil))
+      (swap! scheduler-timer-handles* dissoc schedule-id))
+    {:schedule-id schedule-id :cancelled? true}))
+
+(defn cancel-all-scheduler-timers! []
+  (let [ids (vec (keys @scheduler-timer-handles*))]
+    (doseq [schedule-id ids]
+      (cancel-scheduler-timer! schedule-id))
+    {:cancelled-count (count ids)
+     :remaining (count @scheduler-timer-handles*)}))
+
+(defmulti execute-effect! (fn [_ctx effect] (:effect/type effect)))
 (defmethod execute-effect! :default [_ctx _effect] nil)
 
 (defn- publish-projection-change! [ctx effect]
@@ -50,8 +74,7 @@
 (defmethod execute-effect! :runtime/agent-abort [ctx effect]
   (when-let [turn-ctx (ss/get-state-value-in ctx (ss/state-path :turn-ctx (effect-session-id ctx effect)))]
     (when-let [stream-handle (:stream-handle @(:turn-data turn-ctx))]
-      (when-let [f (:future stream-handle)]
-        (future-cancel f))
+      (when-let [f (:future stream-handle)] (future-cancel f))
       (swap! (:turn-data turn-ctx) assoc :stream-handle (assoc stream-handle :cancelled? true)))
     (when-not (:final-message @(:turn-data turn-ctx))
       (turn-sc/send-event! turn-ctx :turn/error {:stop-reason :aborted :error-message "Aborted"})))
@@ -96,12 +119,10 @@
 
 (defmethod execute-effect! :runtime/tool-execute [ctx effect]
   (try
-    (try
-      ((:execute-tool-runtime-fn ctx) ctx (:session-id effect) (:tool-name effect) (:args effect) (:opts effect))
-      (catch clojure.lang.ArityException _
-        ((:execute-tool-runtime-fn ctx) ctx (:tool-name effect) (:args effect) (:opts effect))))
-    (catch Exception e
-      {:content (str "Error: " (ex-message e)) :is-error true})))
+    (try ((:execute-tool-runtime-fn ctx) ctx (:session-id effect) (:tool-name effect) (:args effect) (:opts effect))
+         (catch clojure.lang.ArityException _
+           ((:execute-tool-runtime-fn ctx) ctx (:tool-name effect) (:args effect) (:opts effect))))
+    (catch Exception e {:content (str "Error: " (ex-message e)) :is-error true})))
 
 (defmethod execute-effect! :runtime/prompt-execute-and-record [ctx effect]
   (let [session-id (effect-session-id ctx effect)
@@ -207,7 +228,6 @@
     (let [session-id (effect-session-id ctx effect)]
       (project-prefs/update-agent-session! ((:effective-cwd-fn ctx) ctx session-id) (:prefs effect)))
     (catch Exception _ nil)))
-
 (defmethod execute-effect! :persist/user-config-update [_ctx effect]
   (try (user-cfg/update-agent-session! (:prefs effect)) (catch Exception _ nil)))
 
@@ -226,8 +246,7 @@
   nil)
 
 (defmethod execute-effect! :memory/capture [_ctx effect]
-  (memory/remember-in! (:memory-ctx effect)
-                       {:content-type :note :content (:text effect) :tags [:remember :manual] :provenance (:provenance effect)}))
+  (memory/remember-in! (:memory-ctx effect) {:content-type :note :content (:text effect) :tags [:remember :manual] :provenance (:provenance effect)}))
 (defmethod execute-effect! :memory/recover-query [_ctx effect]
   (when-let [query-text (:query-text effect)] (memory-runtime/recover-for-query! query-text)))
 

@@ -26,6 +26,10 @@ Relevant files:
 - Added runtime timer execution in `dispatch_effects.clj` with a runtime-only scheduler timer handle registry and explicit `:scheduler/start-timer` / `:scheduler/cancel-timer` effects.
 - Added `psi_tool_scheduler.clj` and extended `psi_tool.clj` so `action: "scheduler"` now supports `create|list|cancel` with relative and absolute delay inputs.
 - Added focused psi-tool scheduler tests in `psi_tool_scheduler_test.clj` covering create/list/cancel, past absolute time normalization, bounds rejection, and cap rejection.
+- Added scheduler query/runtime projection in `scheduler_runtime.clj` and exposed scheduler state via resolvers in `telemetry_basics.clj`.
+- Scheduler-backed items now also appear in the existing background-job query/view surface as `:scheduled-prompt` jobs.
+- Added runtime timer cleanup helpers in `dispatch_effects.clj` and made context shutdown cancel all outstanding scheduler timers.
+- Added focused effect tests in `scheduler_effects_test.clj` proving timer fire, timer cancel, and shutdown cleanup.
 
 ## Review summary
 
