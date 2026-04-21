@@ -10,7 +10,7 @@
 
 (defn- scheduler-state-in
   [ctx session-id]
-  (or (ss/get-state-value-in ctx (ss/state-path :scheduler-state session-id))
+  (or (ss/get-state-value-in ctx (ss/state-path :scheduler session-id))
       (scheduler/empty-state)))
 
 (defn- scheduler-update
@@ -34,8 +34,9 @@
   [_ctx]
   (register-core-handler!
    :scheduler/create
-   (fn [ctx {:keys [session-id schedule-id label message created-at fire-at delay-ms]}]
-     (let [{state' :state schedule :schedule}
+   (fn [ctx {:keys [session-id schedule-id label message created-at fire-at]}]
+     (let [created-at (or created-at (java.time.Instant/now))
+           {state' :state schedule :schedule}
            (scheduler/create-schedule
             (scheduler-state-in ctx session-id)
             {:schedule-id schedule-id
@@ -46,8 +47,9 @@
              :session-id session-id})]
        {:root-state-update (scheduler-update session-id (constantly state'))
         :effects [{:effect/type :scheduler/start-timer
+                   :session-id session-id
                    :schedule-id schedule-id
-                   :delay-ms delay-ms}]
+                   :fire-at fire-at}]
         :return schedule})))
 
   (register-core-handler!

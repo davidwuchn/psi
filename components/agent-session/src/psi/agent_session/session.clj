@@ -449,7 +449,7 @@
                    #"(?i)too.many.requests"
                    #"(?i)overloaded"
                    #"(?i)status[ .:_]429"
-                   #"(?i)status[ .:_]5\d\d"]))))
+                   #"(?i)status[ .:_]5\d\d"])))))
 
 (defn context-overflow-error?
   [error-message]

@@ -432,8 +432,8 @@
                                  :schedule-id "sch-1"
                                  :label "check-build"
                                  :message "check build"
-                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                                  :delay-ms 1000}
                                 {:origin :core})
           result (session/query-in ctx session-id
@@ -468,8 +468,8 @@
                                  :schedule-id "sch-one"
                                  :label "one"
                                  :message "wake"
-                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                                  :delay-ms 1000}
                                 {:origin :core})
           result (session/query-in ctx

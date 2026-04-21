@@ -38,7 +38,7 @@
 
 (defn scheduler-state-in
   [ctx session-id]
-  (or (ss/get-state-value-in ctx (ss/state-path :scheduler-state session-id))
+  (or (ss/get-state-value-in ctx (ss/state-path :scheduler session-id))
       (scheduler/empty-state)))
 
 (defn scheduler-jobs-in
@@ -48,7 +48,7 @@
             {:job-id (str "schedule/" (:schedule-id schedule))
              :thread-id session-id
              :tool-call-id nil
-             :tool-name (or (:label schedule) "scheduled prompt")
+             :tool-name (or (:label schedule) "scheduler")
              :job-kind :scheduled-prompt
              :workflow-ext-path nil
              :workflow-id nil
@@ -62,6 +62,7 @@
                        :delivered :completed
                        :cancelled :cancelled
                        :running)
+             :scheduler-status (:status schedule)
              :terminal-payload nil
              :terminal-payload-file nil
              :cancel-requested-at nil

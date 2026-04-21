@@ -41,8 +41,8 @@
                            :schedule-id "sch-e2e-1"
                            :label "wake-check"
                            :message "check status"
-                           :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                           :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                           :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                           :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                            :delay-ms 1000}
                           {:origin :core})
       (dispatch/dispatch! ctx :scheduler/fired
@@ -82,8 +82,8 @@
                      :execution-result/stop-reason :stop})]
       (swap! (:state* ctx) (ss/session-update session-id (fn [session] (assoc session :is-streaming true))))
       (doseq [[schedule-id label message created fire]
-              [["sch-q-1" "first" "first wake" "2026-04-21T18:00:00Z" "2026-04-21T18:05:00Z"]
-               ["sch-q-2" "second" "second wake" "2026-04-21T18:00:01Z" "2026-04-21T18:05:01Z"]]]
+              [["sch-q-1" "first" "first wake" "2099-04-21T18:00:00Z" "2099-04-21T18:05:00Z"]
+               ["sch-q-2" "second" "second wake" "2099-04-21T18:00:01Z" "2099-04-21T18:05:01Z"]]]
         (dispatch/dispatch! ctx :scheduler/create
                             {:session-id session-id
                              :schedule-id schedule-id
@@ -118,8 +118,8 @@
                         {:session-id session-id
                          :schedule-id "sch-cancel-pending"
                          :message "pending"
-                         :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                         :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                         :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                         :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                          :delay-ms 1000}
                         {:origin :core})
     (dispatch/dispatch! ctx :scheduler/cancel
@@ -133,8 +133,8 @@
                         {:session-id session-id
                          :schedule-id "sch-cancel-queued"
                          :message "queued"
-                         :created-at (java.time.Instant/parse "2026-04-21T18:00:01Z")
-                         :fire-at (java.time.Instant/parse "2026-04-21T18:05:01Z")
+                         :created-at (java.time.Instant/parse "2099-04-21T18:00:01Z")
+                         :fire-at (java.time.Instant/parse "2099-04-21T18:05:01Z")
                          :delay-ms 1000}
                         {:origin :core})
     (dispatch/dispatch! ctx :scheduler/fired

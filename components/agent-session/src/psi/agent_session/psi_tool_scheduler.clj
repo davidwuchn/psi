@@ -21,7 +21,7 @@
 
 (defn- scheduler-state-in
   [ctx session-id]
-  (or (ss/get-state-value-in ctx (ss/state-path :scheduler-state session-id))
+  (or (ss/get-state-value-in ctx (ss/state-path :scheduler session-id))
       (scheduler/empty-state)))
 
 (defn- parse-utc-instant!
@@ -144,7 +144,8 @@
                     {:psi-tool/action :scheduler
                      :psi-tool/scheduler-op :cancel
                      :psi-tool/overall-status :ok
-                     :psi-tool/scheduler {:schedule (create-summary schedule)}})))]
+                     :psi-tool/scheduler {:cancelled? true
+                                          :schedule (create-summary schedule)}})))]
           (assoc result :psi-tool/duration-ms (long (/ (- (System/nanoTime) started-at) 1000000)))))
       (catch Exception e
         {:psi-tool/action :scheduler

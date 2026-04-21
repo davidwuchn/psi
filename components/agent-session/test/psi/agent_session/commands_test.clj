@@ -233,8 +233,8 @@
                                  :schedule-id "sch-cmd-queued"
                                  :label "queued"
                                  :message "queued"
-                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                                  :delay-ms 1000}
                                 {:origin :core})
           _ (swap! (:state* ctx) (ss/session-update thread-id #(assoc % :is-streaming true)))
@@ -257,8 +257,8 @@
                                :schedule-id "sch-cancel-1"
                                :label "cancel-me"
                                :message "cancel me later"
-                               :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                               :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                               :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                               :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                                :delay-ms 1000}
                               {:origin :core})
         cancel-result (commands/dispatch-in ctx session-id "/cancel-job schedule/sch-cancel-1" cmd-opts)

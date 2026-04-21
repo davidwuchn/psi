@@ -22,21 +22,21 @@
                                                 :schedule-id "sch-1"
                                                 :label "check-build"
                                                 :message "check build"
-                                                :fire-at (java.time.Instant/parse "2026-04-21T18:00:00Z")}
+                                                :fire-at (java.time.Instant/parse "2099-04-21T18:00:00Z")}
                                                {:origin :core})
           _                (dispatch/dispatch! ctx :scheduler/create
                                                {:session-id session-id
                                                 :schedule-id "sch-2"
                                                 :label "review"
                                                 :message "review"
-                                                :fire-at (java.time.Instant/parse "2026-04-21T19:00:00Z")}
+                                                :fire-at (java.time.Instant/parse "2099-04-21T19:00:00Z")}
                                                {:origin :core})
           _                (swap! (:state* ctx) assoc-in [:agent-session :sessions session-id :data :scheduler :schedules "sch-2" :status] :queued)
           _                (swap! (:state* ctx) assoc-in [:agent-session :sessions session-id :data :scheduler :queue] ["sch-2"])
           jobs             (bg-rt/list-background-jobs-in! ctx session-id [:pending :queued])]
       (is (= 2 (count jobs)))
-      (is (= #{{:job-id "sch-1" :status :pending :job-kind :scheduled-prompt :tool-name "scheduler"}
-               {:job-id "sch-2" :status :queued :job-kind :scheduled-prompt :tool-name "scheduler"}}
+      (is (= #{{:job-id "schedule/sch-1" :status :running :job-kind :scheduled-prompt :tool-name "check-build"}
+               {:job-id "schedule/sch-2" :status :running :job-kind :scheduled-prompt :tool-name "review"}}
              (set (map #(select-keys % [:job-id :status :job-kind :tool-name]) jobs))))))
 
   (testing "scheduler-projected background job cancel routes to scheduler cancel"
@@ -46,8 +46,8 @@
                                                 :schedule-id "sch-1"
                                                 :label "check-build"
                                                 :message "check build"
-                                                :fire-at (java.time.Instant/parse "2026-04-21T18:00:00Z")}
+                                                :fire-at (java.time.Instant/parse "2099-04-21T18:00:00Z")}
                                                {:origin :core})
-          cancelled        (bg-rt/cancel-background-job-in! ctx session-id "sch-1" :user)]
+          cancelled        (bg-rt/cancel-background-job-in! ctx session-id "schedule/sch-1" :user)]
       (is (= :cancelled (:status cancelled)))
       (is (= :cancelled (get-in @(:state* ctx) [:agent-session :sessions session-id :data :scheduler :schedules "sch-1" :status]))))))

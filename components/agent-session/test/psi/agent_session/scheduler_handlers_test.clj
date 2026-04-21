@@ -49,8 +49,9 @@
              (apply-root-state-update! ctx result)
              (is (= :pending (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-1" :status])))
              (is (= [{:effect/type :scheduler/start-timer
+                      :session-id session-id
                       :schedule-id "sch-1"
-                      :delay-ms 5000}]
+                      :fire-at (instant "2026-04-21T18:05:00Z")}]
                     (:effects result)))))
 
          (testing "fired queues when session is busy"
@@ -145,6 +146,6 @@
              (let [done-r (invoke-handler ctx :on-agent-done {:session-id session-id})
                    abort-r (invoke-handler ctx :on-abort {:session-id session-id})
                    compact-r (invoke-handler ctx :on-compact-done {:session-id session-id})]
-               (is (some (fn [effect] (= :scheduler/drain-queue (:event-type effect))) (:effects done-r)))
-               (is (some (fn [effect] (= :scheduler/drain-queue (:event-type effect))) (:effects abort-r)))
-               (is (some (fn [effect] (= :scheduler/drain-queue (:event-type effect))) (:effects compact-r))))))))))
+               (is (some (fn [effect] (= :scheduler/drain-queue (:effect/type effect))) (:effects done-r)))
+               (is (some (fn [effect] (= :scheduler/drain-queue (:effect/type effect))) (:effects abort-r)))
+               (is (some (fn [effect] (= :scheduler/drain-queue (:effect/type effect))) (:effects compact-r))))))))))

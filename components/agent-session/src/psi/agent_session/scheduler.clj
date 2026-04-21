@@ -184,7 +184,11 @@
 
 (defn next-queued-schedule-id
   [scheduler-state]
-  (first (:queue (or scheduler-state {}))))
+  (let [state (or scheduler-state {})
+        schedules (:schedules state)
+        queued-ids (->> (:queue state)
+                        (filter #(= :queued (get-in schedules [% :status]))))]
+    (first queued-ids)))
 
 (defn deliver-schedule
   [scheduler-state schedule-id]
@@ -204,7 +208,12 @@
 (defn drain-one
   [scheduler-state session-data]
   (let [state       (or scheduler-state (empty-state))
-        schedule-id (next-queued-schedule-id state)]
+        schedule-id (->> (:queue state)
+                         (filter #(= :queued (get-in state [:schedules % :status])))
+                         (sort-by (fn [id]
+                                    (let [schedule (get-in state [:schedules id])]
+                                      [(:fire-at schedule) (:created-at schedule) id])))
+                         first)]
     (cond
       (not (idle-session? session-data))
       {:state state :drained? false :reason :session-busy}

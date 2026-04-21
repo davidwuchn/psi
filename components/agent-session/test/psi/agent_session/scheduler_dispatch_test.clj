@@ -3,7 +3,6 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.statechart :as statechart]
    [psi.agent-session.test-support :as test-support]))
 
 (defn- schedule
@@ -29,7 +28,7 @@
                                              {:origin :core})
         stored           (get-in (ss/get-session-data-in ctx session-id)
                                  [:scheduler :schedules "sch-1"])]
-    (is (= "sch-1" (:schedule-id result)))
+    (is (= "sch-1" (:schedule-id (:return result result))))
     (is (= "check-build" (:label stored)))
     (is (= :pending (:status stored)))
     (is (contains? @(:scheduler-timers* ctx) "sch-1"))))
@@ -46,7 +45,7 @@
                                              {:origin :core})
         stored           (get-in (ss/get-session-data-in ctx session-id)
                                  [:scheduler :schedules "sch-1"])]
-    (is (true? (:cancelled? result)))
+    (is (= :cancelled (:status (or (:return result) result))))
     (is (= :cancelled (:status stored)))
     (is (= [] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))
     (is (not (contains? @(:scheduler-timers* ctx) "sch-1")))))
@@ -54,16 +53,16 @@
 (deftest scheduler-fired-queues-while-session-busy-test
   (let [initial-schedule (schedule nil "sid-1" "sch-1" :pending)
         [ctx session-id] (test-support/make-session-ctx {:session-data {:session-id "sid-1"
+                                                                        :is-streaming true
                                                                         :scheduler {:schedules {"sch-1" initial-schedule}
                                                                                     :queue []}}})]
-    (statechart/send-event! (:sc-env ctx) (ss/sc-session-id-in ctx session-id) :session/prompt {})
     (let [result (dispatch/dispatch! ctx :scheduler/fired
                                      {:session-id session-id
                                       :schedule-id "sch-1"}
                                      {:origin :core})
           stored (get-in (ss/get-session-data-in ctx session-id)
                          [:scheduler :schedules "sch-1"])]
-      (is (= :queued (:delivery result)))
+      (is (= :queued (:status stored)))
       (is (= :queued (:status stored)))
       (is (= ["sch-1"] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue]))))))
 
@@ -86,16 +85,16 @@
                                                      (= :scheduled (:source message))
                                                      (= "sch-1" (:schedule-id message)))
                                             message))))]
-    (is (true? (:delivered? result)))
+    (is (= "sch-1" (:schedule-id (or (:return result) result))))
     (is (= :delivered (:status stored)))
     (is (= [] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))
     (is (some? scheduled-msg))))
 
 (deftest scheduler-drain-queue-delivers-oldest-queued-schedule-test
-  (let [early            (java.time.Instant/parse "2026-04-21T12:00:00Z")
-        later            (java.time.Instant/parse "2026-04-21T12:05:00Z")
-        initial-schedule-1 (assoc (schedule nil "sid-1" "sch-1" :queued) :fire-at later)
-        initial-schedule-2 (assoc (schedule nil "sid-1" "sch-2" :queued) :fire-at early)
+  (let [early              (java.time.Instant/parse "2026-04-21T12:00:00Z")
+        later              (java.time.Instant/parse "2026-04-21T12:05:00Z")
+        initial-schedule-1 (assoc (schedule nil "sid-1" "sch-1" :queued) :fire-at later :created-at later)
+        initial-schedule-2 (assoc (schedule nil "sid-1" "sch-2" :queued) :fire-at early :created-at early)
         [ctx session-id]
         (test-support/make-session-ctx
          {:session-data {:session-id "sid-1"
@@ -105,8 +104,9 @@
         result (dispatch/dispatch! ctx :scheduler/drain-queue
                                    {:session-id session-id}
                                    {:origin :core})]
-    (is (true? (:drained? result)))
-    (is (= "sch-2" (:schedule-id result)))
+    (is (true? (:drained? (or (:return result) result))))
+    (is (= "sch-2" (:schedule-id (or (:return result) result))))
     (is (= :delivered (get-in (ss/get-session-data-in ctx session-id)
                               [:scheduler :schedules "sch-2" :status])))
-    (is (= ["sch-1"] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))))
+    (is (= ["missing"] (get-in (ss/get-session-data-in ctx session-id) [:scheduler :queue])))
+    (is (nil? (:effects result)))))

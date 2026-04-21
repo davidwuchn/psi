@@ -198,7 +198,8 @@
     (->> (concat jobs scheduler-jobs)
          (filter (fn [job]
                    (or (nil? status-set)
-                       (contains? status-set (:status job)))))
+                       (contains? status-set (:status job))
+                       (contains? status-set (:scheduler-status job)))))
          (sort-by (juxt :started-at :job-id))
          vec)))
 
@@ -206,9 +207,13 @@
   "Inspect a single background job, reconciling stale workflow statuses first."
   [ctx thread-id job-id]
   (maybe-mark-workflow-jobs-terminal! ctx)
-  (if (str/starts-with? (str job-id) "schedule/")
-    (let [job (some (fn [scheduler-job]
-                      (when (= job-id (:job-id scheduler-job))
+  (if (or (str/starts-with? (str job-id) "schedule/")
+          (str/starts-with? (str job-id) "sch-"))
+    (let [job-id* (if (str/starts-with? (str job-id) "schedule/")
+                    (str job-id)
+                    (str "schedule/" job-id))
+          job (some (fn [scheduler-job]
+                      (when (= job-id* (:job-id scheduler-job))
                         scheduler-job))
                     (scheduler-runtime/scheduler-jobs-in ctx thread-id))]
       (when-not job
@@ -221,35 +226,42 @@
 (defn cancel-background-job-in!
   "Cancel a background job, aborting the workflow if applicable."
   [ctx thread-id job-id requested-by]
-  (if (str/starts-with? (str job-id) "schedule/")
-    (let [schedule-id (subs (str job-id) (count "schedule/"))
-          schedule    (dispatch/dispatch! ctx :scheduler/cancel
-                                          {:session-id thread-id
-                                           :schedule-id schedule-id}
-                                          {:origin :core})
-          job         {:job-id job-id
-                       :thread-id thread-id
-                       :tool-name (or (:label schedule) "scheduled prompt")
-                       :job-kind :scheduled-prompt
-                       :status :cancelled
-                       :schedule-id schedule-id}]
-      (maybe-refresh-background-job-ui! ctx thread-id)
-      job)
-    (let [state' (bg-jobs/request-cancel
-                  (ss/get-state-value-in ctx (ss/state-path :background-jobs))
-                  {:thread-id thread-id
-                   :job-id job-id
-                   :requested-by requested-by})
-          job    (get-in state' [:jobs-by-id job-id])]
-      (dispatch/dispatch! ctx :session/update-background-jobs-state {:update-fn (constantly state')} {:origin :core})
-      (when (= :workflow (:job-kind job))
-        (try
-          (when (and (:workflow-ext-path job) (:workflow-id job))
-            (wf/abort-workflow-in! (:workflow-registry ctx)
-                                   (:workflow-ext-path job)
-                                   (:workflow-id job)
-                                   "cancel requested"))
-          (catch Exception _
-            nil)))
-      (maybe-refresh-background-job-ui! ctx thread-id)
-      job)))
+  (let [schedule-id (cond
+                      (str/starts-with? (str job-id) "schedule/")
+                      (subs (str job-id) (count "schedule/"))
+
+                      (str/starts-with? (str job-id) "sch-")
+                      (str job-id)
+
+                      :else nil)]
+    (if schedule-id
+      (let [schedule (dispatch/dispatch! ctx :scheduler/cancel
+                                         {:session-id thread-id
+                                          :schedule-id schedule-id}
+                                         {:origin :core})
+            job      {:job-id (str "schedule/" schedule-id)
+                      :thread-id thread-id
+                      :tool-name (or (:label schedule) "scheduler")
+                      :job-kind :scheduled-prompt
+                      :status (or (:status schedule) :cancelled)
+                      :schedule-id schedule-id}]
+        (maybe-refresh-background-job-ui! ctx thread-id)
+        job)
+      (let [state' (bg-jobs/request-cancel
+                    (ss/get-state-value-in ctx (ss/state-path :background-jobs))
+                    {:thread-id thread-id
+                     :job-id job-id
+                     :requested-by requested-by})
+            job    (get-in state' [:jobs-by-id job-id])]
+        (dispatch/dispatch! ctx :session/update-background-jobs-state {:update-fn (constantly state')} {:origin :core})
+        (when (= :workflow (:job-kind job))
+          (try
+            (when (and (:workflow-ext-path job) (:workflow-id job))
+              (wf/abort-workflow-in! (:workflow-registry ctx)
+                                     (:workflow-ext-path job)
+                                     (:workflow-id job)
+                                     "cancel requested"))
+            (catch Exception _
+              nil)))
+        (maybe-refresh-background-job-ui! ctx thread-id)
+        job))))

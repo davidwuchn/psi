@@ -21,8 +21,8 @@
                                                 :schedule-id "sch-1"
                                                 :label "check-build"
                                                 :message "check build"
-                                                :fire-at (java.time.Instant/parse "2026-04-21T18:00:00Z")}
+                                                :fire-at (java.time.Instant/parse "2099-04-21T18:00:00Z")}
                                                {:origin :core})
           result           (session/cancel-job-in! ctx session-id "sch-1" :user)]
-      (is (true? (:cancelled? result)))
+      (is (= :cancelled (:status result)))
       (is (= :cancelled (get-in @(:state* ctx) [:agent-session :sessions session-id :data :scheduler :schedules "sch-1" :status]))))))

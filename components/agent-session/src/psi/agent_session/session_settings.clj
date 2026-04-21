@@ -56,14 +56,22 @@
   "Cancel a background job for `session-id`.
    Returns the job map."
   [ctx session-id job-id reason]
-  (if (str/starts-with? (str job-id) "schedule/")
-    (dispatch/dispatch! ctx :scheduler/cancel
-                        {:session-id session-id
-                         :schedule-id (subs (str job-id) (count "schedule/"))}
-                        {:origin :core})
-    (dispatch/dispatch! ctx :session/cancel-job
-                        {:session-id session-id :job-id job-id :reason reason}
-                        {:origin :core})))
+  (let [schedule-id (cond
+                      (str/starts-with? (str job-id) "schedule/")
+                      (subs (str job-id) (count "schedule/"))
+
+                      (str/starts-with? (str job-id) "sch-")
+                      (str job-id)
+
+                      :else nil)]
+    (if schedule-id
+      (dispatch/dispatch! ctx :scheduler/cancel
+                          {:session-id session-id
+                           :schedule-id schedule-id}
+                          {:origin :core})
+      (dispatch/dispatch! ctx :session/cancel-job
+                          {:session-id session-id :job-id job-id :reason reason}
+                          {:origin :core}))))
 
 (defn- remember-provenance
   [ctx session-id]

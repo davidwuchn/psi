@@ -154,8 +154,8 @@
                                  :schedule-id "sch-rpc-1"
                                  :label "rpc-cancel"
                                  :message "cancel over rpc"
-                                 :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                                 :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                                 :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                                 :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                                  :delay-ms 1000}
                                 {:origin :core})
           state   (atom {:transport {:ready? true :pending {}}})

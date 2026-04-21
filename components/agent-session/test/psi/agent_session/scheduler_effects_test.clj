@@ -28,7 +28,7 @@
         (dispatch-effects/execute-effect! ctx {:effect/type :scheduler/start-timer
                                                :session-id session-id
                                                :schedule-id "sch-1"
-                                               :delay-ms 20})
+                                               :fire-at (.plusMillis (java.time.Instant/now) 20)})
         (is (= {:session-id session-id :schedule-id "sch-1"}
                (deref fired 1000 ::timeout)))
         (loop [i 0]
@@ -45,7 +45,7 @@
         (dispatch-effects/execute-effect! ctx {:effect/type :scheduler/start-timer
                                                :session-id session-id
                                                :schedule-id "sch-2"
-                                               :delay-ms 200})
+                                               :fire-at (.plusMillis (java.time.Instant/now) 200)})
         (is (= 1 (dispatch-effects/scheduler-timer-handle-count)))
         (is (= {:schedule-id "sch-2" :cancelled? true}
                (dispatch-effects/execute-effect! ctx {:effect/type :scheduler/cancel-timer
@@ -60,16 +60,16 @@
                         {:session-id session-id
                          :schedule-id "sch-3"
                          :message "shutdown cleanup"
-                         :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
-                         :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                         :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
+                         :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
                          :delay-ms 500}
                         {:origin :core})
     (dispatch/dispatch! ctx :scheduler/create
                         {:session-id session-id
                          :schedule-id "sch-4"
                          :message "shutdown cleanup 2"
-                         :created-at (java.time.Instant/parse "2026-04-21T18:00:01Z")
-                         :fire-at (java.time.Instant/parse "2026-04-21T18:05:01Z")
+                         :created-at (java.time.Instant/parse "2099-04-21T18:00:01Z")
+                         :fire-at (java.time.Instant/parse "2099-04-21T18:05:01Z")
                          :delay-ms 500}
                         {:origin :core})
     (is (= 2 (dispatch-effects/scheduler-timer-handle-count)))

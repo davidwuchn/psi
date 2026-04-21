@@ -112,13 +112,6 @@
    [:runtime/schedule-extension-dispatch
     [:map [:effect/type [:= :runtime/schedule-extension-dispatch]]
      [:delay-ms pos-int?] [:event-name :string] [:payload :any]]]
-   [:scheduler/start-timer
-    [:map [:effect/type [:= :scheduler/start-timer]]
-     [:schedule-id :string]
-     [:delay-ms pos-int?]]]
-   [:scheduler/cancel-timer
-    [:map [:effect/type [:= :scheduler/cancel-timer]]
-     [:schedule-id :string]]]
    [:runtime/auto-compact-workflow
     [:map [:effect/type [:= :runtime/auto-compact-workflow]]
      [:reason :any] [:will-retry? :boolean]]]

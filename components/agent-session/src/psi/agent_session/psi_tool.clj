@@ -148,7 +148,7 @@
         (when-not (some #{op} scheduler-supported-ops)
           (throw (ex-info "psi-tool scheduler action requires valid `op`"
                           {:phase :validate :action effective-action :op op :supported-ops scheduler-supported-ops})))
-        {:action effective-action :op op :message message :label label :delay-ms delay-ms :at at :schedule-id schedule-id})))))
+        {:action effective-action :op op :message message :label label :delay-ms delay-ms :at at :schedule-id schedule-id}))))
 
 (defn- sanitize-psi-tool-data [x] (sanitize-psi-tool-result x))
 (defn- ordered-map [& kvs] (apply array-map kvs))
