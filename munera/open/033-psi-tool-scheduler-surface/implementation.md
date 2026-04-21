@@ -33,6 +33,9 @@ Relevant files:
 - Background-job cancellation now recognizes scheduler-backed ids (`schedule/<schedule-id>`) and routes them to `:scheduler/cancel` through the existing `cancel-job` entrypoints.
 - Added focused command and RPC tests proving scheduled-prompt cancellation through `/cancel-job` and `cancel_background_job`.
 - Added end-to-end scheduler lifecycle tests in `scheduler_lifecycle_test.clj` covering immediate delivery through the canonical prompt lifecycle, busy-session FIFO queue drain, and pending/queued cancellation paths.
+- `background_job_runtime` now lists/inspects scheduler-backed jobs directly, so scheduled prompts reach the same widget/command/RPC job surfaces as workflow jobs.
+- `context/shutdown-context!` now both cancels outstanding scheduler timer handles and marks pending/queued schedules cancelled in session state.
+- Added a dedicated background-job UI integration test proving scheduled prompts appear in the widget/status projection.
 
 ## Review summary
 

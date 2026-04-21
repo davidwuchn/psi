@@ -62,3 +62,22 @@
         ui-state (ss/get-state-value-in ctx (ss/state-path :ui-state))]
     (is (nil? (get-in ui-state [:widgets ["psi-background-jobs" "background-jobs"]])))
     (is (nil? (get-in ui-state [:statuses "psi-background-jobs/job-old"])))))
+
+(deftest refresh-background-jobs-ui-projects-scheduled-prompts-test
+  (let [[ctx session-id] (make-ctx)
+        _ (dispatch/dispatch! ctx :scheduler/create
+                              {:session-id session-id
+                               :schedule-id "sch-ui-1"
+                               :label "check-build"
+                               :message "check build later"
+                               :created-at (java.time.Instant/parse "2026-04-21T18:00:00Z")
+                               :fire-at (java.time.Instant/parse "2026-04-21T18:05:00Z")
+                               :delay-ms 1000}
+                              {:origin :test})
+        _ (bg-ui/refresh-background-jobs-ui! ctx session-id)
+        ui-state (ss/get-state-value-in ctx (ss/state-path :ui-state))
+        widget (get-in ui-state [:widgets ["psi-background-jobs" "background-jobs"]])]
+    (is (= ["schedule/sch-ui-1  [running]  check-build @ 2026-04-21T18:05:00Z"]
+           (:content widget)))
+    (is (= "schedule/sch-ui-1 running"
+           (get-in ui-state [:statuses "psi-background-jobs/schedule/sch-ui-1" :text])))))
