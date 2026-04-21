@@ -5,41 +5,40 @@
   - manifest shows enabled/effective extensions
   - startup summary shows zero loaded, zero errors
   - live extension details are empty
-- Expected root cause: startup currently activates only `activation-plan` `:extension-paths`, which only covers `:local/root` entries.
-- Likely implementation center:
-  - `components/app-runtime/src/psi/app_runtime.clj`
-  - `components/agent-session/src/psi/agent_session/extension_runtime.clj`
-  - `components/agent-session/src/psi/agent_session/extension_installs.clj`
-  - `components/agent-session/src/psi/agent_session/extensions.clj`
+- Root cause confirmed: startup had been limited to `activation-plan` `:extension-paths`, so non-local manifest extensions were configured but not actually activated.
+
+## Clean implementation slices completed
+
+### Slice 1 — shared activation layer
+- extracted a shared manifest-aware activation layer in:
   - `components/agent-session/src/psi/agent_session/extensions/loader.clj`
-- Desired end state: startup summary, live registry, and extension introspection all agree on what actually activated.
+  - `components/agent-session/src/psi/agent_session/extensions.clj`
+  - `components/agent-session/src/psi/agent_session/extension_runtime.clj`
+- activation now supports exactly two forms under one shared abstraction:
+  - path-backed activation
+  - init-var-backed activation
+- non-file-backed manifest installs use the canonical stable registry identity `manifest:{lib}`
+- reload/apply now routes through the shared activation layer rather than bespoke activation-target handling
 
-## Review note
+### Slice 2 — startup integration
+- startup now uses the shared manifest-aware activation path
+- startup now realizes non-local deps before activation attempts
+- startup summary now reflects actual activation results
+- startup now persists finalized post-activation install/apply state instead of pre-activation install state
 
-Review outcome: **partial implementation; do not close task yet**.
+### Slice 3 — verification and docs
+- startup acceptance coverage now includes:
+  - local-root success
+  - git success
+  - mvn success
+  - dependency realization failure
+  - init resolution failure
+  - init execution failure
+  - convergence between startup summary, live registry, and persisted install state
+- docs updated to describe startup/reload activation semantics for local-root, git, and mvn manifest installs
 
-What is implemented:
-- startup now activates non-local manifest extensions via `:psi/init`
-- non-file-backed extensions use the canonical registry identity `manifest:{lib}`
-- reload/apply also supports init-var-backed activation
-- targeted tests cover startup local-root success, startup git success, and reload git success
+## Validation notes
 
-What remains before the task matches the design:
-- startup still persists pre-activation install state rather than a truthful post-activation finalized apply state
-- startup and reload/apply still do not share one fully unified activation path; bootstrap contains direct init-var activation logic
-- acceptance coverage is incomplete:
-  - startup mvn success test missing
-  - startup dependency realization failure test missing
-  - startup init resolution failure test missing
-  - startup init execution failure test missing
-  - explicit startup summary vs live registry convergence test missing
-- docs update required by the task is still missing
-
-Architectural concern:
-- `bootstrap.clj` now contains special-case init-var extension activation logic rather than consuming one canonical manifest-aware activation layer used by both startup and reload/apply
-
-Recommendation:
-- keep the task open
-- finish the missing acceptance tests
-- unify activation behind one shared path
-- persist truthful startup apply state after activation
+- 034 behavior is now aligned with the task design on this clean replay from the review-point base
+- startup now reports activation truth rather than configuration intent
+- remaining red tests in focused runs were unrelated scheduler/statechart failures already present in the branch and outside 034 scope

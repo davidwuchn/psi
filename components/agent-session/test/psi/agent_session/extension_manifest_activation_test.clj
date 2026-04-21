@@ -101,6 +101,8 @@
 (deftest reload-extensions-realizes-non-local-deps-when-safe-test
   (let [cwd       (test-support/temp-cwd)
         home      (tmp-dir)
+        ns-sym    'psi.test.remote-ext
+        _         (define-runtime-extension-ns! ns-sym "remote-hello")
         [ctx sid] (test-support/create-test-session {:persist? false :cwd cwd})]
     (with-redefs [installs/user-manifest-file (fn [] (manifest-file home ".psi/agent/extensions.edn"))
                   installs/project-manifest-file (fn [_] (manifest-file cwd ".psi/extensions.edn"))

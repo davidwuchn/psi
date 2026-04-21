@@ -1,18 +1,18 @@
-- [ ] Extract one shared manifest-aware activation layer used by startup and reload/apply
-- [ ] Implement path-backed activation through the shared layer
-- [ ] Implement init-var-backed activation through the shared layer
-- [ ] Register non-file-backed manifest extensions under `manifest:{lib}`
-- [ ] Integrate the shared activation layer into startup
-- [ ] Realize required non-local manifest deps during startup before activation
-- [ ] Integrate the shared activation layer into reload/apply
-- [ ] Persist truthful finalized startup install/apply state after activation
-- [ ] Remove bootstrap-specific direct init-var activation in favor of the shared activation path
-- [ ] Add startup success test for local-root manifest activation
-- [ ] Add startup success test for git manifest activation
-- [ ] Add startup success test for mvn manifest activation
-- [ ] Add startup failure test for dependency realization failure
-- [ ] Add startup failure test for init resolution failure
-- [ ] Add startup failure test for init execution failure
-- [ ] Add convergence test for startup summary vs live registry state
-- [ ] Add convergence test for persisted startup install/apply state vs live registry state
-- [ ] Update docs for startup activation semantics of local-root, git, and mvn manifest installs
+- [x] Extract one shared manifest-aware activation layer used by startup and reload/apply
+- [x] Implement path-backed activation through the shared layer
+- [x] Implement init-var-backed activation through the shared layer
+- [x] Register non-file-backed manifest extensions under `manifest:{lib}`
+- [x] Integrate the shared activation layer into startup
+- [x] Realize required non-local manifest deps during startup before activation
+- [x] Integrate the shared activation layer into reload/apply
+- [x] Persist truthful finalized startup install/apply state after activation
+- [x] Remove bootstrap-specific direct init-var activation in favor of the shared activation path
+- [x] Add startup success test for local-root manifest activation
+- [x] Add startup success test for git manifest activation
+- [x] Add startup success test for mvn manifest activation
+- [x] Add startup failure test for dependency realization failure
+- [x] Add startup failure test for init resolution failure
+- [x] Add startup failure test for init execution failure
+- [x] Add convergence test for startup summary vs live registry state
+- [x] Add convergence test for persisted startup install/apply state vs live registry state
+- [x] Update docs for startup activation semantics of local-root, git, and mvn manifest installs

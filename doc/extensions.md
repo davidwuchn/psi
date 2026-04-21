@@ -218,9 +218,13 @@ user/project extension configuration.
 See:
 - [`doc/extensions-install.md`](extensions-install.md)
 
-Current slice-one behavior:
-- manifest-backed `:local/root` extension entries can be applied during explicit reload/apply
-- manifest-backed git/mvn entries are validated and surfaced in introspection, but remain `:restart-required`
+Current behavior:
+- manifest-backed `:local/root`, git, and mvn extension entries are startup-activatable when their dependencies and `:psi/init` vars are realizable in the runtime
+- local-root installs activate from resolved source file paths
+- non-file-backed git/mvn installs activate by resolving and calling `:psi/init`, not by source-file path discovery
+- non-file-backed manifest installs register in the live extension registry under stable identities of the form `manifest:{lib}`
+- startup summary fields reflect actual activation attempts and results
+- reload/apply uses the same manifest-aware activation layer as startup, while still reporting `:restart-required` when dependency realization cannot be completed safely in-process
 - this repo’s built-in extensions now load from `.psi/extensions.edn` local-root entries rather than `.psi/extensions/` symlinks
 
 ## Discovery

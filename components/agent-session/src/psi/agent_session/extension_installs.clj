@@ -358,7 +358,7 @@
 
 (defn- merge-entry-statuses
   [entries-by-lib plan reload-result]
-  (let [loaded-paths       (set (:loaded reload-result))
+  (let [loaded-ids         (set (:loaded reload-result))
         errors-by-path     (into {} (map (juxt :path :error)) (:errors reload-result))
         path->lib          (:path->lib plan)
         failed-libs        (into #{} (concat
@@ -377,19 +377,25 @@
                        resolution-error (some (fn [{:keys [lib error]}]
                                                 (when (= lib entry-lib) error))
                                               (:resolution-errors plan))
-                       load-error       (or (get errors-by-path path) resolution-error)
+                       manifest-id      (manifest-extension-id entry-lib)
+                       load-error       (or (get errors-by-path path)
+                                             (get errors-by-path manifest-id)
+                                             resolution-error)
                        status           (cond
                                           (not extension?) :not-applicable
                                           (not enabled?) :disabled
                                           (= :local coord-family)
                                           (cond
-                                            (contains? loaded-paths path) :loaded
+                                            (contains? loaded-ids path) :loaded
                                             load-error :failed
                                             (contains? failed-libs entry-lib) :failed
                                             :else :configured)
                                           (contains? restart-required-libs entry-lib) :restart-required
+                                          (contains? loaded-ids manifest-id) :loaded
                                           (and (contains? deps-extension-libs entry-lib)
-                                               deps-realized?) :loaded
+                                               deps-realized?
+                                               (not load-error)) :loaded
+                                          load-error :failed
                                           :else :configured)]
                    [entry-lib (cond-> (assoc entry :status status)
                                 load-error (assoc :load-error load-error))]))
@@ -397,11 +403,16 @@
 
 (defn finalize-apply-state
   [install-state plan reload-result]
-  (let [reload-errors          (mapv (fn [{:keys [path error]}]
+  (let [entries-by-lib-map     (get-in install-state [:psi.extensions/effective :entries-by-lib])
+        reload-errors          (mapv (fn [{:keys [path error]}]
                                        (diagnostic {:severity :error
                                                     :category :load-failure
                                                     :message error
-                                                    :libs [(get (:path->lib plan) path)]
+                                                    :libs [(or (get (:path->lib plan) path)
+                                                               (some (fn [[lib _]]
+                                                                       (when (= path (manifest-extension-id lib))
+                                                                         lib))
+                                                                     entries-by-lib-map))]
                                                     :source :effective
                                                     :data {:path path}}))
                                      (:errors reload-result))

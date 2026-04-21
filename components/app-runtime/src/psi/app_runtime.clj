@@ -373,7 +373,14 @@ Available: " (str/join ", " (map name (keys all))))
                             :skills                 skills
                             :extension-paths        []
                             :extension-targets      []})
-         manifest-result  (extension-runtime/activate-manifest-extensions-in! ctx session-id install-plan deps-result)
+         manifest-result0 (extension-runtime/activate-manifest-extensions-in! ctx session-id install-plan deps-result)
+         deps-failure-errors (if-let [msg (:deps-realize-error deps-result)]
+                               (mapv (fn [lib]
+                                       {:path (installs/manifest-extension-id lib)
+                                        :error msg})
+                                     (:deps-extension-libs install-plan))
+                               [])
+         manifest-result  (update manifest-result0 :errors into deps-failure-errors)
          summary          (-> summary-base
                               (update :extension-loaded-count (fnil + 0) (count (:loaded manifest-result)))
                               (update :extension-error-count (fnil + 0) (count (:errors manifest-result)))
