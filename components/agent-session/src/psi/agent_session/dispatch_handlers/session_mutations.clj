@@ -158,17 +158,26 @@
   (register-core-handler!
    :session/cancel-job
    (fn [ctx {:keys [session-id job-id reason]}]
-     (let [store  (session/get-state-value-in ctx (session/state-path :background-jobs))
-           state' (bg-jobs/request-cancel store {:thread-id session-id
-                                                 :job-id    job-id
-                                                 :requested-by (or reason :user)})
-           job    (get-in state' [:jobs-by-id job-id])]
-       {:root-state-update #(assoc-in % [:background-jobs :store] state')
-        :effects [{:effect/type :background-job/cancel
-                   :job-id      job-id
-                   :job         job
-                   :reason      (or reason :user)}]
-        :return job})))
+     (let [sd       (session/get-session-data-in ctx session-id)
+           schedule (schedule-record sd job-id)]
+       (if (contains? #{:pending :queued} (:status schedule))
+         {:effects [{:effect/type :runtime/dispatch-event-with-effect-result
+                     :event-type :scheduler/cancel
+                     :event-data {:session-id session-id
+                                  :schedule-id job-id}
+                     :origin :core}]
+          :return-effect-result? true}
+         (let [store  (session/get-state-value-in ctx (session/state-path :background-jobs))
+               state' (bg-jobs/request-cancel store {:thread-id session-id
+                                                     :job-id    job-id
+                                                     :requested-by (or reason :user)})
+               job    (get-in state' [:jobs-by-id job-id])]
+           {:root-state-update #(assoc-in % [:background-jobs :store] state')
+            :effects [{:effect/type :background-job/cancel
+                       :job-id      job-id
+                       :job         job
+                       :reason      (or reason :user)}]
+            :return job})))))
 
   (register-core-handler!
    :session/login-begin
@@ -466,7 +475,7 @@
 
   (register-core-handler!
    :session/notify-extension
-   (fn [_ctx {:keys [message]}]
+   (fn [_ctx {:keys [session-id message]}]
      {:effects [{:effect/type :runtime/agent-append-message
                  :message message}
                 {:effect/type :persist/journal-append-message-entry
@@ -477,11 +486,12 @@
                  :event {:type :message-end :message message}}
                 {:effect/type :runtime/event-queue-offer
                  :event {:type :external-message
+                         :session-id session-id
                          :message message}}]}))
 
   (register-core-handler!
    :session/append-extension-message
-   (fn [_ctx {:keys [message]}]
+   (fn [_ctx {:keys [session-id message]}]
      {:effects [{:effect/type :runtime/agent-append-message
                  :message message}
                 {:effect/type :persist/journal-append-message-entry
@@ -492,6 +502,7 @@
                  :event {:type :message-end :message message}}
                 {:effect/type :runtime/event-queue-offer
                  :event {:type :external-message
+                         :session-id session-id
                          :message message}}]}))
 
   (register-core-handler!
