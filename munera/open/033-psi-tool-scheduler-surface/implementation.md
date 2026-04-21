@@ -11,63 +11,19 @@ Both use `(:daemon-thread-fn ctx)` to spawn sleeping threads.
 Relevant files:
 - `components/agent-session/src/psi/agent_session/dispatch_effects.clj` — effect executors
 - `components/agent-session/src/psi/agent_session/dispatch_schema.clj` — effect schemas
-- `components/agent-session/src/psi/agent_session/psi_tool.clj` — psi-tool surface
+- `components/agent-session/src/psi/agent_session/tools/psi_tool.clj` — psi-tool surface
 
-## Implemented slices
+## 2026-04-21
 
-### State / dispatch / timer
-- added scheduler schema and default session state in `session.clj`
-- added scheduler state-path helpers in `session_state.clj`
-- added handlers in `dispatch_handlers/session_mutations.clj`:
-  - `:scheduler/create`
-  - `:scheduler/cancel`
-  - `:scheduler/fired`
-  - `:scheduler/deliver`
-  - `:scheduler/drain-queue`
-- added effects in `dispatch_schema.clj` + `dispatch_effects.clj`:
-  - `:scheduler/start-timer`
-  - `:scheduler/cancel-timer`
-  - `:scheduler/drain-queue`
-- timer handles now live in runtime-only `ctx[:scheduler-timers*]`
-- `shutdown-context!` interrupts any remaining scheduler timer threads
+- Added pure scheduler state model in `components/agent-session/src/psi/agent_session/scheduler.clj`.
+- Seeded session default state with `:scheduler {:schedules {} :queue []}` in `session.clj`.
+- Added focused pure tests in `components/agent-session/test/psi/agent_session/scheduler_test.clj` covering create/list, bounds validation, fire queueing, delivery, cancel, and FIFO drain.
+- This first slice intentionally stops before dispatch integration so scheduler behavior is locally proven as plain data transitions.
 
-### Idle drain hook
-- `:on-agent-done`, `:on-abort`, and `:on-compact-done` now emit `:scheduler/drain-queue`
-- queue draining delivers a single oldest queued schedule per idle transition
+## Review summary
 
-### psi-tool surface
-- new `psi_tool_scheduler.clj`
-- `psi-tool` now supports `action: "scheduler"`
-- supported ops:
-  - `create`
-  - `list`
-  - `cancel`
-- validation covers:
-  - `delay-ms` vs `at`
-  - min 1000ms
-  - max 24h
-  - past absolute timestamps normalize to immediate fire time
-  - max 50 pending/queued schedules per session
-
-### EQL + background jobs
-- new pure helper namespace `scheduler.clj`
-- new resolvers in `resolvers/scheduler.clj`
-- scheduler items project into background-job runtime as synthetic jobs with:
-  - `:job-kind :scheduled-prompt`
-  - `:tool-name "scheduler"`
-  - `:job-id == schedule-id`
-- background-job cancellation now routes scheduler-projected jobs to canonical `:scheduler/cancel`
-- `session/cancel-job` also routes scheduler schedule ids to canonical scheduler cancellation so normal `/cancel-job` and UI flows work
-
-## Verification performed
-- targeted namespace tests passed via `clojure -M:test-paths -e ...` for:
-  - `psi.agent-session.session-test`
-  - `psi.agent-session.scheduler-dispatch-test`
-  - `psi.agent-session.scheduler-tools-test`
-  - `psi.agent-session.scheduler-resolvers-test`
-  - `psi.agent-session.scheduler-background-jobs-test`
-  - `psi.agent-session.scheduler-cancel-job-test`
-
-## Remaining gaps
-- no wall-clock sleep-based live timer integration test; current coverage drives canonical `:scheduler/fired` deterministically instead of waiting on real elapsed time
-- close semantics are runtime detachment only; persisted session files are intentionally preserved
+- Implementation quality is strong overall: behavior matches the task design closely, the `psi-tool` surface is coherent, and test coverage is strong across pure model, handlers, effects, projection, and lifecycle slices.
+- Follow-up landed: shutdown now routes scheduler cancellation through the dispatch-owned `:scheduler/cancel-all` event per session before final runtime timer cleanup.
+- Follow-up landed: `:scheduler/deliver` and `:scheduler/drain-queue` now share extracted scheduled-prompt lifecycle effect construction.
+- Follow-up landed: the graph surface now supports entity-seeded single-schedule lookup by `:psi.scheduler/schedule-id` in addition to session-scoped `:psi.scheduler/schedules` and `:psi.scheduler/pending-count`.
+- Follow-up landed: queued schedules no longer masquerade as `:pending-cancel` in the background-job projection; they now remain visible under the running/non-terminal job views, which is a truer mapping for “timer fired, awaiting idle delivery”.

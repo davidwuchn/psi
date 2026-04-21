@@ -84,8 +84,6 @@
     (is (session/has-pending-messages?
          (assoc (session/initial-session) :steering-messages ["x"])))))
 
-;; ── Context fraction ────────────────────────────────────────────────────────
-
 (deftest context-fraction-test
   (testing "nil when context-tokens nil"
     (is (nil? (session/context-fraction-used (session/initial-session)))))
@@ -112,8 +110,6 @@
                    :context-window 10000)]
       (is (session/above-compaction-threshold? s)))))
 
-;; ── Thinking level ──────────────────────────────────────────────────────────
-
 (deftest thinking-level-test
   (let [reasoning-model    {:provider "x" :id "y" :reasoning true}
         no-reasoning-model {:provider "x" :id "z" :reasoning false}]
@@ -131,8 +127,6 @@
 
     (testing "next-thinking-level always :off for non-reasoning model"
       (is (= :off (session/next-thinking-level :high no-reasoning-model))))))
-
-;; ── Model cycling ───────────────────────────────────────────────────────────
 
 (deftest model-cycling-test
   (let [m1   {:provider "a" :id "m1"}
@@ -153,8 +147,6 @@
 
     (testing "next-model with nil current → first model"
       (is (= m1 (session/next-model cands nil :forward))))))
-
-;; ── Retry helpers ───────────────────────────────────────────────────────────
 
 (deftest retry-helpers-test
   (testing "retry-error? true for rate limit"
@@ -182,8 +174,6 @@
 
   (testing "exponential-backoff-ms caps at max"
     (is (= 60000 (session/exponential-backoff-ms 10 2000 60000)))))
-
-;; ── Session entry helpers ───────────────────────────────────────────────────
 
 (deftest session-entry-test
   (testing "make-entry produces valid entry"

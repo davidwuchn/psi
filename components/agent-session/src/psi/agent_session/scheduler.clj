@@ -1,75 +1,194 @@
 (ns psi.agent-session.scheduler
-  "Pure scheduler projections and helper functions over canonical session scheduler state."
+  "Pure session-scoped scheduler state model for one-shot delayed prompt injection."
   (:require
-   [psi.agent-session.background-jobs :as bg-jobs]
-   [psi.agent-session.session-state :as ss]))
+   [clojure.string :as str]))
 
-(defn schedules-in
-  [ctx session-id]
-  (->> (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules] {})
-       vals
-       (sort-by (juxt :fire-at :created-at :schedule-id))
-       vec))
+(def schedule-statuses
+  #{:pending :queued :delivered :cancelled})
 
-(defn schedule-in
-  [ctx session-id schedule-id]
-  (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules schedule-id]))
+(def non-terminal-statuses
+  #{:pending :queued})
 
-(defn pending-schedules-in
-  [ctx session-id]
-  (->> (schedules-in ctx session-id)
-       (filter #(contains? #{:pending :queued} (:status %)))
-       vec))
+(def terminal-statuses
+  #{:delivered :cancelled})
 
-(defn pending-count-in
-  [ctx session-id]
-  (count (pending-schedules-in ctx session-id)))
+(def max-delay-ms
+  (* 24 60 60 1000))
 
-(defn schedule->background-job
+(def min-delay-ms
+  1000)
+
+(def default-max-pending-per-session
+  50)
+
+(defn empty-state []
+  {:schedules {}
+   :queue []})
+
+(defn schedule-count
+  [scheduler-state]
+  (count (:schedules (or scheduler-state {}))))
+
+(defn pending-count
+  [scheduler-state]
+  (->> (vals (:schedules (or scheduler-state {})))
+       (filter #(contains? non-terminal-statuses (:status %)))
+       count))
+
+(defn get-schedule
+  [scheduler-state schedule-id]
+  (get-in scheduler-state [:schedules schedule-id]))
+
+(defn list-schedules
+  ([scheduler-state]
+   (list-schedules scheduler-state [:pending :queued]))
+  ([scheduler-state statuses]
+   (let [status-set (set statuses)]
+     (->> (vals (:schedules (or scheduler-state {})))
+          (filter #(contains? status-set (:status %)))
+          (sort-by (juxt :fire-at :created-at :schedule-id))
+          vec))))
+
+(defn idle-session?
+  [session-data]
+  (and (not (:is-streaming session-data))
+       (not (:is-compacting session-data))))
+
+(defn schedule-summary
   [schedule]
-  {:job-id                   (:schedule-id schedule)
-   :thread-id                (:session-id schedule)
-   :tool-call-id             nil
-   :tool-name                "scheduler"
-   :job-kind                 :scheduled-prompt
-   :workflow-ext-path        nil
-   :workflow-id              nil
-   :job-seq                  nil
-   :started-at               (:created-at schedule)
-   :completed-at             nil
-   :completed-seq            nil
-   :status                   (:status schedule)
-   :terminal-payload         {:schedule-id (:schedule-id schedule)
-                              :label (:label schedule)
-                              :message (:message schedule)
-                              :fire-at (:fire-at schedule)}
-   :terminal-payload-file    nil
-   :cancel-requested-at      nil
-   :terminal-message-emitted false
-   :terminal-message-emitted-at nil})
+  {:schedule-id (:schedule-id schedule)
+   :label (:label schedule)
+   :message (:message schedule)
+   :created-at (:created-at schedule)
+   :fire-at (:fire-at schedule)
+   :status (:status schedule)
+   :session-id (:session-id schedule)
+   :source (:source schedule)})
 
-(defn scheduled-background-jobs-in
-  [ctx session-id]
-  (->> (pending-schedules-in ctx session-id)
-       (mapv schedule->background-job)))
+(defn validate-delay-ms!
+  [delay-ms]
+  (when-not (int? delay-ms)
+    (throw (ex-info "delay-ms must be an integer"
+                    {:delay-ms delay-ms})))
+  (when (< delay-ms min-delay-ms)
+    (throw (ex-info "delay-ms is below the minimum bound"
+                    {:delay-ms delay-ms
+                     :minimum min-delay-ms})))
+  (when (> delay-ms max-delay-ms)
+    (throw (ex-info "delay-ms exceeds the maximum bound"
+                    {:delay-ms delay-ms
+                     :maximum max-delay-ms})))
+  delay-ms)
 
-(def schedule-eql-attrs
-  [:psi.scheduler/schedule-id
-   :psi.scheduler/label
-   :psi.scheduler/message
-   :psi.scheduler/source
-   :psi.scheduler/created-at
-   :psi.scheduler/fire-at
-   :psi.scheduler/status
-   :psi.scheduler/session-id])
+(defn validate-schedule-record!
+  [{:keys [schedule-id message created-at fire-at status session-id source] :as schedule}]
+  (when (str/blank? (str schedule-id))
+    (throw (ex-info "schedule-id is required" {:schedule schedule})))
+  (when (str/blank? (str message))
+    (throw (ex-info "message is required" {:schedule schedule})))
+  (when-not (instance? java.time.Instant created-at)
+    (throw (ex-info "created-at must be an Instant" {:schedule schedule})))
+  (when-not (instance? java.time.Instant fire-at)
+    (throw (ex-info "fire-at must be an Instant" {:schedule schedule})))
+  (when-not (contains? schedule-statuses status)
+    (throw (ex-info "status is invalid" {:schedule schedule :status status})))
+  (when (str/blank? (str session-id))
+    (throw (ex-info "session-id is required" {:schedule schedule})))
+  (when-not (= :scheduled source)
+    (throw (ex-info "source must be :scheduled" {:schedule schedule :source source})))
+  schedule)
 
-(defn schedule->eql
-  [schedule]
-  {:psi.scheduler/schedule-id (:schedule-id schedule)
-   :psi.scheduler/label       (:label schedule)
-   :psi.scheduler/message     (:message schedule)
-   :psi.scheduler/source      (:source schedule)
-   :psi.scheduler/created-at  (:created-at schedule)
-   :psi.scheduler/fire-at     (:fire-at schedule)
-   :psi.scheduler/status      (:status schedule)
-   :psi.scheduler/session-id  (:session-id schedule)})
+(defn create-schedule
+  [scheduler-state {:keys [schedule-id label message created-at fire-at session-id]
+                    :or {label nil}}]
+  (let [state (or scheduler-state (empty-state))
+        _     (validate-schedule-record!
+               {:schedule-id schedule-id
+                :label label
+                :message message
+                :created-at created-at
+                :fire-at fire-at
+                :status :pending
+                :session-id session-id
+                :source :scheduled})]
+    (when (get-schedule state schedule-id)
+      (throw (ex-info "schedule-id already exists" {:schedule-id schedule-id})))
+    (let [schedule {:schedule-id schedule-id
+                    :label label
+                    :message message
+                    :created-at created-at
+                    :fire-at fire-at
+                    :status :pending
+                    :session-id session-id
+                    :source :scheduled}]
+      {:state    (assoc-in state [:schedules schedule-id] schedule)
+       :schedule schedule})))
+
+(defn cancel-schedule
+  [scheduler-state schedule-id]
+  (let [state    (or scheduler-state (empty-state))
+        schedule (get-schedule state schedule-id)]
+    (when-not schedule
+      (throw (ex-info "schedule not found" {:schedule-id schedule-id})))
+    (when-not (contains? non-terminal-statuses (:status schedule))
+      (throw (ex-info "schedule is not cancellable"
+                      {:schedule-id schedule-id
+                       :status (:status schedule)})))
+    {:state    (-> state
+                   (assoc-in [:schedules schedule-id :status] :cancelled)
+                   (update :queue (fn [q] (vec (remove #{schedule-id} (or q []))))))
+     :schedule (assoc schedule :status :cancelled)}))
+
+(defn fire-schedule
+  [scheduler-state session-data schedule-id]
+  (let [state    (or scheduler-state (empty-state))
+        schedule (get-schedule state schedule-id)]
+    (when-not schedule
+      (throw (ex-info "schedule not found" {:schedule-id schedule-id})))
+    (when-not (= :pending (:status schedule))
+      (throw (ex-info "only pending schedules can fire"
+                      {:schedule-id schedule-id
+                       :status (:status schedule)})))
+    (if (idle-session? session-data)
+      {:state state
+       :action :deliver
+       :schedule schedule}
+      {:state    (-> state
+                     (assoc-in [:schedules schedule-id :status] :queued)
+                     (update :queue (fnil conj []) schedule-id))
+       :action   :queue
+       :schedule (assoc schedule :status :queued)})))
+
+(defn next-queued-schedule-id
+  [scheduler-state]
+  (first (:queue (or scheduler-state {}))))
+
+(defn deliver-schedule
+  [scheduler-state schedule-id]
+  (let [state    (or scheduler-state (empty-state))
+        schedule (get-schedule state schedule-id)]
+    (when-not schedule
+      (throw (ex-info "schedule not found" {:schedule-id schedule-id})))
+    (when-not (contains? #{:pending :queued} (:status schedule))
+      (throw (ex-info "schedule is not deliverable"
+                      {:schedule-id schedule-id
+                       :status (:status schedule)})))
+    {:state    (-> state
+                   (assoc-in [:schedules schedule-id :status] :delivered)
+                   (update :queue (fn [q] (vec (remove #{schedule-id} (or q []))))))
+     :schedule (assoc schedule :status :delivered)}))
+
+(defn drain-one
+  [scheduler-state session-data]
+  (let [state       (or scheduler-state (empty-state))
+        schedule-id (next-queued-schedule-id state)]
+    (cond
+      (not (idle-session? session-data))
+      {:state state :drained? false :reason :session-busy}
+
+      (nil? schedule-id)
+      {:state state :drained? false :reason :empty}
+
+      :else
+      (let [{state' :state schedule :schedule} (deliver-schedule state schedule-id)]
+        {:state state' :drained? true :schedule schedule}))))

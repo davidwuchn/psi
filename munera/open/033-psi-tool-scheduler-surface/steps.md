@@ -16,9 +16,9 @@ Slice 2 — Effects and timer:
 - [x] Unit tests for effect execution
 
 Slice 3 — Idle delivery hook:
-- [x] Add `:scheduler/drain-queue` effect type
+- [x] Add `:scheduler/drain-queue` effect/event path
 - [x] Emit `:scheduler/drain-queue` from `:on-agent-done`, `:on-abort`, `:on-compact-done`
-- [x] Implement drain effect: pop first queued item → dispatch `:scheduler/deliver`
+- [x] Implement drain handling: pop first queued item → enter canonical prompt lifecycle
 - [x] Integration test: busy session queues, idle transition delivers
 
 Slice 4 — psi-tool surface:
@@ -36,7 +36,7 @@ Slice 4 — psi-tool surface:
 Slice 5 — EQL resolvers:
 - [x] `:psi.scheduler/schedules` resolver (session-scoped, all records)
 - [x] `:psi.scheduler/pending-count` resolver
-- [x] `:psi.scheduler/schedule` resolver (entity-seeded, single record by id)
+- [x] Entity-seeded single-schedule resolver via `:psi.scheduler/schedule-id`
 - [x] Unit tests for resolvers
 
 Slice 6 — Background-job integration:
@@ -56,3 +56,10 @@ Slice 7 — End-to-end tests:
 - [x] Past absolute time → immediate fire
 - [x] Bounds rejection (too short, too long)
 - [x] Cap rejection (51st schedule)
+
+Review follow-up:
+- [x] Move shutdown-path scheduler cancellation into a dispatch-owned handler/event instead of direct root-state mutation in `context/shutdown-context!`
+- [x] Extract shared scheduled-prompt lifecycle effect construction from `:scheduler/deliver` and `:scheduler/drain-queue`
+- [x] Add entity-seeded single-schedule resolver surface
+- [x] Reconcile `steps.md`/task artifacts with the final implemented slice boundaries and resolver coverage
+- [x] Revisit queued-schedule background-job status projection and keep queued schedules visible under running/non-terminal job views

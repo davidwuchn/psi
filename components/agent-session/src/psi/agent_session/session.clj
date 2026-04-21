@@ -33,7 +33,8 @@
      :context-window        — integer, model context window size
      :ui-type               — :console | :tui | :emacs (runtime surface hint for extensions)"
   (:require
-   [malli.core :as m]))
+   [malli.core :as m]
+   [psi.agent-session.scheduler :as scheduler]))
 
 ;; ============================================================
 ;; Schemas
@@ -283,8 +284,7 @@
      :context-window          nil
      :ui-type                 :console
      :tool-output-overrides   {}
-     :scheduler               {:schedules {}
-                               :queue []}}
+     :scheduler               (scheduler/empty-state)}
     overrides)))
 
 ;; ============================================================
@@ -323,8 +323,6 @@
    (let [frac (context-fraction-used session)]
      (and frac (>= frac threshold)))))
 
-;; ── Thinking level clamping ─────────────────────────────
-
 (def ^:private thinking-level-order
   [:off :minimal :low :medium :high :xhigh])
 
@@ -347,8 +345,6 @@
       (nth available next-idx))
     :off))
 
-;; ── Model cycling ───────────────────────────────────────
-
 (defn next-model
   "Return the next model after `current` in `candidates`, cycling.
   Direction :forward or :backward.
@@ -359,19 +355,15 @@
     (let [models (mapv :model candidates)
           n      (count models)]
       (if-not current
-        ;; No current model — return first (forward) or last (backward)
         (case direction
           :backward (nth models (dec n))
           (nth models 0))
-        ;; Current model known — advance by one in requested direction
         (let [idx    (or (first (keep-indexed #(when (= (:id %2) (:id current)) %1) models)) 0)
               next-i (case direction
                        :forward  (mod (inc idx) n)
                        :backward (mod (dec idx) n)
                        (mod (inc idx) n))]
           (nth models next-i))))))
-
-;; ── Session entry helpers ───────────────────────────────
 
 (defn make-entry
   "Construct a SessionEntry map."
@@ -387,10 +379,7 @@
   [session entry]
   (update session :session-entries conj entry))
 
-;; ── Canonical-root runtime access helpers ───────────────
-
 (defn- session-data-path [sid] [:agent-session :sessions sid :data])
-
 (defn- session-telemetry-path [sid k] [:agent-session :sessions sid :telemetry k])
 (defn- session-journal-path [sid] [:agent-session :sessions sid :persistence :journal])
 (defn- session-flush-state-path [sid] [:agent-session :sessions sid :persistence :flush-state])
@@ -446,15 +435,10 @@
   [ctx sid]
   (get-state-value-in ctx (session-data-path sid)))
 
-;; ── Retry backoff ───────────────────────────────────────
-
 (def ^:private retriable-http-statuses
-  "HTTP status codes that indicate a retriable error."
   #{429 500 502 503 529})
 
 (defn retry-error?
-  "True if the error is retriable.
-  Checks numeric :http-status first (preferred), falls back to string matching."
   ([stop-reason error-message]
    (retry-error? stop-reason error-message nil))
   ([stop-reason error-message http-status]
@@ -465,10 +449,9 @@
                    #"(?i)too.many.requests"
                    #"(?i)overloaded"
                    #"(?i)status[ .:_]429"
-                   #"(?i)status[ .:_]5\d\d"])))))
+                   #"(?i)status[ .:_]5\d\d"]))))
 
 (defn context-overflow-error?
-  "True if `error-message` indicates a context-window overflow."
   [error-message]
   (boolean
    (some #(re-find % (or error-message ""))
@@ -478,6 +461,5 @@
           #"(?i)too.many.tokens"])))
 
 (defn exponential-backoff-ms
-  "Compute backoff delay in ms for `attempt` (0-indexed) with base and max."
   [attempt base-ms max-ms]
   (min max-ms (long (* base-ms (Math/pow 2 attempt)))))
