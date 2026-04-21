@@ -9,6 +9,7 @@ Open tasks in suggested execution order:
 5. `munera/open/004-lsp-integration-managed-services-post-tool-processing/`
 6. `munera/open/005-canonical-dispatch-pipeline-trace-observability/`
 7. `munera/open/006-agent-tool-skill-prelude-follow-on/`
+8. `munera/open/029-unified-workflow-loader/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.
