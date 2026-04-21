@@ -12,6 +12,7 @@
    Tool: delegate(action, workflow, prompt, ...)
    Command: /delegate <workflow> <prompt>"
   (:require
+   [clojure.set :as set]
    [clojure.string :as str]
    [psi.agent-session.workflow-file-loader :as loader]
    [psi.agent-session.workflow-runtime :as workflow-runtime])
@@ -100,6 +101,8 @@
     (register-prompt-contribution!)
     result))
 
+(declare refresh-widgets!)
+
 ;;; Result injection
 
 (defn- inject-result-into-context!
@@ -174,8 +177,9 @@
                        {:custom-type "delegate-result"
                         :data content})
             (catch Exception _ nil)))))
-    ;; Clean up tracking
-    (swap! active-runs dissoc run-id)))
+    ;; Clean up tracking and refresh widgets
+    (swap! active-runs dissoc run-id)
+    (refresh-widgets!)))
 
 (defn- execute-async!
   "Launch workflow execution asynchronously on a separate thread.
@@ -197,6 +201,7 @@
             :session-id session-id
             :workflow workflow-name
             :started-at (System/currentTimeMillis)})
+    (refresh-widgets!)
     run-id))
 
 ;;; Sync execution
@@ -414,6 +419,64 @@
                      (str "Removed run " (:run-id result))))
       (str "Unknown action: " action ". Use: run, list, continue, remove"))))
 
+;;; Widget
+
+(def ^:private widget-placement :bottom)
+
+(defn- run-status-icon [status]
+  (case status
+    :pending "○"
+    :running "▸"
+    :blocked "◆"
+    :completed "✓"
+    :failed "✗"
+    :cancelled "⊘"
+    "?"))
+
+(defn- run-widget-lines
+  "Build display lines for a single workflow run."
+  [run-id {:keys [workflow started-at]} run-info]
+  (let [status (or (:status run-info) :running)
+        elapsed (when started-at
+                  (quot (- (System/currentTimeMillis) (long started-at)) 1000))
+        source (or (:source-definition-id run-info) workflow)
+        top-line (str (run-status-icon status)
+                      " " run-id
+                      (when source (str " · @" source))
+                      (when elapsed (str " · " elapsed "s")))]
+    [top-line]))
+
+(defn- refresh-widgets!
+  "Update widgets for all tracked and canonical workflow runs."
+  []
+  (when-let [ui (:ui @state)]
+    (let [tracked @active-runs
+          ;; Query canonical runs
+          runs-result (try
+                        (mutate! 'psi.workflow/list-runs {})
+                        (catch Exception _ {:psi.workflow/runs []}))
+          canonical-runs (:psi.workflow/runs runs-result)
+          ;; Build run info map from canonical runs
+          run-info-by-id (into {} (map (fn [r] [(:run-id r) r]) canonical-runs))
+          ;; All known run-ids (tracked + canonical)
+          all-run-ids (into (set (keys tracked)) (map :run-id canonical-runs))
+          ;; Current widget ids
+          current-wids (into #{} (map #(str "delegate-" %)) all-run-ids)
+          old-wids (or (:widget-ids @state) #{})]
+      ;; Clear removed widgets
+      (doseq [wid (set/difference old-wids current-wids)]
+        ((:clear-widget ui) wid))
+      ;; Set/update widgets for active runs
+      (doseq [run-id all-run-ids]
+        (let [tracking (get tracked run-id)
+              run-info (get run-info-by-id run-id)
+              wid (str "delegate-" run-id)
+              lines (run-widget-lines run-id
+                                      (or tracking {})
+                                      (or run-info {:status :running}))]
+          ((:set-widget ui) wid widget-placement lines)))
+      (swap! state assoc :widget-ids current-wids))))
+
 ;;; Delegate command
 
 (defn- parse-delegate-command
@@ -436,10 +499,12 @@
          :mutate-fn (:mutate api)
          :log-fn (or (:log api) println)
          :notify-fn (or (:notify api) (fn [m _] (println m)))
+         :ui (:ui api)
          :register-prompt-contribution
          (when-let [rpc (:register-prompt-contribution api)]
            rpc)
-         :loaded-definitions {})
+         :loaded-definitions {}
+         :widget-ids #{})
 
   ;; Load and register all workflow definitions
   (let [{:keys [registered-count errors]} (reload-definitions!)]

@@ -2,7 +2,9 @@
   "Tests for the delegate tool async/sync mode, fork_session, and include_result_in_context."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
-   [extensions.workflow-loader :as wl]))
+   [extensions.workflow-loader :as wl])
+  (:import
+   [java.util.concurrent Future]))
 
 ;;; Test infrastructure — mock extension API
 
@@ -59,6 +61,21 @@
 
 (defn- get-notifications []
   @(:notifications @test-state))
+
+;;; Fixtures
+
+(defn reset-extension-state [f]
+  ;; Reset the module-level atoms between tests to avoid leakage
+  (reset! @#'wl/active-runs {})
+  (reset! @#'wl/state nil)
+  (f)
+  ;; Clean up any lingering futures
+  (doseq [[_ {:keys [future]}] @(deref #'wl/active-runs)]
+    (when (instance? Future future)
+      (future-cancel future)))
+  (reset! @#'wl/active-runs {}))
+
+(use-fixtures :each reset-extension-state)
 
 ;;; Tests
 
@@ -355,6 +372,63 @@
           (is (string? list-result))
           (is (.contains ^String list-result "planner"))
           (is (.contains ^String list-result "[async]")))))))
+
+(deftest widget-refresh-on-async-run-test
+  (testing "widgets are refreshed when async runs start and complete"
+    (let [widget-calls (atom [])
+          clear-calls (atom [])
+          api (make-mock-api
+               {:mutate-results
+                {'psi.workflow/register-definition
+                 (fn [_] {:psi.workflow/registered? true})
+                 'psi.workflow/create-run
+                 (fn [params]
+                   {:psi.workflow/run-id (:run-id params)
+                    :psi.workflow/status :pending})
+                 'psi.workflow/execute-run
+                 (fn [_]
+                   (Thread/sleep 50)
+                   {:psi.workflow/status :completed
+                    :psi.workflow/result "done"})
+                 'psi.workflow/list-runs
+                 (fn [_] {:psi.workflow/runs []})
+                 'psi.extension/append-entry
+                 (fn [_] {})}})]
+      ;; Inject mock UI
+      (swap! @#'wl/state assoc :ui
+             {:set-widget (fn [wid placement lines]
+                            (swap! widget-calls conj {:wid wid :placement placement :lines lines}))
+              :clear-widget (fn [wid]
+                              (swap! clear-calls conj wid))})
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      {:definitions {"planner" {:definition-id "planner"
+                                                :name "planner"
+                                                :summary "Plans"
+                                                :step-order ["step-1"]
+                                                :steps {"step-1" {:label "planner"}}}}
+                       :errors []
+                       :warnings []})]
+        (wl/init api)
+        ;; Inject UI again after init (init resets state)
+        (swap! @#'wl/state assoc :ui
+               {:set-widget (fn [wid placement lines]
+                              (swap! widget-calls conj {:wid wid :placement placement :lines lines}))
+                :clear-widget (fn [wid]
+                                (swap! clear-calls conj wid))})
+        (execute-tool {:action "run"
+                       :workflow "planner"
+                       :prompt "plan it"
+                       :name "widget-test-run"})
+        ;; Widget should have been set for the new run
+        (Thread/sleep 100)
+        (is (pos? (count @widget-calls)) "should have set at least one widget")
+        (is (some #(= "delegate-widget-test-run" (:wid %)) @widget-calls)
+            "widget id should be delegate-<run-id>")
+        ;; Wait for completion
+        (Thread/sleep 300)
+        ;; After completion, tracking is cleared
+        (is (empty? @(deref #'wl/active-runs)))))))
 
 (deftest delegate-continue-test
   (testing "continue resumes a blocked run asynchronously"
