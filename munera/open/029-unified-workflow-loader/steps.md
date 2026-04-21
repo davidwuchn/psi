@@ -3,7 +3,12 @@ Design:
 - [x] Define directory layout (`.psi/workflows/`)
 - [x] Define tool surface (`delegate` tool, `/delegate` command)
 - [x] Define parameter shapes
-- [ ] Validate design against current agent extension capabilities (prelude, skills, fork, sync/async modes)
+- [x] Validate design against current agent extension capabilities (prelude, skills, fork, sync/async modes)
+  - fork_session: invocation-time parameter only (not workflow definition)
+  - include_result_in_context: invocation-time parameter only (delivery concern)
+  - continue = resume with new prompt (unified concept)
+  - sync/async: invocation-time mode; background-job for management
+  - skill prelude: already partially landed in child-session creation; works through workflow definitions via `:skills` EDN config
 
 Parser:
 - [ ] Implement unified file parser (frontmatter → EDN detection → body extraction)

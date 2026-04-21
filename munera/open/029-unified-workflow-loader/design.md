@@ -146,12 +146,22 @@ One tool: `delegate`
 
 ### Parameters
 
-| Parameter | Purpose |
-|-----------|---------|
-| `workflow` | Workflow name to run |
-| `prompt` | Input/request text |
-| `name` | Optional label for this run |
-| `action` | `list`, `remove`, `continue` (default: `run`) |
+| Parameter | Purpose | When |
+|-----------|---------|------|
+| `workflow` | Workflow name to run | `action=run` |
+| `prompt` | Input/request text | `action=run`, `action=continue` |
+| `name` | Optional label for this run | `action=run` |
+| `action` | `run` (default), `list`, `remove`, `continue` | always |
+| `id` | Run id | `action=continue`, `action=remove` |
+| `mode` | `sync` (block and return result) or `async` (background, default) | `action=run` |
+| `fork_session` | When true, child session starts from a fork of the parent conversation | `action=run` |
+| `include_result_in_context` | When true, inject result into parent context as user+assistant messages | `action=run`, `action=continue` |
+| `timeout_ms` | Sync mode timeout in milliseconds (default 300000) | `action=run`, `mode=sync` |
+
+Notes on invocation-time parameters:
+- `fork_session` is purely invocation-time — it controls how the child session is created, not a property of the workflow definition
+- `include_result_in_context` is purely invocation-time — it controls how the result is delivered to the caller, not a property of the workflow
+- `mode` is purely invocation-time — sync blocks and returns the result inline; async fires in background and the caller monitors via background jobs
 
 ### Invocation shapes
 
@@ -170,14 +180,32 @@ One tool: `delegate`
 {workflow: "plan-build-review", prompt: "...", name: "dispatch-refactor"}
 ```
 
+**Sync with result:**
+```
+{workflow: "planner", prompt: "...", mode: "sync"}
+```
+
+**Fork parent conversation:**
+```
+{workflow: "builder", prompt: "...", fork_session: true}
+```
+
+**Continue a stopped/blocked run with new input:**
+```
+{action: "continue", id: "3", prompt: "also check error handling"}
+```
+
 **Management:**
 ```
 {action: "list"}
 {action: "remove", id: "3"}
-{action: "continue", id: "3", prompt: "also check error handling"}
 ```
 
 The LLM sees all available workflows in the prompt contribution and picks what fits. No distinction between single-step and multi-step — just workflow names.
+
+### Continue semantics
+
+Continue resumes a stopped (done, errored, or blocked) run with a new prompt. This unifies the current agent "continue with new prompt" and canonical workflow "resume blocked step" concepts — both are "push a stopped run forward with new input."
 
 ## Command surface
 

@@ -25,3 +25,17 @@ Key design decisions:
 - YAML frontmatter preserved for name/description for consistency with broader ecosystem conventions
 - EDN block is optional — detected by first non-whitespace `{` in body
 - body of multi-step workflows is framing prompt injected into step context
+
+2026-04-20
+- Capability validation completed against current `agent` extension (1401 lines).
+- Capabilities inventoried:
+  - sync/async mode, fork session, include result in context, skill prelude, agent profile resolution,
+    continue, widget, prompt contribution, background job tracking, session lifecycle cleanup,
+    result injection, timeout
+- Design decisions from validation:
+  - `fork_session` → invocation-time parameter only (controls child session creation, not workflow nature)
+  - `include_result_in_context` → invocation-time parameter only (controls result delivery to caller)
+  - continue = resume with new prompt → unified concept (agent "continue" and workflow "resume blocked" are the same thing)
+  - sync/async → invocation-time `mode` parameter; background-job handles async management
+  - skill prelude → already partially landed in child-session creation; surfaces through `:skills` in EDN config
+- No blocking gaps identified — all current agent capabilities map cleanly to the delegate tool + canonical workflow execution
