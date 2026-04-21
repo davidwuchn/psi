@@ -1,0 +1,7 @@
+- [ ] Inspect current `workflow-loader` async run management and background-job patterns
+- [ ] Decide and document the canonical tracking model for delegated async runs
+- [ ] Remove extension-local `active-runs` as authoritative tracking for delegated runs
+- [ ] Rework delegate widget/list output to use canonical/background-job-backed projections
+- [ ] Preserve sync timeout, continue, remove, and `include_result_in_context` behavior under the new model
+- [ ] Add focused tests for async visibility, completion, timeout, and cleanup
+- [ ] Update task-local implementation notes as slices land
