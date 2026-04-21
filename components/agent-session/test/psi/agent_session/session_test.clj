@@ -29,7 +29,34 @@
       (is (= [] (:prompt-contributions s)))
       (is (= [] (:steering-messages s)))
       (is (= [] (:follow-up-messages s)))
-      (is (= 0 (:retry-attempt s))))))
+      (is (= 0 (:retry-attempt s)))
+      (is (= {:schedules {}
+              :queue []}
+             (:scheduler s))))))
+
+(deftest scheduler-schema-test
+  (testing "schedule schema accepts canonical scheduled prompt record"
+    (is (session/valid-schedule?
+         {:schedule-id "sch-1"
+          :label "check-build"
+          :message "Check build status"
+          :source :scheduled
+          :created-at (java.time.Instant/now)
+          :fire-at (java.time.Instant/now)
+          :status :pending
+          :session-id "sid-1"})))
+
+  (testing "scheduler state schema accepts canonical store shape"
+    (is (session/valid-scheduler-state?
+         {:schedules {"sch-1" {:schedule-id "sch-1"
+                                :label nil
+                                :message "wake up"
+                                :source :scheduled
+                                :created-at (java.time.Instant/now)
+                                :fire-at (java.time.Instant/now)
+                                :status :queued
+                                :session-id "sid-1"}}
+          :queue ["sch-1"]}))))
 
 ;; ── Derived predicates ──────────────────────────────────────────────────────
 

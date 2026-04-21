@@ -124,6 +124,25 @@
    [:skill-names {:optional true} [:maybe [:vector :string]]]
    [:components {:optional true} [:maybe [:set prompt-component-schema]]]])
 
+(def schedule-status-schema
+  [:enum :pending :queued :delivered :cancelled])
+
+(def schedule-schema
+  [:map
+   [:schedule-id :string]
+   [:label {:optional true} [:maybe :string]]
+   [:message :string]
+   [:source [:= :scheduled]]
+   [:created-at inst?]
+   [:fire-at inst?]
+   [:status schedule-status-schema]
+   [:session-id :string]])
+
+(def scheduler-state-schema
+  [:map
+   [:schedules [:map-of :string schedule-schema]]
+   [:queue [:vector :string]]])
+
 (def agent-session-schema
   [:map
    [:session-id :string]
@@ -183,7 +202,8 @@
    [:ui-type {:optional true} ui-type-schema]
    [:tool-output-overrides {:optional true} [:map-of :string [:map
                                                               [:max-lines {:optional true} [:maybe :int]]
-                                                              [:max-bytes {:optional true} [:maybe :int]]]]]])
+                                                              [:max-bytes {:optional true} [:maybe :int]]]]]
+   [:scheduler {:optional true} scheduler-state-schema]])
 
 ;; ============================================================
 ;; Validation
@@ -194,6 +214,8 @@
 (defn valid-skill? [s] (m/validate skill-schema s))
 (defn valid-extension? [e] (m/validate extension-schema e))
 (defn valid-session-entry? [e] (m/validate session-entry-schema e))
+(defn valid-schedule? [s] (m/validate schedule-schema s))
+(defn valid-scheduler-state? [s] (m/validate scheduler-state-schema s))
 
 ;; ============================================================
 ;; Defaults
@@ -260,7 +282,9 @@
      :context-tokens          nil
      :context-window          nil
      :ui-type                 :console
-     :tool-output-overrides   {}}
+     :tool-output-overrides   {}
+     :scheduler               {:schedules {}
+                               :queue []}}
     overrides)))
 
 ;; ============================================================
