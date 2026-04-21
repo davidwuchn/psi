@@ -1,11 +1,7 @@
 {:deps
- {psi/agent
-  {:local/root "extensions/agent"
-   :psi/init extensions.agent/init}
-
-  psi/agent-chain
-  {:local/root "extensions/agent-chain"
-   :psi/init extensions.agent-chain/init}
+ {psi/workflow-loader
+  {:local/root "extensions/workflow-loader"
+   :psi/init extensions.workflow-loader/init}
 
   psi/auto-session-name
   {:local/root "extensions/auto-session-name"
