@@ -81,6 +81,20 @@
         (:content assistant-message))
       ""))
 
+(defn- compose-system-prompt
+  [base-system-prompt framing-prompt]
+  (cond
+    (and (seq base-system-prompt) (seq framing-prompt))
+    (str base-system-prompt "\n\n" framing-prompt)
+
+    (seq base-system-prompt)
+    base-system-prompt
+
+    (seq framing-prompt)
+    framing-prompt
+
+    :else nil))
+
 (defn resolve-step-session-config
   "Resolve child session configuration for a workflow step.
 
@@ -88,23 +102,22 @@
    For multi-step workflows, looks up the referenced workflow's definition
    from registered definitions to get that step's :workflow-file-meta.
 
-   Returns a map with :system-prompt, :tool-defs, :thinking-level, :skills."
+   Returns a map with composed prompt/config for child session creation."
   [ctx workflow-run step-id]
   (let [step-def  (get-in workflow-run [:effective-definition :steps step-id])
         profile   (get-in step-def [:executor :profile])
-        ;; For single-step, use the run's own meta; for multi-step, look up the
-        ;; referenced workflow's definition
         run-meta  (get-in workflow-run [:effective-definition :workflow-file-meta])
-        step-meta (if (and profile
-                           (> (count (get-in workflow-run [:effective-definition :step-order])) 1))
-                    ;; Multi-step: look up the referenced workflow definition
+        delegated-workflow? (and profile
+                                 (not= profile (:definition-id (:effective-definition workflow-run))))
+        step-meta (if delegated-workflow?
                     (let [ref-def (get-in @(:state* ctx)
                                           [:workflows :definitions profile])]
                       (or (:workflow-file-meta ref-def) {}))
-                    ;; Single-step: use the run's own workflow-file-meta
-                    (or run-meta {}))]
-    {:system-prompt  (or (:system-prompt step-meta)
-                         (:framing-prompt run-meta))
+                    (or run-meta {}))
+        framing-prompt (when delegated-workflow? (:framing-prompt run-meta))]
+    {:base-system-prompt (:system-prompt step-meta)
+     :framing-prompt framing-prompt
+     :system-prompt  (compose-system-prompt (:system-prompt step-meta) framing-prompt)
      :tool-defs      (or (:tools step-meta) [])
      :thinking-level (or (:thinking-level step-meta) :off)
      :skills         (:skills step-meta)}))

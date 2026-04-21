@@ -101,10 +101,10 @@ Corrective follow-up after implementation review:
   - `delegate remove` now removes rather than cancels
   - active-run tracking/widget cleanup now follows removal
   - focused tests now prove runtime, mutation, and delegate remove behavior
-- [ ] Align multi-step framing prompt behavior with the design
-  - inject framing prompt into each delegated step context by default
-  - stop relying on fallback-only framing behavior
-  - add direct execution tests for prompt composition
+- [x] Align multi-step framing prompt behavior with the design
+  - delegated child sessions now compose referenced workflow system prompt with orchestration framing prompt by default
+  - framing no longer relies on fallback-only behavior when referenced workflows already have system prompts
+  - focused execution tests now prove prompt composition and framing-only fallback behavior
 - [ ] Propagate execution-time workflow config completely
   - make `:skills` reach child session creation/runtime
   - make `:model` overrides effective during execution

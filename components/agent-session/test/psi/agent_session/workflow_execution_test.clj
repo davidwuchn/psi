@@ -116,7 +116,7 @@
       (is (= ["clojure-coding-standards"] (:skills config))))))
 
 (deftest resolve-step-session-config-multi-step-test
-  (testing "multi-step workflow looks up referenced workflow definitions for each step"
+  (testing "multi-step workflow composes referenced workflow system prompt with framing prompt"
     (let [[ctx _] (create-session-context {:persist? false})
           _ (swap! (:state* ctx)
                    (fn [state]
@@ -130,25 +130,29 @@
                        s)))
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-2")
 
-          ;; Step 1 references "planner" → should get planner's meta
+          ;; Step 1 references "planner" → should get planner meta + framing prompt
           config1 (workflow-execution/resolve-step-session-config ctx workflow-run "step-1-planner")
-          ;; Step 2 references "builder" → should get builder's meta
+          ;; Step 2 references "builder" → should get builder meta + framing prompt
           config2 (workflow-execution/resolve-step-session-config ctx workflow-run "step-2-builder")]
 
-      ;; Step 1: planner config
-      (is (= "You are a planner." (:system-prompt config1)))
+      ;; Step 1: planner config + chain framing
+      (is (= "You are a planner.\n\nCoordinate a plan-build cycle." (:system-prompt config1)))
+      (is (= "You are a planner." (:base-system-prompt config1)))
+      (is (= "Coordinate a plan-build cycle." (:framing-prompt config1)))
       (is (= ["read" "bash"] (:tool-defs config1)))
       (is (= :medium (:thinking-level config1)))
       (is (= ["clojure-coding-standards"] (:skills config1)))
 
-      ;; Step 2: builder config
-      (is (= "You are a builder." (:system-prompt config2)))
+      ;; Step 2: builder config + chain framing
+      (is (= "You are a builder.\n\nCoordinate a plan-build cycle." (:system-prompt config2)))
+      (is (= "You are a builder." (:base-system-prompt config2)))
+      (is (= "Coordinate a plan-build cycle." (:framing-prompt config2)))
       (is (= ["read" "bash" "edit" "write"] (:tool-defs config2)))
       (is (= :off (:thinking-level config2)))
       (is (nil? (:skills config2))))))
 
 (deftest resolve-step-session-config-multi-step-framing-fallback-test
-  (testing "when referenced workflow has no system-prompt, framing-prompt from multi-step is used"
+  (testing "when referenced workflow has no system-prompt, framing-prompt from multi-step is still injected"
     (let [[ctx _] (create-session-context {:persist? false})
           ;; reviewer def with no system-prompt in meta
           reviewer-def {:definition-id "reviewer"
@@ -179,7 +183,8 @@
                        s)))
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-3")
           config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1-reviewer")]
-      ;; Falls back to framing-prompt from the chain definition
+      (is (nil? (:base-system-prompt config)))
+      (is (= "Review carefully." (:framing-prompt config)))
       (is (= "Review carefully." (:system-prompt config))))))
 
 (deftest materialize-step-inputs-and-prompt-test
@@ -210,8 +215,14 @@
                                                                              :workflow-input {:input "ship it"
                                                                                               :original "build this feature"}})]
                        state2)))
-          prompted* (atom [])]
-      (with-redefs [psi.agent-session.prompt-control/prompt-in! (fn [_ctx child-session-id prompt]
+          prompted* (atom [])
+          child-create-opts* (atom nil)]
+      (with-redefs [psi.agent-session.workflow-attempts/create-step-attempt-session!
+                    (fn [_ctx _parent-session-id opts]
+                      (reset! child-create-opts* opts)
+                      {:attempt {:attempt-id "a1" :status :pending :execution-session-id "child-1"}
+                       :execution-session {:session-id "child-1"}})
+                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx child-session-id prompt]
                                                                   (swap! prompted* conj {:session-id child-session-id :prompt prompt})
                                                                   nil)
                     psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
@@ -225,7 +236,9 @@
                  (get-in run [:step-runs "step-1-planner" :accepted-result])))
           (is (= [{:session-id (:execution-session-id result)
                    :prompt "ship it"}]
-                 @prompted*)))))))
+                 @prompted*))
+          ;; Single-step definition has no framing prompt, so system prompt is unchanged
+          (is (nil? (:system-prompt @child-create-opts*))))))))
 
 (deftest execute-run-test
   (testing "execute-run! drives a sequential workflow through all steps to completion"
@@ -258,6 +271,38 @@
           (is (= ["ship it"
                   "Execute this plan:\n\nplanner output\n\nOriginal request: build this feature"]
                  (mapv :prompt @prompts*))))))))
+
+(deftest execute-current-step-multi-step-composes-child-system-prompt-test
+  (testing "multi-step execution injects framing prompt into delegated child session context by default"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state single-step-definition-with-meta)
+                           [s _ _] (workflow-runtime/register-definition s builder-definition-with-meta)
+                           [s _ _] (workflow-runtime/register-definition s multi-step-definition-with-meta)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "plan-build"
+                                                                   :run-id "run-4"
+                                                                   :workflow-input {:input "build it"
+                                                                                    :original "build this"}})]
+                       s)))
+          child-create-opts* (atom [])]
+      (with-redefs [psi.agent-session.workflow-attempts/create-step-attempt-session!
+                    (fn [_ctx _parent-session-id opts]
+                      (swap! child-create-opts* conj opts)
+                      {:attempt {:attempt-id (str "a-" (count @child-create-opts*))
+                                 :status :pending
+                                 :execution-session-id (str "child-" (count @child-create-opts*))}
+                       :execution-session {:session-id (str "child-" (count @child-create-opts*))}})
+                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
+                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx child-session-id]
+                                                                                 {:content (if (= child-session-id "child-1")
+                                                                                             "planner output"
+                                                                                             "builder output")})]
+        (let [result (workflow-execution/execute-run! ctx session-id "run-4")]
+          (is (= :completed (:status result)))
+          (is (= ["You are a planner.\n\nCoordinate a plan-build cycle."
+                  "You are a builder.\n\nCoordinate a plan-build cycle."]
+                 (mapv :system-prompt @child-create-opts*))))))))
 
 (deftest execute-run-blocked-test
   (testing "execute-run! stops and reports blocked runs"

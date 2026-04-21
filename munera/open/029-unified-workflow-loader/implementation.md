@@ -223,9 +223,23 @@ Validation:
   - `extensions.workflow-loader-delegate-test`
 - result for this slice: `13 tests, 40 assertions, 0 failures`
 
+2026-04-20
+- Fourth corrective alignment slice landed: multi-step framing prompt composition.
+
+What changed:
+- workflow execution now composes delegated child-session system prompts explicitly:
+  - referenced workflow system prompt
+  - orchestration framing prompt
+- framing prompt injection no longer depends on the referenced workflow lacking its own system prompt
+- delegated-step detection now keys off referenced workflow/profile semantics rather than only step-count > 1, so single-step orchestration wrappers also receive framing injection when they delegate to another workflow
+
+Validation:
+- focused suite green:
+  - `psi.agent-session.workflow-execution-test`
+- result for this slice: `10 tests, 52 assertions, 0 failures`
+
 Remaining work:
 - corrective alignment slice recorded in `plan.md` and `steps.md`:
-  - framing prompt injection semantics
   - execution-time propagation for `:skills` and `:model`
   - reload retirement correctness
   - contract/doc/schema cleanup
