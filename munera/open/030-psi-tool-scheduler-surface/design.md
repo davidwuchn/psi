@@ -61,17 +61,24 @@ This gives free UI widget visibility without new projection code.
 If the target session is not idle when the timer fires, the prompt injection
 is queued and delivered when the session returns to `:idle`. The scheduler
 promises delivery, not instant delivery. This avoids fighting the statechart
-or dropping scheduled work.
+or dropping scheduled work. Multiple queued items deliver in FIFO order by
+original fire time.
 
-### Message provenance metadata
+### Message authorship and provenance
 
-Injected prompts carry metadata so the agent can distinguish scheduled wake-ups
-from user messages:
+Injected prompts appear as **user-role messages** so the AI responds to them
+naturally. They carry provenance metadata so the agent (and user) can distinguish
+scheduled wake-ups from actual human input:
 - `:source :scheduled`
-- `:schedule-id` — the id of the schedule that fired
+- `:schedule-id` — system-generated id
+- `:label` — optional agent-provided label (e.g. "check-build-status")
 - `:message` — the prompt content
 
-This lets the agent reason about *why* it woke up and act accordingly.
+### Schedule identity
+
+Each schedule gets a **system-generated id** (for reliable cancel/reference)
+plus an optional **agent-provided label** for ergonomic list/cancel usage.
+Labels are informational — uniqueness is not enforced.
 
 ### Delay specification
 
@@ -81,6 +88,9 @@ Two forms supported:
 
 Relative is the common case. Absolute enables "at 10pm UTC" use cases.
 No timezone handling — absolute is always UTC.
+
+If an absolute instant is in the past, fire immediately — the intent is
+"no later than", and erroring is just friction.
 
 ### Delay bounds
 
@@ -97,6 +107,26 @@ creation via `daemon-thread-fn`. Scheduling beyond the cap returns an error.
 
 Users can cancel scheduled items through the normal background job cancel
 UI, since scheduled items surface as background jobs.
+
+### Schedule lifecycle states
+
+- `pending` — timer running, not yet fired
+- `queued` — timer fired but session is busy, waiting for idle
+- `delivered` — prompt injected into session
+
+Cancel works on `pending` and `queued`. Once `delivered`, the schedule is
+complete and no longer cancellable.
+
+### psi-tool surface
+
+Follows the existing `action` + `op` pattern for consistency with `workflow`:
+
+```
+action: "scheduler"
+op: "create"   — schedule a new item (returns schedule-id)
+op: "list"     — list pending/queued schedules for the session
+op: "cancel"   — cancel a schedule by id
+```
 
 ## Constraints
 
@@ -117,17 +147,20 @@ UI, since scheduled items surface as background jobs.
 
 ## Acceptance criteria
 
-- Agent can schedule a delayed prompt injection via `psi-tool`
-- Agent can list its pending scheduled items via `psi-tool`
-- Agent can cancel a pending scheduled item via `psi-tool`
+- Agent can schedule a delayed prompt injection via `psi-tool` (`action: "scheduler", op: "create"`)
+- Agent can list pending/queued schedules via `psi-tool` (`op: "list"`)
+- Agent can cancel a pending/queued schedule via `psi-tool` (`op: "cancel"`)
 - Scheduled items are discoverable through EQL graph resolvers
 - Scheduled items appear as background jobs in the UI
-- Scheduled prompt injection executes after the specified delay
-- Prompt injection queues if session is busy, delivers when idle
-- Injected prompts carry provenance metadata (source, schedule-id)
+- Scheduled prompt fires after the specified delay
+- Past absolute instants fire immediately
+- Prompt injection queues if session is busy, delivers FIFO when idle
+- Injected prompts appear as user-role messages with provenance metadata
+- Schedules have system-generated id + optional agent-provided label
 - Both relative (delay-ms) and absolute (UTC instant) delays supported
 - Delay bounds enforced: minimum 1s, maximum 24h
 - Per-session cap (~50) on pending scheduled items
 - Users can cancel scheduled items via background job UI
+- Cancel works on `pending` and `queued` states, not `delivered`
 - Scheduled items are scoped to the creating session
 - Scheduling is auditable through the dispatch event log
