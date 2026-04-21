@@ -317,10 +317,12 @@
 (defn shutdown-context!
   "Release runtime resources owned by ctx. Safe to call multiple times."
   [ctx]
-  (doseq [[_ thread] @(or (:scheduler-timers* ctx) (atom {}))]
-    (try
-      (.interrupt ^Thread thread)
-      (catch Exception _
-        nil)))
+  (when-let [timers* (:scheduler-timers* ctx)]
+    (doseq [[_ thread] @timers*]
+      (try
+        (.interrupt ^Thread thread)
+        (catch Exception _
+          nil)))
+    (reset! timers* {}))
   (shutdown-tool-batch-executor! (:tool-batch-executor ctx))
   nil)
