@@ -177,7 +177,7 @@
                   @mutate-calls))))))
 
 (deftest init-registers-notifications-via-map-opts-test
-  (testing "init uses map-shaped notify opts so extension API notify contract is respected"
+  (testing "init sends startup load notices through extension ui notifications when available"
     (let [notifications (atom [])
           register-prompt-calls (atom [])
           tools (atom {})
@@ -191,7 +191,13 @@
                :mutate-session (fn [& _] nil)
                :log (fn [_] nil)
                :notify (fn [content & [opts]]
-                         (swap! notifications conj {:content content :opts opts}))
+                         (swap! notifications conj {:surface :transcript
+                                                    :content content
+                                                    :opts opts}))
+               :ui {:notify (fn [message level]
+                              (swap! notifications conj {:surface :ui
+                                                         :message message
+                                                         :level level}))}
                :register-tool (fn [tool-def] (swap! tools assoc (:name tool-def) tool-def))
                :register-command (fn [name cmd-def] (swap! commands assoc name cmd-def))
                :register-prompt-contribution (fn [& args] (swap! register-prompt-calls conj args))
@@ -202,10 +208,12 @@
                        :errors [{:error "boom"}]
                        :warnings []})]
         (wl/init api)
-        (is (= [{:content "Workflow loader: 1 error(s) loading definitions"
-                 :opts {:role :warn}}
-                {:content "workflow-loader: 0 workflows loaded"
-                 :opts {:role :info}}]
+        (is (= [{:surface :ui
+                 :message "Workflow loader: 1 error(s) loading definitions"
+                 :level :warn}
+                {:surface :ui
+                 :message "workflow-loader: 0 workflows loaded"
+                 :level :info}]
                @notifications))
         (is (= 1 (count @register-prompt-calls)))
         (is (contains? @tools "delegate"))

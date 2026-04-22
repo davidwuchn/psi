@@ -34,6 +34,10 @@
 (defn- mutate! [sym params] ((:mutate-fn @state) sym params))
 (defn- log! [msg] ((:log-fn @state) msg))
 (defn- notify! [msg level] ((:notify-fn @state) msg level))
+(defn- ui-notify! [msg level]
+  (if-let [notify-fn (some-> @state :ui :notify)]
+    (notify-fn msg level)
+    (notify! msg level)))
 
 (defn- worktree-path []
   (when-let [qf (query-fn)]
@@ -400,10 +404,10 @@
   ;; Load and register all workflow definitions
   (let [{:keys [registered-count errors]} (reload-definitions!)]
     (when (seq errors)
-      (notify! (str "Workflow loader: " (count errors) " error(s) loading definitions")
-               {:role :warn}))
-    (notify! (str "workflow-loader: " registered-count " workflows loaded")
-             {:role :info}))
+      (ui-notify! (str "Workflow loader: " (count errors) " error(s) loading definitions")
+                  :warn))
+    (ui-notify! (str "workflow-loader: " registered-count " workflows loaded")
+                :info))
 
   ;; Register delegate tool
   ((:register-tool api)
