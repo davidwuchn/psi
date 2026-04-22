@@ -1,8 +1,13 @@
-- [ ] Inspect current `extensions.work-on` command implementation and extension tool registration patterns
-- [ ] Decide the shared implementation boundary for command + tool invocation
-- [ ] Decide tool shape (`work-on` only vs multi-action surface)
-- [ ] Implement shared command/tool path
-- [ ] Register the `work-on` tool
-- [ ] Add focused parity tests for command and tool invocation
-- [ ] Verify focused extension/workflow tests
-- [ ] Record architectural findings about dispatch/effects/runtime cleanliness
+- [x] Inspect the current `extensions.work-on` implementation and identify the smallest private shared execution boundary for `work-on`
+- [x] Refactor `extensions.work-on` so the `work-on` operation returns one canonical success/error result map independent of command/tool presentation
+- [x] Add command-side presentation that derives the existing `/work-on` assistant-visible message from the canonical operation result
+- [x] Add tool-side presentation that derives `{:content ... :is-error ... :details ...}` from the same canonical operation result without appending transcript messages
+- [x] Register the `work-on` extension tool in `init` with the minimal required `description` parameter schema and an `:execute` wrapper over the shared execution path
+- [x] Extend init tests to prove `work-on` tool registration exists and has the expected basic schema/execute shape
+- [x] Add focused tool-path tests for `work-on` happy-path behavior, including shared state mutations and tool return shape
+- [x] Add focused tool-path tests for `work-on` validation-error behavior, asserting error return shape and no command-style transcript append
+- [x] Add focused parity tests for existing-worktree/session reuse behavior across command and tool invocation
+- [x] Add focused parity tests for active-session targeting so the tool path mutates the active session/worktree context just as `/work-on` does
+- [x] Run focused `extensions.work-on` tests and fix any regressions
+- [x] If a small natural workflow-facing verification exists, run it without broadening scope
+- [x] Record implementation decisions, compromises, and any blocked parity edges in `implementation.md`

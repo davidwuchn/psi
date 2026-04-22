@@ -1,4 +1,28 @@
 2026-04-22
-- Task created after confirming that `complexity-reduction-pr` still could not use `/work-on` because `work-on` exists only as an extension command and not as a model tool.
-- Constraint from the user: the new tool and the existing commands should share the same implementation.
-- Open design concern: it is not yet clear whether the cleanest implementation can route through current resolvers/effects/dispatch boundaries, or whether the first slice should use a smaller shared extension-local execution function with explicit documentation of the compromise.
+- Implemented a shared `work-on` execution path in `extensions.work-on`.
+- Added private helpers:
+  - `execute-work-on!` as the canonical extension-local operation boundary
+  - `work-on-result-message` as the shared command/tool summary presenter source
+  - `work-on-tool-result` as the tool presenter
+  - `created-session-id` to normalize session id extraction from mixed extension/runtime test return shapes
+- Preserved the existing public `work-on!` fn as a thin wrapper over `execute-work-on!` for compatibility with existing tests/callers.
+- Registered a new LLM-callable extension tool `work-on` with:
+  - name `work-on`
+  - minimal object parameter schema requiring `description`
+  - 1-arity and 2-arity `:execute` wrappers to match runtime tool invocation conventions
+- Kept `/work-on` as a command surface, but changed it to render from the canonical result instead of reimplementing message logic.
+- Tool invocation now returns:
+  - `{:content <summary-or-error> :is-error <bool> :details <canonical-result>}`
+  and does not append assistant transcript messages.
+- Session/worktree side-effect parity now holds across command and tool paths for the exercised cases:
+  - new worktree/session creation
+  - existing worktree/session reuse
+  - active-session targeting under runtime-bound extension execution
+- Architectural conclusion:
+  - the current extension API was sufficient for a small clean enabling slice
+  - the shared execution boundary remains extension-local and runtime/IO-bound
+  - this is an intentional interim compromise, not a broader dispatch/effects redesign
+- Verification performed:
+  - `clojure -M:test --focus extensions.work-on-test`
+  - `clojure -M:test --focus extensions.workflow-loader-test --focus extensions.workflow-loader-delegate-test --focus psi.agent-session.workflow-execution-test`
+  - all passed during implementation

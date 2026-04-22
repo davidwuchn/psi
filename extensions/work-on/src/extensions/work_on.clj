@@ -167,6 +167,12 @@
           :worktree-path worktree-path})
       (catch Exception _ nil))))
 
+(defn- created-session-id
+  [session-data]
+  (or (:session-id session-data)
+      (:psi.agent-session/session-id session-data)
+      (:psi.session-info/id session-data)))
+
 (defn- resolve-default-branch
   [main-wt current-wt]
   (let [main-path (:git.worktree/path main-wt)
@@ -315,12 +321,27 @@
                           (not (:deleted delete-result)) (str "branch delete failed: " (:error delete-result))
                           :else nil)}))))
 
-(defn work-on!
+(defn- work-on-result-message
+  [result]
+  (if (:ok? result)
+    (str "Working in `" (:worktree-path result)
+         "` on branch `" (:branch-name result) "`")
+    (:error result)))
+
+(defn- work-on-tool-result
+  [result]
+  {:content  (work-on-result-message result)
+   :is-error (not (:ok? result))
+   :details  result})
+
+(defn- execute-work-on!
   [description]
   (let [description* (trim-arg description)]
     (cond
       (nil? description*)
-      {:ok? false :error "usage: /work-on <description>"}
+      {:ok? false
+       :action :work-on
+       :error "usage: /work-on <description>"}
 
       :else
       (let [session    (current-session-query)
@@ -329,10 +350,14 @@
                            current-wt)]
         (cond
           (nil? current-wt)
-          {:ok? false :error "not inside a git repository"}
+          {:ok? false
+           :action :work-on
+           :error "not inside a git repository"}
 
           (nil? main-wt)
-          {:ok? false :error "main worktree not found"}
+          {:ok? false
+           :action :work-on
+           :error "main worktree not found"}
 
           :else
           (let [{:keys [slug branch-name]} (mechanical-slug description*)
@@ -354,14 +379,16 @@
             (cond
               (:success add-result)
               (let [origin-session-id (:psi.agent-session/session-id session)
-                    _  (set-current-session-worktree-path! origin-session-id worktree-path)
-                    sd (create-worktree-session! description*
-                                                 worktree-path
-                                                 origin-session-id)]
+                    _                 (set-current-session-worktree-path! origin-session-id worktree-path)
+                    sd                (create-worktree-session! description*
+                                                                worktree-path
+                                                                origin-session-id)]
                 {:ok? true
+                 :action :work-on
+                 :reused? false
                  :worktree-path worktree-path
                  :branch-name branch-name
-                 :session-id (:session-id sd)
+                 :session-id (created-session-id sd)
                  :session-name description*})
 
               (= "worktree path already exists" (:error add-result))
@@ -373,6 +400,7 @@
                     (do
                       (switch-to-session! (:psi.session-info/id existing-session))
                       {:ok? true
+                       :action :work-on
                        :reused? true
                        :worktree-path worktree-path
                        :branch-name (or (:git.worktree/branch-name existing-wt) branch-name)
@@ -382,20 +410,27 @@
                                                        worktree-path
                                                        origin-session-id)]
                       {:ok? true
+                       :action :work-on
                        :reused? true
                        :worktree-path worktree-path
                        :branch-name (or (:git.worktree/branch-name existing-wt) branch-name)
-                       :session-id (:session-id sd)
+                       :session-id (created-session-id sd)
                        :session-name description*})))
                 {:ok? false
+                 :action :work-on
                  :error (str "worktree path already exists but is not a registered git worktree: "
                              worktree-path)})
 
               :else
               {:ok? false
+               :action :work-on
                :error (str "worktree creation failed: "
                            (or (:error add-result)
                                "missing git mutation payload"))})))))))
+
+(defn work-on!
+  [description]
+  (execute-work-on! description))
 
 (defn work-done!
   []
@@ -480,12 +515,7 @@
 
 (defn- handle-work-on-command
   [args]
-  (let [result  (work-on! args)
-        message (if (:ok? result)
-                  (str "Working in `" (:worktree-path result)
-                       "` on branch `" (:branch-name result) "`")
-                  (:error result))]
-    (append-assistant-message! message)))
+  (append-assistant-message! (work-on-result-message (execute-work-on! args))))
 
 (defn- handle-work-done-command
   [_args]
@@ -528,6 +558,17 @@
              (fn [_]
                (refresh-default-branch-cache!)
                nil))
+  ((:register-tool api)
+   {:name        "work-on"
+    :label       "Work On"
+    :description "Create a layout-derived git worktree + branch and continue there"
+    :parameters  {:type       "object"
+                  :properties {"description" {:type "string"
+                                               :description "Description of the work to create a branch/worktree for"}}
+                  :required   ["description"]}
+    :execute     (fn
+                   ([args] (work-on-tool-result (execute-work-on! (get args "description"))))
+                   ([args _opts] (work-on-tool-result (execute-work-on! (get args "description")))))})
   ((:register-command api) "work-on"
                            {:description "Create a layout-derived git worktree + branch and continue there"
                             :handler handle-work-on-command})
