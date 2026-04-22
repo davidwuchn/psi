@@ -2,7 +2,9 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.session :as session-model]
+   [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.workflow-execution :as workflow-execution]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
@@ -414,6 +416,44 @@
                   {:name "bash" :description "Bash" :parameters {:type "object"}}]
                  (mapv #(select-keys % [:name :description :parameters])
                        (:tool-defs @child-create-opts*)))))))))
+
+(deftest execute-current-step-preserves-parent-extension-prompt-contributions-test
+  (testing "workflow child sessions inherit parent extension prompt contributions by default"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          planner-def (assoc single-step-definition-with-meta :workflow-file-meta
+                             {:system-prompt "You are a planner."
+                              :tools ["read"]
+                              :thinking-level :medium})
+          contribution {:id "work-on"
+                        :ext-path "/extensions/work-on"
+                        :section "Extension Capabilities"
+                        :content "command: /work-on"
+                        :enabled true
+                        :created-at (java.time.Instant/parse "2026-04-22T12:00:00Z")
+                        :updated-at (java.time.Instant/parse "2026-04-22T12:00:00Z")}
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state planner-def)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "planner"
+                                                                   :run-id "run-ext-1"
+                                                                   :workflow-input {:input "plan it"}})
+                           s (assoc-in s [:agent-session :sessions session-id :data :tool-defs]
+                                       [{:name "read" :description "Read" :parameters {:type "object"}}])
+                           s (assoc-in s [:agent-session :sessions session-id :data :prompt-contributions]
+                                       [contribution])]
+                       s)))]
+      (with-redefs [psi.agent-session.prompt-control/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
+                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
+                                                                                 {:content "planner output"})]
+        (let [result (workflow-execution/execute-current-step! ctx session-id "run-ext-1")
+              child-id (:execution-session-id result)
+              child-sd (ss/get-session-data-in ctx child-id)]
+          (is (= "step-1" (:step-id result)))
+          (is (= [contribution]
+                 (mapv #(select-keys % [:id :ext-path :section :content :enabled :created-at :updated-at])
+                       (:prompt-contributions child-sd))))
+          (is (clojure.string/includes? (prompt-request/effective-system-prompt child-sd)
+                                        "command: /work-on")))))))
 
 (deftest execute-run-blocked-test
   (testing "execute-run! stops and reports blocked runs"

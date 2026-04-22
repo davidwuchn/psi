@@ -1,0 +1,7 @@
+- [x] Inspect child-session initialization and confirm prompt-contribution drop point
+- [x] Add focused child-session inheritance test
+- [x] Carry parent prompt contributions into child-session initialization
+- [x] Add focused workflow execution test for inherited extension capability surface
+- [x] Run focused tests
+- [x] Run relevant broader workflow/child-session suite
+- [x] Update implementation notes with findings/decisions

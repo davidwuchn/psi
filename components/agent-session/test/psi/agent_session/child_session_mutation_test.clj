@@ -114,6 +114,42 @@
                (:prompt-component-selection child-sd)))
         (is (= #{} (:cache-breakpoints child-sd)))))))
 
+(deftest create-child-session-inherits-parent-prompt-contributions-by-default-test
+  (testing "create-child-session preserves parent prompt contributions when no explicit restriction is supplied"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx mutations/all-mutations true)
+      (dispatch/dispatch! ctx :session/register-prompt-contribution
+                          {:session-id session-id
+                           :ext-path "/ext/work-on"
+                           :id "work-on"
+                           :contribution {:section "Extension Capabilities"
+                                          :content "tool: /work-on"
+                                          :enabled true}}
+                          {:origin :test})
+      (let [child-id (:psi.agent-session/session-id
+                      (mutate 'psi.extension/create-child-session
+                              {:session-name "child"
+                               :tool-defs []}))
+            child-sd (ss/get-session-data-in ctx child-id)]
+        (is (= [{:id "work-on"
+                 :ext-path "/ext/work-on"
+                 :section "Extension Capabilities"
+                 :content "tool: /work-on"
+                 :enabled true}]
+               (mapv #(select-keys % [:id :ext-path :section :content :enabled])
+                     (:prompt-contributions child-sd))))
+        (is (clojure.string/includes? (prompt-request/effective-system-prompt child-sd)
+                                      "tool: /work-on"))))))
+
 (deftest create-child-session-selection-filters-extension-contributions-coherently-test
   (testing "child selection allowlists extension prompt contributions consistently"
     (let [child-sd {:base-system-prompt "base"

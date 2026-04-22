@@ -204,6 +204,7 @@
                          :system-prompt-build-opts  system-prompt-build-opts
                          :cache-breakpoints         (or cache-breakpoints (:cache-breakpoints parent-sd))
                          :prompt-component-selection prompt-component-selection
+                         :prompt-contributions      (vec (or (:prompt-contributions parent-sd) []))
                          :model                     (or model (:model parent-sd))
                          :created-at                ts
                          :updated-at                ts})]
