@@ -8,6 +8,19 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(defvar psi-emacs--send-request-function)
+
+(declare-function psi-emacs--region-bounds "psi-regions" (kind id))
+(declare-function psi-emacs--region-register "psi-regions" (kind id start end &optional props))
+(declare-function psi-emacs--set-last-error "psi-run-state" (state message))
+(declare-function psi-emacs--set-run-state "psi-run-state" (state run-state))
+(declare-function psi-emacs--apply-prefix-overlay "psi-assistant-render" (line-start prefix face))
+(declare-function psi-emacs--assistant-finalize "psi-assistant-render" (text))
+(declare-function psi-emacs--dispatch-compose-message "psi-session-commands" (message &optional behavior))
+(declare-function psi-emacs--clear-assistant-render-state "psi-assistant-render")
+(declare-function psi-emacs--clear-thinking-line "psi-assistant-render")
+(declare-function psi-emacs--disarm-stream-watchdog "psi-run-state" (state))
+
 (defvar psi-emacs--allow-protected-input-edit nil
   "Non-nil while psi performs internal rewrites of the editable input area.")
 
@@ -117,9 +130,10 @@ Otherwise, draft ends at `point-max'."
     (setf (psi-emacs-state-input-separator-marker psi-emacs--state) marker)))
 
 (defun psi-emacs--input-separator-marker-valid-p ()
-  "Return non-nil when input separator marker is live and points to separator line start.
+  "Return non-nil when the input separator marker is live.
 
-When marker state drifted, attempt property-backed recovery first."
+The marker must point to the separator line start.
+When marker state drifts, attempt property-backed recovery first."
   (when psi-emacs--state
     (when-let ((bounds (psi-emacs--region-bounds 'input-separator 'main)))
       (let ((marker (psi-emacs--input-separator-marker-cache)))

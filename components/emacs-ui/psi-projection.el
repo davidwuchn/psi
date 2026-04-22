@@ -10,9 +10,20 @@
 (require 'psi-globals)
 (require 'psi-widget-projection)
 
+(declare-function psi-emacs--event-data-get "psi-events" (data keys))
+(declare-function psi-emacs--input-separator-marker-valid-p "psi-compose")
+(declare-function psi-emacs--input-separator-needs-refresh-p "psi-compose")
+(declare-function psi-emacs--refresh-input-separator-line "psi-compose")
+(declare-function psi-emacs--draft-anchor-at-end-p "psi-compose")
+(declare-function psi-emacs--region-bounds "psi-regions" (kind id))
+(declare-function psi-emacs--region-unregister "psi-regions" (kind id))
+(declare-function psi-emacs--region-register "psi-regions" (kind id start end &optional props))
+(declare-function psi-emacs--set-draft-anchor-to-end "psi-compose")
+
 (defvar psi-emacs-notification-timeout-seconds)
 
 (defvar psi-emacs--send-request-function)
+(defvar psi-emacs--slash-command-handler-function)
 
 (defvar psi-emacs--projection-widget-action-keymap
   (let ((map (make-sparse-keymap)))
@@ -282,7 +293,9 @@ backend semantic text."
      (t nil))))
 
 (defun psi-emacs--projection-footer-session-activity-line (data)
-  "Return propertized footer session activity line from structured DATA when present."
+  "Return a propertized footer session activity line.
+
+Use structured DATA when present."
   (let* ((buckets* (psi-emacs--event-data-get data '(:session-activity-buckets session-activity-buckets)))
          (buckets (psi-emacs--projection-seq buckets*)))
     (if (not buckets)

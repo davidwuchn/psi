@@ -8,6 +8,11 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(declare-function psi-emacs--dispatch-request "psi-compose" (op params &optional callback))
+(declare-function psi-emacs--event-data-get "psi-events" (data keys))
+(declare-function psi-emacs--projection-seq "psi-projection" (value))
+(declare-function psi-emacs--append-assistant-message "psi-compose" (text))
+
 (defun psi-emacs--dialog-result-normalize (value)
   "Normalize dialog VALUE to the shared RPC result domain."
   (cond

@@ -27,8 +27,14 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'vui)
 (require 'psi-rpc)
+
+(eval-when-compile
+  (require 'vui nil t))
+
+(unless (featurep 'vui)
+  (provide 'psi-vui-region-spike)
+  (cl-return-from load nil))
 
 ;;; Reuse context + helpers from the first spike
 

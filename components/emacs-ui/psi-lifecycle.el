@@ -9,8 +9,25 @@
 (require 'psi-globals)
 
 (defvar psi-emacs-command)
+(defvar psi-emacs--spawn-process-function)
 
 (declare-function make-psi-emacs-state "psi" (&rest args))
+(declare-function psi-emacs--dispatch-request "psi-compose" (op params &optional callback))
+(declare-function psi-emacs--frame-messages-list "psi-session-commands" (frame))
+(declare-function psi-emacs--replay-session-messages "psi-session-commands" (messages))
+(declare-function psi-emacs--draft-end-position "psi-compose")
+(declare-function psi-emacs--set-run-state "psi-run-state" (state run-state))
+(declare-function psi-emacs--refresh-header-line "psi-run-state")
+(declare-function psi-emacs--disarm-stream-watchdog "psi-run-state" (state))
+(declare-function psi-emacs--set-last-error "psi-run-state" (state message))
+(declare-function psi-emacs--handle-rpc-event "psi-events" (frame))
+(declare-function psi-emacs--clear-last-error "psi-run-state" (state))
+(declare-function psi-emacs--clear-assistant-render-state "psi-assistant-render")
+(declare-function psi-emacs--clear-thinking-render-state "psi-assistant-render" (&optional clear-archived))
+(declare-function psi-emacs--clear-notification-lifecycle "psi-projection" (state))
+(declare-function psi-emacs--region-bounds "psi-regions" (kind id))
+(declare-function psi-emacs--region-unregister "psi-regions" (kind id))
+(declare-function psi-emacs--ensure-input-area "psi-compose")
 
 (defun psi-emacs--initialize-state (process)
   "Create initial frontend state for PROCESS ownership."

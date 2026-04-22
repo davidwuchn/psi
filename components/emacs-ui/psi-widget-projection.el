@@ -27,17 +27,14 @@
 (require 'cl-lib)
 (require 'psi-rpc)
 (require 'psi-widget-renderer)
+(require 'psi-globals)
 
 ;;; Forward declarations
 
-(declare-function psi-emacs-state-rpc-client                "psi")
-(declare-function psi-emacs-state-projection-widget-specs   "psi")
-(declare-function psi-emacs-state-projection-widget-lstates "psi")
-(declare-function psi-emacs-state-projection-widget-data    "psi")
-(declare-function psi-emacs--upsert-projection-block        "psi-projection")
-
 (defvar psi-emacs--state)
 (defvar psi-emacs--send-request-function)
+
+(declare-function psi-emacs--upsert-projection-block "psi-projection")
 
 ;;; Constants
 
@@ -52,13 +49,17 @@
 
 (defvar psi-widget-projection-error-handler nil
   "Function called when a widget error occurs.
+
 Called as (fn ctx) where ctx is an alist with keys:
-  :widget-id      — widget id string
-  :extension-id   — extension id string
-  :error-code     — string: \"mutation-timeout\", \"query-failed\", \"malformed-spec\"
-  :message        — human-readable error string
-  :context        — symbol: mutation-timeout | query-failed | malformed-spec | event-error
-If nil, errors are silently ignored (inline renderer errors still display).")
+  :widget-id    — widget id string
+  :extension-id — extension id string
+  :error-code   — string: \"mutation-timeout\", \"query-failed\",
+                  or \"malformed-spec\"
+  :message      — human-readable error string
+  :context      — mutation-timeout, query-failed, malformed-spec,
+                  or event-error
+If nil, errors are silently ignored.
+Inline renderer errors still display.")
 
 (defun psi-widget-projection--call-error-handler (ctx)
   "Invoke `psi-widget-projection-error-handler' with CTX if set."

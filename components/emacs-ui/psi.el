@@ -15,6 +15,10 @@
 
 (require 'psi-globals)
 
+(declare-function psi-emacs--default-spawn-process "psi-lifecycle" (command))
+(declare-function psi-emacs--default-send-request "psi-lifecycle" (state op params &optional callback))
+(declare-function psi-emacs--default-handle-slash-command "psi-session-commands" (state message))
+
 (defvar psi-emacs--spawn-process-function #'psi-emacs--default-spawn-process
   "Function used to spawn a psi subprocess.
 

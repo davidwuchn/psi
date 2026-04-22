@@ -8,6 +8,27 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(declare-function psi-emacs--append-assistant-message "psi-compose" (text))
+(declare-function psi-emacs--dispatch-request "psi-compose" (op params &optional callback))
+(declare-function psi-emacs--reset-transcript-state "psi-lifecycle" (&optional preserve-tool-output-view-mode))
+(declare-function psi-emacs--set-run-state "psi-run-state" (state run-state))
+(declare-function psi-emacs--upsert-tool-row "psi-tool-rows" (tool-id stage text &optional tool-name arguments parsed-args is-error details))
+(declare-function psi-emacs--assistant-delta "psi-assistant-render" (text))
+(declare-function psi-emacs--assistant-content->text "psi-assistant-render" (content))
+(declare-function psi-emacs--draft-anchor-at-end-p "psi-compose")
+(declare-function psi-emacs--ensure-newline-before-append "psi-compose")
+(declare-function psi-emacs--mark-region-read-only "psi-compose" (start end))
+(declare-function psi-emacs--apply-prefix-overlay "psi-assistant-render" (line-start prefix face))
+(declare-function psi-emacs--set-draft-anchor-to-end "psi-compose")
+(declare-function psi-emacs--refresh-header-line "psi-run-state")
+(declare-function psi-emacs--set-last-error "psi-run-state" (state message))
+(declare-function psi-emacs--event-data-get "psi-events" (data keys))
+(declare-function psi-emacs--session-tree-line-label "psi-events" (slot))
+(declare-function psi-emacs--ordered-completing-read "psi-events" (prompt candidates &optional default))
+(declare-function psi-emacs--reset-stream-watchdog "psi-run-state" (state))
+(declare-function psi-emacs--status-diagnostics-string "psi-run-state" (state))
+(declare-function psi-emacs--request-frontend-exit "psi-session-commands")
+
 (defcustom psi-emacs-model-selector-provider-scope 'all
   "Provider scope used by `psi-emacs-set-model` when opening the model picker.
 
@@ -327,6 +348,22 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
         (psi-emacs--request-get-messages-for-switch state))
     (psi-emacs--append-assistant-message
      (psi-emacs--new-session-error-message frame))))
+
+(defun psi-emacs--request-get-messages-for-switch (state)
+  "Request canonical messages after a session switch or /new response.
+
+Refresh transcript state for STATE."
+  (let ((buffer (current-buffer)))
+    (psi-emacs--dispatch-request
+     "get_messages"
+     nil
+     (lambda (frame)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (when (and state (eq state psi-emacs--state))
+             (let ((messages (psi-emacs--frame-messages-list frame)))
+               (psi-emacs--replay-session-messages messages)
+               (psi-emacs--refresh-header-line)))))))))
 
 (defun psi-emacs--request-new-session (state)
   "Request a fresh backend session for /new and rehydrate transcript for STATE."
@@ -1005,7 +1042,9 @@ or a canonical action map."
    (append slots nil)))
 
 (defun psi-emacs--request-switch-session-by-id (state session-id)
-  "Dispatch `switch_session` for SESSION-ID (in-process context session) from STATE."
+  "Dispatch `switch_session` for SESSION-ID from STATE.
+
+SESSION-ID identifies an in-process context session."
   (when (and state
              (stringp session-id)
              (not (string-empty-p session-id)))

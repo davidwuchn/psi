@@ -12,6 +12,18 @@
 (defvar psi-emacs-buffer-name)
 (defvar psi-emacs-working-directory)
 
+(declare-function psi-emacs--ensure-input-area "psi-compose")
+(declare-function psi-emacs--draft-end-position "psi-compose")
+(declare-function psi-emacs--preferred-major-mode "psi-mode")
+(declare-function psi-emacs-mode "psi-mode")
+(declare-function psi-emacs--install-buffer-lifecycle-hooks "psi-lifecycle")
+(declare-function psi-emacs--install-input-read-only-guard "psi-compose")
+(declare-function psi-emacs--ensure-startup-banner "psi-compose")
+(declare-function psi-emacs--region-bounds "psi-regions" (kind id))
+(declare-function psi-emacs--initialize-state "psi-lifecycle" (process))
+(declare-function psi-emacs--refresh-header-line "psi-run-state")
+(declare-function psi-emacs--start-rpc-client "psi-lifecycle" (buffer))
+
 (defun psi-emacs--seed-connecting-footer ()
   "Render a deterministic pre-handshake footer placeholder."
   (when psi-emacs--state

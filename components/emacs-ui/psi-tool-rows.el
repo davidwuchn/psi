@@ -11,6 +11,17 @@
 (require 'json)
 (require 'psi-globals)
 
+(declare-function psi-emacs--event-data-get "psi-events" (data keys))
+(declare-function psi-emacs--region-bounds "psi-regions" (kind id))
+(declare-function psi-emacs--region-register "psi-regions" (kind id start end &optional props))
+(declare-function psi-emacs--draft-anchor-at-end-p "psi-compose")
+(declare-function psi-emacs--assistant-start-marker "psi-assistant-render")
+(declare-function psi-emacs--assistant-end-marker "psi-assistant-render")
+(declare-function psi-emacs--ensure-newline-before-append "psi-compose")
+(declare-function psi-emacs--set-draft-anchor-to-end "psi-compose")
+(declare-function psi-emacs--mark-region-read-only "psi-compose" (start end))
+(declare-function psi-emacs--refresh-header-line "psi-run-state")
+
 (defun psi-emacs--string-has-face-p (text)
   "Return non-nil if TEXT has any `face' property."
   (let ((i 0)
@@ -400,7 +411,7 @@ sequences in TEXT are converted to Emacs faces."
   "Create or update TOOL-ID row for lifecycle STAGE.
 
 TEXT represents tool execution output snapshots.
-TOOL-NAME/ARGUMENTS/PARSED-ARGS/DETAILS update display metadata for call summaries.
+TOOL-NAME, ARGUMENTS, PARSED-ARGS, and DETAILS update display metadata.
 Rows are rendered according to global tool-output-view-mode."
   (when (and psi-emacs--state tool-id)
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))

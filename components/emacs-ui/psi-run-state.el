@@ -10,6 +10,14 @@
 
 (defvar psi-emacs-stream-timeout-seconds)
 
+(declare-function psi-emacs--draft-anchor-at-end-p "psi-compose")
+(declare-function psi-emacs--ensure-newline-before-append "psi-compose")
+(declare-function psi-emacs--mark-region-read-only "psi-compose" (start end))
+(declare-function psi-emacs--set-draft-anchor-to-end "psi-compose")
+(declare-function psi-emacs--dispatch-request "psi-compose" (op params &optional callback))
+(declare-function psi-emacs--clear-assistant-render-state "psi-assistant-render")
+(declare-function psi-emacs--clear-thinking-line "psi-assistant-render")
+
 (defun psi-emacs--status-model-fragment (state)
   "Return optional model fragment for STATE header text."
   (let ((label (and state (psi-emacs-state-header-model-label state))))

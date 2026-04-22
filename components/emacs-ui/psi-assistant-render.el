@@ -8,6 +8,22 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(declare-function psi-emacs--next-region-id "psi-regions" (kind))
+(declare-function psi-emacs--region-register "psi-regions" (kind id start end &optional props))
+(declare-function psi-emacs--region-bounds "psi-regions" (kind id))
+(declare-function psi-emacs--region-unregister "psi-regions" (kind id))
+(declare-function psi-emacs--draft-anchor-at-end-p "psi-compose")
+(declare-function psi-emacs--mark-region-read-only "psi-compose" (start end))
+(declare-function psi-emacs--ensure-newline-before-append "psi-compose")
+(declare-function psi-emacs--set-draft-anchor-to-end "psi-compose")
+(declare-function psi-emacs--set-run-state "psi-run-state" (state run-state))
+(declare-function psi-emacs--reset-stream-watchdog "psi-run-state" (state))
+(declare-function psi-emacs--input-start-position "psi-compose")
+(declare-function psi-emacs--draft-end-position "psi-compose")
+(declare-function psi-emacs--disarm-stream-watchdog "psi-run-state" (state))
+(declare-function psi-emacs--transcript-append-position "psi-compose")
+(declare-function psi-emacs--event-data-get "psi-events" (data keys))
+
 (defconst psi-emacs--assistant-line-prefix "ψ: "
   "Prefix rendered for assistant transcript lines.")
 
@@ -92,7 +108,9 @@
           restored)))))
 
 (defun psi-emacs--assistant-start-marker ()
-  "Return live assistant start marker, recovering from region properties when needed."
+  "Return live assistant start marker.
+
+Recover from region properties when needed."
   (when-let ((range (psi-emacs--assistant-range-current)))
     (when (psi-emacs--assistant-range-live-p range)
       (car range))))

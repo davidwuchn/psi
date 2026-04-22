@@ -8,8 +8,23 @@
 (require 'psi-globals)
 (require 'psi-completion)
 
+(defvar psi-emacs-mode-map)
+
 (declare-function markdown-mode "markdown-mode")
 (declare-function psi-emacs--install-input-read-only-guard "psi-compose")
+(declare-function psi-emacs-previous-input "psi-compose")
+(declare-function psi-emacs-next-input "psi-compose")
+(declare-function psi-emacs-send-from-buffer "psi-compose" (prefix))
+(declare-function psi-emacs-queue-from-buffer "psi-compose")
+(declare-function psi-emacs-interrupt "psi-compose")
+(declare-function psi-emacs-abort "psi-compose")
+(declare-function psi-emacs-reconnect "psi-lifecycle")
+(declare-function psi-emacs-toggle-tool-output-view "psi-tool-rows")
+(declare-function psi-emacs-set-model "psi-session-commands" (&optional provider model-id))
+(declare-function psi-emacs-cycle-model-next "psi-session-commands")
+(declare-function psi-emacs-cycle-model-prev "psi-session-commands")
+(declare-function psi-emacs-set-thinking-level "psi-session-commands" (level))
+(declare-function psi-emacs-cycle-thinking-level "psi-session-commands")
 
 (defface psi-emacs-user-prompt-face
   '((t :inherit font-lock-keyword-face :weight bold))

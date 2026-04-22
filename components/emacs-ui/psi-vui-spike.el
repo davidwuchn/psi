@@ -18,8 +18,14 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'vui)
 (require 'psi-rpc)
+
+(eval-when-compile
+  (require 'vui nil t))
+
+(unless (featurep 'vui)
+  (provide 'psi-vui-spike)
+  (cl-return-from load nil))
 
 ;;; Context — RPC client flows down through the vui tree
 

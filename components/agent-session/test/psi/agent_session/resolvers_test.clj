@@ -23,6 +23,7 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.test-support :as test-support]
+   [psi.ai.model-registry :as model-registry]
    [psi.query.core :as query]))
 
 ;; ── helpers ─────────────────────────────────────────────
@@ -304,23 +305,27 @@
 
 (deftest authenticated-providers-resolver-test
   (testing "resolver returns empty vector when oauth context is absent"
-    (let [result (q [:psi.agent-session/authenticated-providers])]
-      (is (= [] (:psi.agent-session/authenticated-providers result)))))
+    (with-redefs [model-registry/all-models-seq (fn [] [])
+                  model-registry/get-auth (fn [_] nil)]
+      (let [result (q [:psi.agent-session/authenticated-providers])]
+        (is (= [] (:psi.agent-session/authenticated-providers result))))))
 
   (testing "resolver reports providers with configured auth"
-    (let [oauth-ctx (oauth/create-null-context
-                     {:credentials {:anthropic {:type :oauth
-                                                :access "test-access"
-                                                :refresh "test-refresh"
-                                                :expires (+ (System/currentTimeMillis) 3600000)}}})
-          [ctx _]  (create-session-context {:persist? false :oauth-ctx oauth-ctx})
-          result   (q-in ctx [:psi.agent-session/authenticated-providers])
-          providers (:psi.agent-session/authenticated-providers result)]
-      (is (vector? providers))
-      (is (= ["anthropic"] providers))
-      (is (= ["anthropic"]
-             (get-in (ss/get-state-value-in ctx (ss/state-path :oauth))
-                     [:authenticated-providers]))))))
+    (with-redefs [model-registry/all-models-seq (fn [] [])
+                  model-registry/get-auth (fn [_] nil)]
+      (let [oauth-ctx (oauth/create-null-context
+                       {:credentials {:anthropic {:type :oauth
+                                                  :access "test-access"
+                                                  :refresh "test-refresh"
+                                                  :expires (+ (System/currentTimeMillis) 3600000)}}})
+            [ctx _]  (create-session-context {:persist? false :oauth-ctx oauth-ctx})
+            result   (q-in ctx [:psi.agent-session/authenticated-providers])
+            providers (:psi.agent-session/authenticated-providers result)]
+        (is (vector? providers))
+        (is (= ["anthropic"] providers))
+        (is (= ["anthropic"]
+               (get-in (ss/get-state-value-in ctx (ss/state-path :oauth))
+                       [:authenticated-providers])))))))
 
 ;; ── Git history bridge (cwd -> :git/context) ─────────────
 
