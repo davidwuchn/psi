@@ -11,6 +11,7 @@ Backlog:
 `munera/open/004-lsp-integration-managed-services-post-tool-processing/`
 `munera/open/005-canonical-dispatch-pipeline-trace-observability/`
 `munera/open/006-agent-tool-skill-prelude-follow-on/`
+`munera/open/040-work-on-execute-function-code-shaping/`
 
 Notes:
 - `munera/plan.md` is the active project-wide orchestration surface.
