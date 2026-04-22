@@ -1,3 +1,26 @@
 2026-04-22
 - Task created as follow-on review work from `039-work-on-tool-surface`.
 - Motivation: the `039` review found the implementation correct and ready to close, with one minor shaping opportunity remaining: decompose `execute-work-on!` into smaller private helpers for local comprehensibility.
+- Performed a local shaping pass on `extensions.work-on/execute-work-on!` without changing command or tool semantics.
+- Added small private helpers aligned to domain steps:
+  - `work-on-result`
+  - `work-on-error`
+  - `work-on-target`
+  - `add-worktree!`
+  - `create-work-on-session-result`
+  - `reuse-existing-worktree-result`
+- Kept `execute-work-on!` as the canonical private orchestration entrypoint.
+- Simplified the top-level flow so it now reads as:
+  - validate description
+  - read session/worktree preconditions
+  - compute target
+  - attempt worktree add
+  - branch to create-session success, reuse-existing-worktree, or error
+- Preserved:
+  - `/work-on` command behavior
+  - `work-on` tool behavior and return shape
+  - result field names
+  - session/worktree side-effect ordering in the covered paths
+- Verification performed:
+  - `clojure -M:test --focus extensions.work-on-test`
+  - passed

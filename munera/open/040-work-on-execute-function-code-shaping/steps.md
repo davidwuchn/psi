@@ -1,6 +1,6 @@
-- [ ] Inspect the current `execute-work-on!` control flow and identify the main domain branches to extract
-- [ ] Extract small private helpers for the highest-value `work-on` branches without changing semantics
-- [ ] Rewrite `execute-work-on!` as a shorter orchestration function over those helpers
-- [ ] Verify that `/work-on` command behavior and `work-on` tool behavior remain unchanged
-- [ ] Run focused `extensions.work-on` tests and fix any regressions
-- [ ] Record the shaping outcome in `implementation.md`
+- [x] Inspect the current `execute-work-on!` control flow and identify the main domain branches to extract
+- [x] Extract small private helpers for the highest-value `work-on` branches without changing semantics
+- [x] Rewrite `execute-work-on!` as a shorter orchestration function over those helpers
+- [x] Verify that `/work-on` command behavior and `work-on` tool behavior remain unchanged
+- [x] Run focused `extensions.work-on` tests and fix any regressions
+- [x] Record the shaping outcome in `implementation.md`
