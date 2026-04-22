@@ -1,7 +1,8 @@
 (ns psi.agent-session.resolvers.scheduler
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
-   [psi.agent-session.scheduler :as scheduler]))
+   [psi.agent-session.scheduler :as scheduler]
+   [psi.agent-session.scheduler-runtime :as scheduler-runtime]))
 
 (pco/defresolver agent-session-scheduler
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
@@ -17,9 +18,10 @@
                    :psi.scheduler/fire-at
                    :psi.scheduler/status
                    :psi.scheduler/session-id]}]}
-  (let [schedules (mapv scheduler/schedule->eql
-                        (scheduler/schedules-in agent-session-ctx session-id))]
-    {:psi.scheduler/pending-count (scheduler/pending-count-in agent-session-ctx session-id)
+  (let [state     (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
+        schedules (mapv scheduler-runtime/schedule->eql
+                        (scheduler-runtime/scheduler-schedules-in agent-session-ctx session-id [:pending :queued :delivered :cancelled]))]
+    {:psi.scheduler/pending-count (scheduler/pending-count state)
      :psi.scheduler/schedules     schedules}))
 
 (pco/defresolver scheduler-by-id
@@ -32,8 +34,10 @@
                  :psi.scheduler/fire-at
                  :psi.scheduler/status
                  :psi.scheduler/session-id]}
-  (some-> (scheduler/schedule-in agent-session-ctx session-id schedule-id)
-          scheduler/schedule->eql))
+  (some-> (scheduler/get-schedule
+           (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
+           schedule-id)
+          scheduler-runtime/schedule->eql))
 
 (def resolvers
   [agent-session-scheduler

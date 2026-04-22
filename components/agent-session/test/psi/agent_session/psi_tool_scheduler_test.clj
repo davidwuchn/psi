@@ -2,6 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.psi-tool-scheduler :as psi-tool-scheduler]
    [psi.agent-session.scheduler :as scheduler]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tools :as tools]))
@@ -88,4 +89,24 @@
                                      "delay-ms" 1000})
             parsed (read-string (:content result))]
         (is (true? (:is-error result)))
-        (is (= :error (:psi-tool/overall-status parsed)))))))
+        (is (= :error (:psi-tool/overall-status parsed))))))
+
+  (testing "scheduler requires invoking or explicit session-id"
+    (let [[ctx _session-id] (create-session-context)
+          tool (tools/make-psi-tool (fn [_q] {}) {:ctx ctx})
+          result ((:execute tool) {"action" "scheduler"
+                                   "op" "list"})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :error (:psi-tool/overall-status parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "explicit session-id is used when provided directly to scheduler report"
+    (let [[ctx session-id] (create-session-context)
+          report (psi-tool-scheduler/execute-psi-tool-scheduler-report
+                  {:ctx ctx :session-id session-id}
+                  {:op "create"
+                   :message "wake later"
+                   :delay-ms 1000})]
+      (is (= :ok (:psi-tool/overall-status report)))
+      (is (= :pending (get-in report [:psi-tool/scheduler :schedule :status]))))))

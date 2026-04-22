@@ -5,7 +5,6 @@
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.resolvers.support :as support]
-   [psi.agent-session.scheduler :as scheduler]
    [psi.agent-session.scheduler-runtime :as scheduler-runtime]
    [psi.agent-session.session :as session]
    [psi.agent-session.state-accessors :as accessors]
@@ -16,9 +15,6 @@
 
 (def ^:private background-job-output
   bg-jobs/eql-attrs)
-
-(def ^:private scheduler-output
-  scheduler-runtime/scheduler-eql-attrs)
 
 (defn- session-thread-id
   [_agent-session-ctx session-id]
@@ -48,26 +44,6 @@
     {:psi.agent-session/background-job-count    (count all-jobs)
      :psi.agent-session/background-job-statuses background-job-status-order
      :psi.agent-session/background-jobs         (mapv bg-jobs/job->eql all-jobs)}))
-
-(pco/defresolver agent-session-scheduler
-  [{:keys [psi/agent-session-ctx psi.agent-session/session-id]}]
-  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id]
-   ::pco/output [:psi.scheduler/pending-count
-                 :psi.scheduler/schedules
-                 {:psi.scheduler/schedules scheduler-output}]}
-  (let [state (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
-        schedules (scheduler/list-schedules state [:pending :queued :delivered :cancelled])]
-    {:psi.scheduler/pending-count (scheduler/pending-count state)
-     :psi.scheduler/schedules (mapv scheduler-runtime/schedule->eql schedules)}))
-
-(pco/defresolver scheduler-by-id
-  [{:keys [psi/agent-session-ctx psi.agent-session/session-id psi.scheduler/schedule-id]}]
-  {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id :psi.scheduler/schedule-id]
-   ::pco/output scheduler-output}
-  (when-let [schedule (scheduler/get-schedule
-                       (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
-                       schedule-id)]
-    (scheduler-runtime/schedule->eql schedule)))
 
 (pco/defresolver agent-session-dispatch-registry
   [{:keys [psi/agent-session-ctx]}]
@@ -206,8 +182,6 @@
 
 (def resolvers
   [agent-session-background-jobs
-   agent-session-scheduler
-   scheduler-by-id
    agent-session-dispatch-registry
    agent-session-dispatch-event-log
    tool-output-policy

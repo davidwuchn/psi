@@ -1,8 +1,0 @@
-- [ ] Inspect canonical `psi-tool` session targeting and choose the scheduler-aligned targeting rule
-- [ ] Remove `first` context-session fallback from `psi_tool_scheduler.clj`
-- [ ] Add focused tests for tightened scheduler targeting behavior
-- [ ] Inventory scheduler summary/projection helpers and factor ownership clearly
-- [ ] Keep intentionally distinct public shapes distinct, while reducing avoidable duplication
-- [ ] Make scheduler resolver ownership singular and obvious
-- [ ] Re-run focused scheduler / resolver / psi-tool tests
-- [ ] Record implementation notes and review outcome

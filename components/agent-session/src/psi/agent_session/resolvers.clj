@@ -34,7 +34,7 @@
    [psi.agent-session.resolvers.services :as service-resolvers]
    [psi.agent-session.resolvers.telemetry :as telemetry-resolvers]
    [psi.agent-session.resolvers.discovery :as discovery-resolvers]
-   [psi.agent-session.session-state :as ss]))
+   [psi.agent-session.resolvers.scheduler :as scheduler-resolvers]))
 
 ;; ── Query graph bridge ──────────────────────────────────
 ;;
@@ -125,6 +125,7 @@
                service-resolvers/resolvers
                telemetry-resolvers/resolvers
                discovery-resolvers/resolvers
+               scheduler-resolvers/resolvers
                [query-graph-bridge])))
 
 ;; ── Local Pathom env (for component-local queries) ──────

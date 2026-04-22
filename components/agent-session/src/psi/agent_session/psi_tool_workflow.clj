@@ -2,7 +2,6 @@
   "Workflow action handler for psi-tool: parse, summarise, and execute workflow ops."
   (:require
    [clojure.edn :as edn]
-   [psi.agent-session.session-state :as ss]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
 
@@ -63,10 +62,11 @@
                        :ns ns-name
                        :var var-name}))))
 
-(defn- resolve-session-id
-  [ctx session-id]
+(defn- require-session-id!
+  [session-id op]
   (or session-id
-      (some->> (ss/list-context-sessions-in ctx) first :session-id)))
+      (throw (ex-info "psi-tool workflow action requires invoking or explicit `session-id`"
+                      {:phase :validate :action "workflow" :op op}))))
 
 (defn- ensure-workflow-callbacks
   "Patch older live ctx maps on demand so workflow execution controls can run
@@ -95,7 +95,7 @@
         (throw (ex-info "psi-tool workflow action requires live runtime ctx"
                         {:phase :validate :action "workflow" :op op})))
       (let [ctx (ensure-workflow-callbacks ctx)
-            session-id (resolve-session-id ctx session-id)
+            session-id (require-session-id! session-id op)
             result
             (case op
               "list-definitions"
