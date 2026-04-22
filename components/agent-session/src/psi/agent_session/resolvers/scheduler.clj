@@ -11,29 +11,39 @@
                  :psi.scheduler/schedules
                  {:psi.scheduler/schedules
                   [:psi.scheduler/schedule-id
+                   :psi.scheduler/kind
                    :psi.scheduler/label
                    :psi.scheduler/message
                    :psi.scheduler/source
                    :psi.scheduler/created-at
                    :psi.scheduler/fire-at
                    :psi.scheduler/status
-                   :psi.scheduler/session-id]}]}
+                   :psi.scheduler/origin-session-id
+                   :psi.scheduler/created-session-id
+                   :psi.scheduler/delivery-phase
+                   :psi.scheduler/error-summary
+                   :psi.scheduler/session-config-summary]}]}
   (let [state     (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
         schedules (mapv scheduler-runtime/schedule->eql
-                        (scheduler-runtime/scheduler-schedules-in agent-session-ctx session-id [:pending :queued :delivered :cancelled]))]
+                        (scheduler-runtime/scheduler-schedules-in agent-session-ctx session-id [:pending :queued :delivered :cancelled :failed]))]
     {:psi.scheduler/pending-count (scheduler/pending-count state)
      :psi.scheduler/schedules     schedules}))
 
 (pco/defresolver scheduler-by-id
   [{:keys [psi/agent-session-ctx psi.agent-session/session-id psi.scheduler/schedule-id]}]
   {::pco/input  [:psi/agent-session-ctx :psi.agent-session/session-id :psi.scheduler/schedule-id]
-   ::pco/output [:psi.scheduler/label
+   ::pco/output [:psi.scheduler/kind
+                 :psi.scheduler/label
                  :psi.scheduler/message
                  :psi.scheduler/source
                  :psi.scheduler/created-at
                  :psi.scheduler/fire-at
                  :psi.scheduler/status
-                 :psi.scheduler/session-id]}
+                 :psi.scheduler/origin-session-id
+                 :psi.scheduler/created-session-id
+                 :psi.scheduler/delivery-phase
+                 :psi.scheduler/error-summary
+                 :psi.scheduler/session-config-summary]}
   (some-> (scheduler/get-schedule
            (scheduler-runtime/scheduler-state-in agent-session-ctx session-id)
            schedule-id)

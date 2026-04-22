@@ -41,12 +41,15 @@
          (testing "create stores schedule and emits timer effect"
            (let [result (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                :schedule-id "sch-1"
+                                                               :kind :message
                                                                :label "check-build"
                                                                :message "check build"
                                                                :created-at (instant "2026-04-21T18:00:00Z")
                                                                :fire-at (instant "2026-04-21T18:05:00Z")
                                                                :delay-ms 5000})]
              (apply-root-state-update! ctx result)
+             (is (= :message (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-1" :kind])))
+             (is (= session-id (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-1" :origin-session-id])))
              (is (= :pending (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-1" :status])))
              (is (= [{:effect/type :scheduler/start-timer
                       :session-id session-id
@@ -74,6 +77,7 @@
          (testing "cancel-all cancels all non-terminal schedules and emits one timer-cancel effect per schedule"
            (let [create-a (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                  :schedule-id "sch-bulk-a"
+                                                                 :kind :message
                                                                  :message "a"
                                                                  :created-at (instant "2026-04-21T18:20:00Z")
                                                                  :fire-at (instant "2026-04-21T18:21:00Z")
@@ -81,6 +85,7 @@
                  _ (apply-root-state-update! ctx create-a)
                  create-b (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                  :schedule-id "sch-bulk-b"
+                                                                 :kind :message
                                                                  :message "b"
                                                                  :created-at (instant "2026-04-21T18:20:01Z")
                                                                  :fire-at (instant "2026-04-21T18:21:01Z")
@@ -98,6 +103,7 @@
          (testing "deliver marks delivered and routes through canonical prompt lifecycle"
            (let [create-r (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                  :schedule-id "sch-2"
+                                                                 :kind :message
                                                                  :message "wake up"
                                                                  :created-at (instant "2026-04-21T18:10:00Z")
                                                                  :fire-at (instant "2026-04-21T18:11:00Z")
@@ -110,6 +116,27 @@
                (is (= :runtime/dispatch-event-with-effect-result (-> result :effects first :effect/type)))
                (is (= :session/submit-synthetic-user-prompt (-> result :effects first :event-type))))))))))
 
+(deftest scheduler-session-kind-fires-without-origin-idle-test
+  (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:is-streaming true}})]
+    (with-registered-handlers
+      ctx
+      #(do
+         (let [result (invoke-handler ctx :scheduler/create {:session-id session-id
+                                                             :schedule-id "sch-session"
+                                                             :kind :session
+                                                             :message "run in fresh session"
+                                                             :session-config {:session-name "later"}
+                                                             :created-at (instant "2026-04-21T18:30:00Z")
+                                                             :fire-at (instant "2026-04-21T18:31:00Z")
+                                                             :delay-ms 1000})]
+           (apply-root-state-update! ctx result))
+         (let [fired (invoke-handler ctx :scheduler/fired {:session-id session-id :schedule-id "sch-session"})]
+           (apply-root-state-update! ctx fired)
+           (is (= :session (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-session" :kind])))
+           (is (= :pending (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-session" :status])))
+           (is (= :create-session (get-in (first (:effects fired)) [:event-data :delivery-phase])))
+           (is (= :scheduler/deliver (get-in (first (:effects fired)) [:event-type]))))))))
+
 (deftest scheduler-drain-and-statechart-idle-hooks-test
   (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:is-streaming true}})]
     (with-registered-handlers
@@ -117,6 +144,7 @@
       #(do
          (let [create-a (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                :schedule-id "sch-a"
+                                                               :kind :message
                                                                :message "a"
                                                                :created-at (instant "2026-04-21T18:00:00Z")
                                                                :fire-at (instant "2026-04-21T18:05:00Z")
@@ -124,6 +152,7 @@
            (apply-root-state-update! ctx create-a)
            (let [create-b (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                  :schedule-id "sch-b"
+                                                                 :kind :message
                                                                  :message "b"
                                                                  :created-at (instant "2026-04-21T18:00:01Z")
                                                                  :fire-at (instant "2026-04-21T18:05:01Z")

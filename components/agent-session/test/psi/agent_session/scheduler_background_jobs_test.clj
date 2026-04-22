@@ -20,6 +20,7 @@
           _                (dispatch/dispatch! ctx :scheduler/create
                                                {:session-id session-id
                                                 :schedule-id "sch-1"
+                                                :kind :message
                                                 :label "check-build"
                                                 :message "check build"
                                                 :fire-at (java.time.Instant/parse "2099-04-21T18:00:00Z")}
@@ -27,8 +28,10 @@
           _                (dispatch/dispatch! ctx :scheduler/create
                                                {:session-id session-id
                                                 :schedule-id "sch-2"
+                                                :kind :session
                                                 :label "review"
                                                 :message "review"
+                                                :session-config {:session-name "review later"}
                                                 :fire-at (java.time.Instant/parse "2099-04-21T19:00:00Z")}
                                                {:origin :core})
           _                (swap! (:state* ctx) assoc-in [:agent-session :sessions session-id :data :scheduler :schedules "sch-2" :status] :queued)
@@ -36,7 +39,7 @@
           jobs             (bg-rt/list-background-jobs-in! ctx session-id [:pending :queued])]
       (is (= 2 (count jobs)))
       (is (= #{{:job-id "schedule/sch-1" :status :running :job-kind :scheduled-prompt :tool-name "check-build"}
-               {:job-id "schedule/sch-2" :status :running :job-kind :scheduled-prompt :tool-name "review"}}
+               {:job-id "schedule/sch-2" :status :running :job-kind :scheduled-session :tool-name "review"}}
              (set (map #(select-keys % [:job-id :status :job-kind :tool-name]) jobs))))))
 
   (testing "scheduler-projected background job cancel routes to scheduler cancel"
@@ -44,6 +47,7 @@
           _                (dispatch/dispatch! ctx :scheduler/create
                                                {:session-id session-id
                                                 :schedule-id "sch-1"
+                                                :kind :message
                                                 :label "check-build"
                                                 :message "check build"
                                                 :fire-at (java.time.Instant/parse "2099-04-21T18:00:00Z")}

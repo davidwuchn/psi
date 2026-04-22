@@ -20,6 +20,7 @@
     (testing "create adds a pending schedule"
       (let [result ((:execute tool) {"action" "scheduler"
                                      "op" "create"
+                                     "kind" "message"
                                      "message" "wake later"
                                      "delay-ms" 1000
                                      "label" "wake-test"})
@@ -29,6 +30,8 @@
         (is (= :scheduler (:psi-tool/action parsed)))
         (is (= :create (:psi-tool/scheduler-op parsed)))
         (is (= :ok (:psi-tool/overall-status parsed)))
+        (is (= :message (:kind schedule)))
+        (is (= session-id (:origin-session-id schedule)))
         (is (= :pending (:status schedule)))
         (is (= "wake-test" (:label schedule)))
         (is (string? (:schedule-id schedule)))))
@@ -56,6 +59,7 @@
           tool (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           result ((:execute tool) {"action" "scheduler"
                                    "op" "create"
+                                   "kind" "message"
                                    "message" "wake now"
                                    "at" "2020-01-01T00:00:00Z"})
           parsed (read-string (:content result))]
@@ -68,6 +72,7 @@
           tool (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           result ((:execute tool) {"action" "scheduler"
                                    "op" "create"
+                                   "kind" "message"
                                    "message" "too fast"
                                    "delay-ms" 10})
           parsed (read-string (:content result))]
@@ -80,11 +85,13 @@
       (dotimes [i scheduler/default-max-pending-per-session]
         (let [result ((:execute tool) {"action" "scheduler"
                                        "op" "create"
+                                       "kind" "message"
                                        "message" (str "m-" i)
                                        "delay-ms" 1000})]
           (is (false? (:is-error result)))))
       (let [result ((:execute tool) {"action" "scheduler"
                                      "op" "create"
+                                     "kind" "message"
                                      "message" "overflow"
                                      "delay-ms" 1000})
             parsed (read-string (:content result))]
@@ -106,7 +113,36 @@
           report (psi-tool-scheduler/execute-psi-tool-scheduler-report
                   {:ctx ctx :session-id session-id}
                   {:op "create"
+                   :kind "message"
                    :message "wake later"
                    :delay-ms 1000})]
       (is (= :ok (:psi-tool/overall-status report)))
-      (is (= :pending (get-in report [:psi-tool/scheduler :schedule :status]))))))
+      (is (= :message (get-in report [:psi-tool/scheduler :schedule :kind])))
+      (is (= :pending (get-in report [:psi-tool/scheduler :schedule :status])))))
+
+  (testing "scheduler create kind :session requires session-config"
+    (let [[ctx session-id] (create-session-context)
+          tool (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          result ((:execute tool) {"action" "scheduler"
+                                   "op" "create"
+                                   "kind" "session"
+                                   "message" "run later"
+                                   "delay-ms" 1000})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :error (:psi-tool/overall-status parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "scheduler create kind :message rejects session-config"
+    (let [[ctx session-id] (create-session-context)
+          tool (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          result ((:execute tool) {"action" "scheduler"
+                                   "op" "create"
+                                   "kind" "message"
+                                   "message" "run later"
+                                   "delay-ms" 1000
+                                   "session-config" "{:session-name \"later\"}"})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :error (:psi-tool/overall-status parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase]))))))

@@ -19,6 +19,7 @@
           tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           result           ((:execute tool) {"action" "scheduler"
                                              "op" "create"
+                                             "kind" "message"
                                              "message" "check build"
                                              "label" "check-build"
                                              "delay-ms" 1000})
@@ -28,6 +29,8 @@
       (is (= :scheduler (:psi-tool/action parsed)))
       (is (= :create (:psi-tool/scheduler-op parsed)))
       (is (= :ok (:psi-tool/overall-status parsed)))
+      (is (= :message (:kind schedule)))
+      (is (= session-id (:origin-session-id schedule)))
       (is (= "check-build" (:label schedule)))
       (is (= :pending (get-in @(:state* ctx) [:agent-session :sessions session-id :data :scheduler :schedules (:schedule-id schedule) :status])))))
 
@@ -36,6 +39,7 @@
           tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           create-1         ((:execute tool) {"action" "scheduler"
                                              "op" "create"
+                                             "kind" "message"
                                              "message" "first"
                                              "delay-ms" 1000})
           schedule-id      (get-in (read-string (:content create-1)) [:psi-tool/scheduler :schedule :schedule-id])
@@ -54,6 +58,7 @@
           tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           create-result    ((:execute tool) {"action" "scheduler"
                                              "op" "create"
+                                             "kind" "message"
                                              "message" "cancel me"
                                              "delay-ms" 1000})
           schedule-id      (get-in (read-string (:content create-result)) [:psi-tool/scheduler :schedule :schedule-id])
@@ -71,6 +76,7 @@
           tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           result           ((:execute tool) {"action" "scheduler"
                                              "op" "create"
+                                             "kind" "message"
                                              "message" "too soon"
                                              "delay-ms" 999})
           parsed           (read-string (:content result))]
@@ -83,6 +89,7 @@
           tool             (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
           result           ((:execute tool) {"action" "scheduler"
                                              "op" "create"
+                                             "kind" "message"
                                              "message" "wake now"
                                              "at" "2020-01-01T00:00:00Z"})
           parsed           (read-string (:content result))
@@ -96,11 +103,13 @@
       (dotimes [i 50]
         (let [result ((:execute tool) {"action" "scheduler"
                                        "op" "create"
+                                       "kind" "message"
                                        "message" (str "m-" i)
                                        "delay-ms" 1000})]
           (is (false? (:is-error result)))))
       (let [result ((:execute tool) {"action" "scheduler"
                                      "op" "create"
+                                     "kind" "message"
                                      "message" "overflow"
                                      "delay-ms" 1000})
             parsed (read-string (:content result))]

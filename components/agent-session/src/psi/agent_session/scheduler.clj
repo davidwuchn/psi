@@ -4,13 +4,19 @@
    [clojure.string :as str]))
 
 (def schedule-statuses
-  #{:pending :queued :delivered :cancelled})
+  #{:pending :queued :delivered :cancelled :failed})
+
+(def schedule-kinds
+  #{:message :session})
+
+(def delivery-phases
+  #{:create-session :prompt-submit})
 
 (def non-terminal-statuses
   #{:pending :queued})
 
 (def terminal-statuses
-  #{:delivered :cancelled})
+  #{:delivered :cancelled :failed})
 
 (def max-delay-ms
   (* 24 60 60 1000))
@@ -57,12 +63,17 @@
 (defn schedule-summary
   [schedule]
   {:schedule-id (:schedule-id schedule)
+   :kind (:kind schedule)
    :label (:label schedule)
    :message (:message schedule)
    :created-at (:created-at schedule)
    :fire-at (:fire-at schedule)
    :status (:status schedule)
-   :session-id (:session-id schedule)
+   :origin-session-id (:origin-session-id schedule)
+   :created-session-id (:created-session-id schedule)
+   :delivery-phase (:delivery-phase schedule)
+   :error-summary (:error-summary schedule)
+   :session-config-summary (:session-config-summary schedule)
    :source (:source schedule)})
 
 (defn validate-delay-ms!
@@ -81,7 +92,7 @@
   delay-ms)
 
 (defn validate-schedule-record!
-  [{:keys [schedule-id message created-at fire-at status session-id source] :as schedule}]
+  [{:keys [schedule-id kind message created-at fire-at status origin-session-id session-id source delivery-phase] :as schedule}]
   (when (str/blank? (str schedule-id))
     (throw (ex-info "schedule-id is required" {:schedule schedule})))
   (when (str/blank? (str message))
@@ -92,35 +103,54 @@
     (throw (ex-info "fire-at must be an Instant" {:schedule schedule})))
   (when-not (contains? schedule-statuses status)
     (throw (ex-info "status is invalid" {:schedule schedule :status status})))
-  (when (str/blank? (str session-id))
-    (throw (ex-info "session-id is required" {:schedule schedule})))
+  (when-not (contains? schedule-kinds (or kind :message))
+    (throw (ex-info "kind is invalid" {:schedule schedule :kind kind})))
+  (let [sid (or origin-session-id session-id)]
+    (when (str/blank? (str sid))
+      (throw (ex-info "origin-session-id is required" {:schedule schedule}))))
+  (when (and delivery-phase (not (contains? delivery-phases delivery-phase)))
+    (throw (ex-info "delivery-phase is invalid" {:schedule schedule :delivery-phase delivery-phase})))
   (when-not (= :scheduled source)
     (throw (ex-info "source must be :scheduled" {:schedule schedule :source source})))
   schedule)
 
 (defn create-schedule
-  [scheduler-state {:keys [schedule-id label message created-at fire-at session-id]
-                    :or {label nil}}]
-  (let [state (or scheduler-state (empty-state))
-        _     (validate-schedule-record!
-               {:schedule-id schedule-id
-                :label label
-                :message message
-                :created-at created-at
-                :fire-at fire-at
-                :status :pending
-                :session-id session-id
-                :source :scheduled})]
+  [scheduler-state {:keys [schedule-id kind label message created-at fire-at origin-session-id session-id created-session-id delivery-phase error-summary session-config session-config-summary]
+                    :or {kind :message
+                         label nil}}]
+  (let [state             (or scheduler-state (empty-state))
+        origin-session-id (or origin-session-id session-id)
+        _                 (validate-schedule-record!
+                           {:schedule-id schedule-id
+                            :kind kind
+                            :label label
+                            :message message
+                            :created-at created-at
+                            :fire-at fire-at
+                            :status :pending
+                            :origin-session-id origin-session-id
+                            :created-session-id created-session-id
+                            :delivery-phase delivery-phase
+                            :error-summary error-summary
+                            :session-config session-config
+                            :session-config-summary session-config-summary
+                            :source :scheduled})]
     (when (get-schedule state schedule-id)
       (throw (ex-info "schedule-id already exists" {:schedule-id schedule-id})))
-    (let [schedule {:schedule-id schedule-id
-                    :label label
-                    :message message
-                    :created-at created-at
-                    :fire-at fire-at
-                    :status :pending
-                    :session-id session-id
-                    :source :scheduled}]
+    (let [schedule (cond-> {:schedule-id schedule-id
+                            :kind kind
+                            :label label
+                            :message message
+                            :created-at created-at
+                            :fire-at fire-at
+                            :status :pending
+                            :origin-session-id origin-session-id
+                            :source :scheduled}
+                     created-session-id (assoc :created-session-id created-session-id)
+                     delivery-phase (assoc :delivery-phase delivery-phase)
+                     error-summary (assoc :error-summary error-summary)
+                     session-config (assoc :session-config session-config)
+                     session-config-summary (assoc :session-config-summary session-config-summary))]
       {:state    (assoc-in state [:schedules schedule-id] schedule)
        :schedule schedule})))
 
@@ -172,7 +202,8 @@
       (throw (ex-info "only pending schedules can fire"
                       {:schedule-id schedule-id
                        :status (:status schedule)})))
-    (if (idle-session? session-data)
+    (if (or (= :session (:kind schedule))
+            (idle-session? session-data))
       {:state state
        :action :deliver
        :schedule schedule}
@@ -204,6 +235,25 @@
                    (assoc-in [:schedules schedule-id :status] :delivered)
                    (update :queue (fn [q] (vec (remove #{schedule-id} (or q []))))))
      :schedule (assoc schedule :status :delivered)}))
+
+(defn fail-schedule
+  [scheduler-state schedule-id {:keys [delivery-phase error-summary created-session-id]}]
+  (let [state    (or scheduler-state (empty-state))
+        schedule (get-schedule state schedule-id)]
+    (when-not schedule
+      (throw (ex-info "schedule not found" {:schedule-id schedule-id})))
+    (when-not (contains? #{:pending :queued :delivered} (:status schedule))
+      (throw (ex-info "schedule is not fail-able"
+                      {:schedule-id schedule-id
+                       :status (:status schedule)})))
+    (let [failed (cond-> (assoc schedule :status :failed)
+                   delivery-phase (assoc :delivery-phase delivery-phase)
+                   error-summary (assoc :error-summary error-summary)
+                   created-session-id (assoc :created-session-id created-session-id))]
+      {:state    (-> state
+                     (assoc-in [:schedules schedule-id] failed)
+                     (update :queue (fn [q] (vec (remove #{schedule-id} (or q []))))))
+       :schedule failed})))
 
 (defn drain-one
   [scheduler-state session-data]

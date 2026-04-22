@@ -19,6 +19,7 @@
           created         (dispatch/dispatch! ctx :scheduler/create
                                              {:session-id session-id
                                               :schedule-id "sch-1"
+                                              :kind :message
                                               :label "check-build"
                                               :message "check build"
                                               :fire-at (java.time.Instant/parse "2099-04-21T18:00:00Z")}
@@ -27,18 +28,26 @@
                                             [:psi.scheduler/pending-count
                                              {:psi.scheduler/schedules
                                               [:psi.scheduler/schedule-id
+                                               :psi.scheduler/kind
                                                :psi.scheduler/label
-                                               :psi.scheduler/status]}])
+                                               :psi.scheduler/status
+                                               :psi.scheduler/origin-session-id]}])
           detail-result   (session/query-in ctx session-id
-                                            [:psi.scheduler/message
+                                            [:psi.scheduler/kind
+                                             :psi.scheduler/message
                                              :psi.scheduler/fire-at
-                                             :psi.scheduler/status]
+                                             :psi.scheduler/status
+                                             :psi.scheduler/origin-session-id]
                                             {:psi.scheduler/schedule-id "sch-1"})]
       (is (= "sch-1" (:schedule-id created)))
       (is (= 1 (:psi.scheduler/pending-count root-result)))
       (is (= [{:psi.scheduler/schedule-id "sch-1"
+               :psi.scheduler/kind :message
                :psi.scheduler/label "check-build"
-               :psi.scheduler/status :pending}]
+               :psi.scheduler/status :pending
+               :psi.scheduler/origin-session-id session-id}]
              (:psi.scheduler/schedules root-result)))
+      (is (= :message (:psi.scheduler/kind detail-result)))
       (is (= "check build" (:psi.scheduler/message detail-result)))
+      (is (= session-id (:psi.scheduler/origin-session-id detail-result)))
       (is (= :pending (:psi.scheduler/status detail-result))))))

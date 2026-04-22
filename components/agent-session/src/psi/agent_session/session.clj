@@ -125,19 +125,32 @@
    [:skill-names {:optional true} [:maybe [:vector :string]]]
    [:components {:optional true} [:maybe [:set prompt-component-schema]]]])
 
+(def schedule-kind-schema
+  [:enum :message :session])
+
+(def schedule-delivery-phase-schema
+  [:enum :create-session :prompt-submit])
+
 (def schedule-status-schema
-  [:enum :pending :queued :delivered :cancelled])
+  [:enum :pending :queued :delivered :cancelled :failed])
 
 (def schedule-schema
   [:map
    [:schedule-id :string]
+   [:kind {:optional true} schedule-kind-schema]
    [:label {:optional true} [:maybe :string]]
    [:message :string]
    [:source [:= :scheduled]]
    [:created-at inst?]
    [:fire-at inst?]
    [:status schedule-status-schema]
-   [:session-id :string]])
+   [:origin-session-id {:optional true} :string]
+   [:session-id {:optional true} :string]
+   [:created-session-id {:optional true} [:maybe :string]]
+   [:delivery-phase {:optional true} [:maybe schedule-delivery-phase-schema]]
+   [:error-summary {:optional true} [:maybe :map]]
+   [:session-config {:optional true} [:maybe :map]]
+   [:session-config-summary {:optional true} [:maybe :map]]])
 
 (def scheduler-state-schema
   [:map

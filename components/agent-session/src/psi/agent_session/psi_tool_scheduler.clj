@@ -1,6 +1,7 @@
 (ns psi.agent-session.psi-tool-scheduler
   "Scheduler action handler for psi-tool: parse, validate, and execute scheduler ops."
   (:require
+   [clojure.edn :as edn]
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.scheduler :as scheduler]
@@ -64,8 +65,62 @@
     (throw (ex-info "scheduler create requires `delay-ms` or `at`"
                     {:phase :validate :action "scheduler" :op "create"}))))
 
+(def ^:private supported-kinds #{:message :session})
+
+(def ^:private session-config-supported-keys
+  #{:session-name
+    :system-prompt
+    :model
+    :thinking-level
+    :skills
+    :tool-defs
+    :developer-prompt
+    :developer-prompt-source
+    :preloaded-messages
+    :cache-breakpoints
+    :prompt-component-selection})
+
+(defn- parse-kind! [kind]
+  (let [parsed (cond
+                 (keyword? kind) kind
+                 (string? kind) (keyword kind)
+                 :else nil)]
+    (when-not (contains? supported-kinds parsed)
+      (throw (ex-info "scheduler create requires valid `kind`"
+                      {:phase :validate :action "scheduler" :op "create" :kind kind :supported-kinds (vec (sort supported-kinds))})))
+    parsed))
+
+(defn- parse-session-config! [session-config]
+  (let [cfg (cond
+              (map? session-config) session-config
+              (string? session-config) (try
+                                         (binding [*read-eval* false]
+                                           (edn/read-string session-config))
+                                         (catch Exception e
+                                           (throw (ex-info "scheduler session-config must be valid EDN map"
+                                                           {:phase :validate :action "scheduler" :op "create" :field :session-config}
+                                                           e))))
+              (nil? session-config) nil
+              :else session-config)]
+    (when (some? cfg)
+      (when-not (map? cfg)
+        (throw (ex-info "scheduler session-config must be a map"
+                        {:phase :validate :action "scheduler" :op "create" :field :session-config})))
+      (let [unsupported (->> (keys cfg)
+                             (remove session-config-supported-keys)
+                             sort
+                             vec)]
+        (when (seq unsupported)
+          (throw (ex-info "scheduler session-config contains unsupported keys"
+                          {:phase :validate
+                           :action "scheduler"
+                           :op "create"
+                           :field :session-config
+                           :unsupported-keys unsupported})))))
+    cfg))
+
 (defn execute-psi-tool-scheduler-report
-  [{:keys [ctx session-id]} {:keys [op delay-ms at label message schedule-id]}]
+  [{:keys [ctx session-id]} {:keys [op delay-ms at label message schedule-id kind session-config]}]
   (let [started-at (System/nanoTime)]
     (try
       (when-not ctx
@@ -78,7 +133,16 @@
                            (when (str/blank? (str message))
                              (throw (ex-info "scheduler create requires `message`"
                                              {:phase :validate :action "scheduler" :op op})))
-                           (let [state (scheduler-runtime/scheduler-state-in ctx session-id)]
+                           (let [kind           (parse-kind! kind)
+                                 session-config (parse-session-config! session-config)
+                                 _              (case kind
+                                                  :message (when (some? session-config)
+                                                             (throw (ex-info "scheduler create kind :message does not accept `session-config`"
+                                                                             {:phase :validate :action "scheduler" :op op :kind kind})))
+                                                  :session (when (nil? session-config)
+                                                             (throw (ex-info "scheduler create kind :session requires `session-config`"
+                                                                             {:phase :validate :action "scheduler" :op op :kind kind}))))
+                                 state          (scheduler-runtime/scheduler-state-in ctx session-id)]
                              (when (>= (scheduler/pending-count state) scheduler/default-max-pending-per-session)
                                (throw (ex-info "scheduler pending cap exceeded"
                                                {:phase :validate
@@ -91,8 +155,10 @@
                                                                :scheduler/create
                                                                {:session-id session-id
                                                                 :schedule-id new-schedule-id
+                                                                :kind kind
                                                                 :label label
                                                                 :message message
+                                                                :session-config session-config
                                                                 :created-at created-at
                                                                 :fire-at fire-at
                                                                 :delay-ms delay-ms}

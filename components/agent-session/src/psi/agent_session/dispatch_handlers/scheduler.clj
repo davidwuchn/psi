@@ -29,22 +29,37 @@
    :schedule-id schedule-id
    :label label})
 
+(defn- session-config-summary
+  [session-config]
+  (when session-config
+    {:session-name (get session-config :session-name)
+     :model (get session-config :model)
+     :thinking-level (get session-config :thinking-level)
+     :skill-count (count (or (get session-config :skills) []))
+     :tool-count (count (or (get session-config :tool-defs) []))
+     :has-system-prompt? (boolean (get session-config :system-prompt))
+     :has-developer-prompt? (boolean (get session-config :developer-prompt))
+     :preloaded-message-count (count (or (get session-config :preloaded-messages) []))
+     :has-prompt-component-selection? (boolean (get session-config :prompt-component-selection))}))
 
 (defn register!
   [_ctx]
   (register-core-handler!
    :scheduler/create
-   (fn [ctx {:keys [session-id schedule-id label message created-at fire-at]}]
+   (fn [ctx {:keys [session-id schedule-id kind label message session-config created-at fire-at]}]
      (let [created-at (or created-at (java.time.Instant/now))
            {state' :state schedule :schedule}
            (scheduler/create-schedule
             (scheduler-state-in ctx session-id)
             {:schedule-id schedule-id
+             :kind (or kind :message)
              :label label
              :message message
              :created-at created-at
              :fire-at fire-at
-             :session-id session-id})]
+             :origin-session-id session-id
+             :session-config session-config
+             :session-config-summary (session-config-summary session-config)})]
        {:root-state-update (scheduler-update session-id (constantly state'))
         :effects [{:effect/type :scheduler/start-timer
                    :session-id session-id
@@ -91,22 +106,26 @@
                  {:effect/type :runtime/dispatch-event
                   :event-type :scheduler/deliver
                   :event-data {:session-id session-id
-                               :schedule-id schedule-id}
+                               :schedule-id schedule-id
+                               :delivery-phase (when (= :session (:kind schedule)) :create-session)}
                   :origin :core})))))
 
   (register-core-handler!
    :scheduler/deliver
    (fn [ctx {:keys [session-id schedule-id]}]
-     (let [{state' :state schedule :schedule}
-           (scheduler/deliver-schedule (scheduler-state-in ctx session-id) schedule-id)
-           user-msg (scheduled-user-message schedule)]
-       {:root-state-update (scheduler-update session-id (constantly state'))
-        :effects [{:effect/type :runtime/dispatch-event-with-effect-result
-                   :event-type :session/submit-synthetic-user-prompt
-                   :event-data {:session-id session-id
-                                :user-msg user-msg}
-                   :origin :core}]
-        :return (assoc schedule :message-record user-msg)})))
+     (let [schedule (scheduler/get-schedule (scheduler-state-in ctx session-id) schedule-id)]
+       (if (= :session (:kind schedule))
+         {:return (assoc schedule :delivery-phase :create-session)}
+         (let [{state' :state schedule' :schedule}
+               (scheduler/deliver-schedule (scheduler-state-in ctx session-id) schedule-id)
+               user-msg (scheduled-user-message schedule')]
+           {:root-state-update (scheduler-update session-id (constantly state'))
+            :effects [{:effect/type :runtime/dispatch-event-with-effect-result
+                       :event-type :session/submit-synthetic-user-prompt
+                       :event-data {:session-id session-id
+                                    :user-msg user-msg}
+                       :origin :core}]
+            :return (assoc schedule' :message-record user-msg)})))))
 
   (register-core-handler!
    :scheduler/drain-queue

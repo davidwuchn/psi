@@ -8,3 +8,10 @@ Initialized on 2026-04-21 from user request to let the scheduler invoke fresh to
 - scheduler needs a canonical non-switching top-level creation path rather than reuse of a switching helper
 - public projection naming should converge on origin/created session ids and compact config summaries
 - canonical terminal scheduler failure status is `:failed`
+
+2026-04-21 implementation slice 1:
+- evolved scheduler record/state model to support explicit `:kind`, `:failed`, origin/created session ids, delivery phase, error summary, and optional session-config/session-config-summary payloads
+- updated psi-tool scheduler parsing/validation to require explicit `kind` on create and to validate/reject session-config usage by kind
+- converged scheduler psi-tool, EQL, and background-job projections on richer kind-aware public fields and compact session-config summaries
+- updated focused scheduler tests to cover explicit kind handling, origin-session projection, background-job kind projection, and `:session` fire behavior that bypasses origin busy-state queueing
+- intentionally did not yet implement fresh-session creation itself; current `:kind :session` delivery now shapes the scheduler/public model and fire semantics needed for the next slice

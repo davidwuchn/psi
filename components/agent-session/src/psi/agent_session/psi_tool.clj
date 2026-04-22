@@ -49,6 +49,8 @@
                               :chain-name    {:type "string" :description "For `action: \"workflow\"`: legacy parameter, no longer used."}
                               :reason        {:type "string" :description "For `action: \"workflow\"`: optional cancel reason."}
                               :message       {:type "string" :description "For `action: \"scheduler\"`, `op: \"create\"`: prompt content to inject when the schedule fires."}
+                              :kind          {:type "string" :enum ["message" "session"] :description "For `action: \"scheduler\"`, `op: \"create\"`: explicit scheduler kind (`message` or `session`)."}
+                              :session-config {:description "For `action: \"scheduler\"`, `op: \"create\"`, `kind: \"session\"`: session config map or EDN string using the supported scheduler session-config subset."}
                               :label         {:type "string" :description "For `action: \"scheduler\"`: optional human-readable schedule label."}
                               :delay-ms      {:type "integer" :description "For `action: \"scheduler\"`, `op: \"create\"`: relative delay in milliseconds (1000ms to 24h)."}
                               :at            {:type "string" :description "For `action: \"scheduler\"`, `op: \"create\"`: absolute ISO-8601 UTC instant. Past instants fire immediately."}
@@ -81,7 +83,7 @@
 (def ^:private scheduler-supported-ops ["create" "list" "cancel"])
 
 (defn- validate-psi-tool-request
-  [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason message label delay-ms at schedule-id] :as args}]
+  [{:strs [query entity ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason message kind session-config label delay-ms at schedule-id] :as args}]
   (let [effective-action (psi-tool-action args)]
     (cond
       (nil? effective-action)
@@ -148,7 +150,7 @@
         (when-not (some #{op} scheduler-supported-ops)
           (throw (ex-info "psi-tool scheduler action requires valid `op`"
                           {:phase :validate :action effective-action :op op :supported-ops scheduler-supported-ops})))
-        {:action effective-action :op op :message message :label label :delay-ms delay-ms :at at :schedule-id schedule-id}))))
+        {:action effective-action :op op :message message :kind kind :session-config session-config :label label :delay-ms delay-ms :at at :schedule-id schedule-id}))))
 
 (defn- sanitize-psi-tool-data [x] (sanitize-psi-tool-result x))
 (defn- ordered-map [& kvs] (apply array-map kvs))
@@ -166,7 +168,7 @@
    :is-error true})
 
 (defn telemetry-args
-  [{:strs [action query ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason message label delay-ms at schedule-id]}]
+  [{:strs [action query ns form namespaces worktree-path op host port code definition-id definition workflow-input run-id chain-name reason message kind session-config label delay-ms at schedule-id]}]
   (cond-> (ordered-map)
     action (assoc "action" action)
     query (assoc "query" query)
@@ -185,6 +187,8 @@
     chain-name (assoc "chain-name" chain-name)
     reason (assoc "reason" reason)
     message (assoc "message" message)
+    kind (assoc "kind" kind)
+    session-config (assoc "session-config" session-config)
     label (assoc "label" label)
     delay-ms (assoc "delay-ms" delay-ms)
     at (assoc "at" at)
@@ -373,7 +377,7 @@
       namespace-mode? (assoc :psi-tool/namespaces-requested requested-nses)
       (not namespace-mode?) (assoc :psi-tool/worktree-path effective-path :psi-tool/worktree-source worktree-source))))
 
-(defn truncation-visible-prefix [{:keys [action ns form namespaces worktree-path op code definition-id run-id schedule-id label]}]
+(defn truncation-visible-prefix [{:keys [action ns form namespaces worktree-path op code definition-id run-id schedule-id label kind]}]
   (case action
     "eval" (str "Eval action=eval ns=" ns " form=" form)
     "reload-code" (if namespaces
@@ -386,6 +390,7 @@
                     (when definition-id (str " definition-id=" definition-id))
                     (when run-id (str " run-id=" run-id)))
     "scheduler" (str "Scheduler action=scheduler op=" op
+                     (when kind (str " kind=" kind))
                      (when schedule-id (str " schedule-id=" schedule-id))
                      (when label (str " label=" label)))
     nil))
