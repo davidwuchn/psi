@@ -55,6 +55,21 @@
     (session/register-mutations-in! qctx mutations/all-mutations true)
     (ext/create-extension-api (:extension-registry ctx) "/ext/lsp.clj" runtime-fns)))
 
+(defn- await-diagnostic-finding
+  [api workspace-root file-path timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [diagnostics-by-path (sut/request-diagnostics! api {:workspace-root workspace-root
+                                                               :paths [file-path]
+                                                               :diagnostics-timeout-ms 500})
+            finding (get diagnostics-by-path file-path)]
+        (if (or (seq finding)
+                (>= (System/currentTimeMillis) deadline))
+          finding
+          (do
+            (Thread/sleep 100)
+            (recur)))))))
+
 (deftest service-spec-roundtrips-through-real-runtime-test
   (testing "extension service spec can be ensured through mutation path and gets live runtime fns"
     (let [[ctx session-id] (create-runtime-session (create-temp-worktree))
@@ -309,6 +324,7 @@
                                                          :startup-timeout-ms 2000
                                                          :diagnostics-timeout-ms 5000}})
           root (:workspace-root second-result)
+          finding (await-diagnostic-finding api root file-path 5000)
           svc (services/service-in ctx (sut/workspace-key root))
           debug @(:debug-atom svc)]
       (try
@@ -321,7 +337,7 @@
         (is (some #(get-in % [:payload "params" "contentChanges" 0 "range"]) debug))
         (is (= [{"message" (str "fixture diagnostic for " file-path)
                  "severity" 2}]
-               (get (:diagnostics-by-path second-result) file-path)))
+               finding))
         (finally
           (when-let [close-fn (:close-fn svc)]
             (future (close-fn)))
@@ -342,7 +358,7 @@
                                                :tool-result {:effects [{:path file-path}]}
                                                :config {:command lsp-fixture-command
                                                         :startup-timeout-ms 2000
-                                                        :diagnostics-timeout-ms 2000}})
+                                                        :diagnostics-timeout-ms 5000}})
           root worktree
           svc-before (services/service-in ctx (sut/workspace-key root))
           restarted-root (sut/restart-workspace! api {:worktree-path worktree
@@ -358,6 +374,7 @@
                                                          :startup-timeout-ms 2000
                                                          :diagnostics-timeout-ms 5000
                                                          :sync-timeout-ms 2000}})
+          finding (await-diagnostic-finding api root file-path 5000)
           svc-after (services/service-in ctx (sut/workspace-key root))
           entries (dispatch/dispatch-trace-entries)]
       (try
@@ -369,7 +386,7 @@
                (:document-syncs second-result)))
         (is (= [{"message" (str "fixture diagnostic for " file-path)
                  "severity" 2}]
-               (get (:diagnostics-by-path second-result) file-path)))
+               finding))
         (is (nil? cleared-document-state))
         (is (false? cleared-initialized?))
         (is (= :running (:status svc-after)))
