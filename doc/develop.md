@@ -82,7 +82,7 @@ Fix formatting across the whole repo:
 
 ```bash
 cljfmt fix bb.edn deps.edn .lsp/config.edn .psi/startup-prompts.edn \
-  components extensions spec specs test tests.edn extensions/tests.edn
+  components extensions spec test tests.edn extensions/tests.edn
 ```
 
 ## Linting
