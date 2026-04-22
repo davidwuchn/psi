@@ -24,7 +24,7 @@
                      "`reload-code` reloads already loaded namespaces by explicit namespace list or worktree scope; "
                      "`project-repl` controls the managed project REPL with explicit `op` values `status|start|attach|stop|eval|interrupt`; "
                      "`workflow` manages deterministic workflow definitions and runs with explicit `op` values `list-definitions|create-run|execute-run|read-run|list-runs|resume-run|cancel-run`; "
-                     "`scheduler` manages one-shot delayed prompt injection for the invoking session with explicit `op` values `create|list|cancel`. "
+                     "`scheduler` manages one-shot delayed work for the invoking session with explicit `op` values `create|list|cancel`, including delayed same-session prompts and delayed fresh top-level session creation. "
                      "Legacy query-only calls of the form `{query: ...}` remain accepted only as a compatibility alias for `action: \"query\"`. "
                      "Optional `entity` seeds root attributes for explicit query targeting, e.g. entity {:psi.agent-session/session-id \"sid\"}.")
    :parameters  {:type       "object"

@@ -57,3 +57,9 @@ Initialized on 2026-04-21 from user request to let the scheduler invoke fresh to
   - extensions.auto-session-name-runtime-test
   - extensions.auto-session-name-test
   - result: 14 tests, 35 assertions, 0 failures
+
+2026-04-21 docs alignment:
+- added `doc/scheduler.md` describing scheduler create/list/cancel, `kind: message|session`, supported `session-config` subset, status model, and public introspection attrs
+- updated `README.md` built-in tool section to mention scheduler support and point to the new scheduler doc
+- updated psi-tool tool description text to describe scheduler as delayed one-shot work rather than prompt injection only
+- re-ran focused scheduler proof after doc/description alignment (`8 tests, 141 assertions, 0 failures`)
