@@ -1,0 +1,8 @@
+- [ ] Inspect current `extensions.work-on` command implementation and extension tool registration patterns
+- [ ] Decide the shared implementation boundary for command + tool invocation
+- [ ] Decide tool shape (`work-on` only vs multi-action surface)
+- [ ] Implement shared command/tool path
+- [ ] Register the `work-on` tool
+- [ ] Add focused parity tests for command and tool invocation
+- [ ] Verify focused extension/workflow tests
+- [ ] Record architectural findings about dispatch/effects/runtime cleanliness
