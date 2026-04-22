@@ -59,6 +59,7 @@
     (dispatch/dispatch! ctx :scheduler/create
                         {:session-id session-id
                          :schedule-id "sch-3"
+                         :kind :message
                          :message "shutdown cleanup"
                          :created-at (java.time.Instant/parse "2099-04-21T18:00:00Z")
                          :fire-at (java.time.Instant/parse "2099-04-21T18:05:00Z")
@@ -67,6 +68,7 @@
     (dispatch/dispatch! ctx :scheduler/create
                         {:session-id session-id
                          :schedule-id "sch-4"
+                         :kind :message
                          :message "shutdown cleanup 2"
                          :created-at (java.time.Instant/parse "2099-04-21T18:00:01Z")
                          :fire-at (java.time.Instant/parse "2099-04-21T18:05:01Z")

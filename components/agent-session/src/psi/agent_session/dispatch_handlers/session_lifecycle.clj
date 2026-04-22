@@ -14,7 +14,7 @@
   [_ctx]
   (dispatch/register-handler!
    :session/new-initialize
-   (fn [ctx {:keys [session-id new-session-id worktree-path session-name spawn-mode session-file]}]
+   (fn [ctx {:keys [session-id new-session-id worktree-path session-name spawn-mode session-file scheduled-origin-session-id scheduled-from-schedule-id scheduled-from-label]}]
      (let [current-sd (or (session/get-session-data-in ctx session-id)
                           (assoc (session-data/initial-session (:session-defaults ctx))
                                  :provider-error-replies []))
@@ -22,7 +22,10 @@
                        :worktree-path  worktree-path
                        :session-name   session-name
                        :spawn-mode     spawn-mode
-                       :session-file   session-file}]
+                       :session-file   session-file
+                       :scheduled-origin-session-id scheduled-origin-session-id
+                       :scheduled-from-schedule-id scheduled-from-schedule-id
+                       :scheduled-from-label scheduled-from-label}]
        {:root-state-update #(ss/initialize-new-session-state % current-sd payload)
         :return-key        (ss/session-data-path new-session-id)
         :effects [{:effect/type :runtime/agent-reset}
@@ -30,6 +33,26 @@
                    :session-id new-session-id
                    :active-session-id new-session-id
                    :reason :session/new-initialize}]})))
+
+  (dispatch/register-handler!
+   :session/create-top-level
+   (fn [ctx {:keys [session-id new-session-id worktree-path session-name session-file scheduled-origin-session-id scheduled-from-schedule-id scheduled-from-label]}]
+     (let [current-sd (or (session/get-session-data-in ctx session-id)
+                          (assoc (session-data/initial-session (:session-defaults ctx))
+                                 :provider-error-replies []))
+           payload    {:new-session-id new-session-id
+                       :worktree-path  worktree-path
+                       :session-name   session-name
+                       :spawn-mode     :new-root
+                       :session-file   session-file
+                       :scheduled-origin-session-id scheduled-origin-session-id
+                       :scheduled-from-schedule-id scheduled-from-schedule-id
+                       :scheduled-from-label scheduled-from-label}]
+       {:root-state-update #(ss/initialize-new-session-state % current-sd payload)
+        :return-key        (ss/session-data-path new-session-id)
+        :effects [{:effect/type :projection/context-changed
+                   :session-id new-session-id
+                   :reason :session/create-top-level}]})))
 
   (dispatch/register-handler!
    :session/resume-loaded

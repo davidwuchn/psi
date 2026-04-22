@@ -40,6 +40,10 @@
   [ctx source-session-id opts]
   (lifecycle/new-session-in! ctx source-session-id opts))
 
+(defn create-top-level-session-in!
+  [ctx source-session-id opts]
+  (lifecycle/create-top-level-session-in! ctx source-session-id opts))
+
 (defn resume-session-in!
   [ctx source-session-id session-path]
   (lifecycle/resume-session-in! ctx source-session-id session-path))

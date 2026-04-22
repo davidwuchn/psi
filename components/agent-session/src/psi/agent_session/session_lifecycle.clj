@@ -12,6 +12,51 @@
    [psi.agent-session.session-state :as session]
    [psi.agent-session.workflows :as wf]))
 
+(defn- initialize-top-level-session!
+  [ctx source-session-id {:keys [dispatch-event session-name worktree-path scheduled-origin-session-id scheduled-from-schedule-id scheduled-from-label]}]
+  (let [new-session-id (str (java.util.UUID/randomUUID))
+        source-sd      (session/get-session-data-in ctx source-session-id)
+        worktree-path  (or worktree-path
+                           (:worktree-path source-sd)
+                           (:worktree-path (:session-defaults ctx))
+                           (:cwd ctx))
+        session-file   (when (:persist? ctx)
+                         (let [session-dir (persist/session-dir-for worktree-path)
+                               file        (persist/new-session-file-path session-dir new-session-id)]
+                           (str file)))]
+    (dispatch/dispatch! ctx
+                        dispatch-event
+                        {:session-id source-session-id
+                         :new-session-id new-session-id
+                         :worktree-path worktree-path
+                         :session-name session-name
+                         :session-file session-file
+                         :scheduled-origin-session-id scheduled-origin-session-id
+                         :scheduled-from-schedule-id scheduled-from-schedule-id
+                         :scheduled-from-label scheduled-from-label}
+                        {:origin :core})
+    (let [sd    (session/get-session-data-in ctx new-session-id)
+          fresh (runtime/create-runtime!
+                 ctx new-session-id
+                 {:session-data  sd
+                  :messages      []
+                  :agent-initial (:agent-initial ctx)})]
+      (swap! (:state* ctx)
+             (fn [state]
+               (-> state
+                   (assoc-in [:agent-session :sessions new-session-id :agent-ctx] (:agent-ctx fresh))
+                   (assoc-in [:agent-session :sessions new-session-id :sc-session-id] (:sc-session-id fresh))))))
+    (dispatch/dispatch! ctx :session/ensure-base-system-prompt {:session-id new-session-id} {:origin :core})
+    (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id new-session-id} {:origin :core})
+    (when session-name
+      (session/journal-append-in! ctx new-session-id (persist/session-info-entry session-name)))
+    (session/journal-append-in! ctx new-session-id
+                                (persist/thinking-level-entry
+                                 (:thinking-level (session/get-session-data-in ctx new-session-id))))
+    (when-let [model (:model (session/get-session-data-in ctx new-session-id))]
+      (session/journal-append-in! ctx new-session-id (persist/model-entry (:provider model) (:id model))))
+    (session/get-session-data-in ctx new-session-id)))
+
 (defn new-session-in!
   "Start a fresh session (resets agent and session data).
   Dispatches session_before_switch / session_switch extension events.
@@ -23,49 +68,22 @@
         {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :new})]
     (when-not cancelled?
       (wf/clear-all-in! (:workflow-registry ctx))
-      (let [new-session-id     (str (java.util.UUID/randomUUID))
-            source-sd          (session/get-session-data-in ctx source-session-id)
-            worktree-path      (or (:worktree-path opts)
-                                   (:worktree-path source-sd)
-                                   (:worktree-path (:session-defaults ctx))
-                                   (:cwd ctx))
-            session-name       (:session-name opts)
-            session-file       (when (:persist? ctx)
-                                 (let [session-dir (persist/session-dir-for worktree-path)
-                                       file        (persist/new-session-file-path session-dir new-session-id)]
-                                   (str file)))]
-        (dispatch/dispatch! ctx
-                            :session/new-initialize
-                            {:session-id     source-session-id
-                             :new-session-id new-session-id
-                             :worktree-path  worktree-path
-                             :session-name   session-name
-                             :spawn-mode     (or (:spawn-mode opts) :new-root)
-                             :session-file   session-file}
-                            {:origin :core})
-        ;; Replace runtime handles with fresh per-session instances.
-        (let [sd      (session/get-session-data-in ctx new-session-id)
-              fresh   (runtime/create-runtime!
-                       ctx new-session-id
-                       {:session-data  sd
-                        :messages      []
-                        :agent-initial (:agent-initial ctx)})]
-          (swap! (:state* ctx)
-                 (fn [state]
-                   (-> state
-                       (assoc-in [:agent-session :sessions new-session-id :agent-ctx] (:agent-ctx fresh))
-                       (assoc-in [:agent-session :sessions new-session-id :sc-session-id] (:sc-session-id fresh))))))
-        (dispatch/dispatch! ctx :session/ensure-base-system-prompt {:session-id new-session-id} {:origin :core})
-        (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id new-session-id} {:origin :core})
-        (when session-name
-          (session/journal-append-in! ctx new-session-id (persist/session-info-entry session-name)))
-        (session/journal-append-in! ctx new-session-id
-                                    (persist/thinking-level-entry
-                                     (:thinking-level (session/get-session-data-in ctx new-session-id))))
-        (when-let [model (:model (session/get-session-data-in ctx new-session-id))]
-          (session/journal-append-in! ctx new-session-id (persist/model-entry (:provider model) (:id model))))
+      (let [sd (initialize-top-level-session! ctx source-session-id {:dispatch-event :session/new-initialize
+                                                                     :session-name (:session-name opts)
+                                                                     :worktree-path (:worktree-path opts)})]
         (ext/dispatch-in reg "session_switch" {:reason :new})
-        (session/get-session-data-in ctx new-session-id)))))
+        sd))))
+
+(defn create-top-level-session-in!
+  "Create a fresh top-level session without changing active/focus semantics.
+   Reuses canonical top-level session initialization but does not dispatch switch-oriented extension events."
+  [ctx source-session-id {:keys [session-name worktree-path scheduled-origin-session-id scheduled-from-schedule-id scheduled-from-label]}]
+  (initialize-top-level-session! ctx source-session-id {:dispatch-event :session/create-top-level
+                                                        :session-name session-name
+                                                        :worktree-path worktree-path
+                                                        :scheduled-origin-session-id scheduled-origin-session-id
+                                                        :scheduled-from-schedule-id scheduled-from-schedule-id
+                                                        :scheduled-from-label scheduled-from-label}))
 
 (defn resume-session-in!
   "Load and resume a session from `session-path`.

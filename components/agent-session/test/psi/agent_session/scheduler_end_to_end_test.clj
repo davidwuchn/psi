@@ -20,6 +20,7 @@
           _                (dispatch/dispatch! ctx :scheduler/create
                                                {:session-id session-id
                                                 :schedule-id "sch-1"
+                                                :kind :message
                                                 :label "check-build"
                                                 :message "check build"
                                                 :fire-at (java.time.Instant/now)}

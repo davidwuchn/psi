@@ -2,8 +2,11 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.dispatch-handlers.prompt-lifecycle :as prompt-lifecycle]
    [psi.agent-session.dispatch-handlers.scheduler :as scheduler-handlers]
+   [psi.agent-session.dispatch-handlers.session-lifecycle :as session-lifecycle-handlers]
    [psi.agent-session.dispatch-handlers.statechart-actions :as statechart-actions]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.scheduler :as scheduler]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]))
@@ -28,6 +31,8 @@
   (dispatch/clear-handlers!)
   (try
     (scheduler-handlers/register! ctx)
+    (prompt-lifecycle/register! ctx)
+    (session-lifecycle-handlers/register! ctx)
     (statechart-actions/register! ctx)
     (f)
     (finally
@@ -136,6 +141,69 @@
            (is (= :pending (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-session" :status])))
            (is (= :create-session (get-in (first (:effects fired)) [:event-data :delivery-phase])))
            (is (= :scheduler/deliver (get-in (first (:effects fired)) [:event-type]))))))))
+
+(deftest scheduler-session-deliver-creates-top-level-session-without-switching-test
+  (let [[ctx session-id] (test-support/make-session-ctx {:persist? false})]
+    (with-registered-handlers
+      ctx
+      #(do
+         (let [create-r (invoke-handler ctx :scheduler/create {:session-id session-id
+                                                               :schedule-id "sch-session-deliver"
+                                                               :kind :session
+                                                               :message "run in fresh session"
+                                                               :label "later"
+                                                               :session-config {:session-name "later session"
+                                                                                :thinking-level :high
+                                                                                :preloaded-messages [{:role "user"
+                                                                                                      :content [{:type :text :text "seed"}]
+                                                                                                      :timestamp (instant "2026-04-21T18:29:00Z")}]}
+                                                               :created-at (instant "2026-04-21T18:30:00Z")
+                                                               :fire-at (instant "2026-04-21T18:31:00Z")
+                                                               :delay-ms 1000})]
+           (apply-root-state-update! ctx create-r))
+         (let [origin-before session-id
+               result        (invoke-handler ctx :scheduler/deliver {:session-id session-id :schedule-id "sch-session-deliver"})
+               _             (apply-root-state-update! ctx result)
+               schedule      (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-session-deliver"])
+               created-id    (:created-session-id schedule)
+               created-sd    (ss/get-session-data-in ctx created-id)]
+           (is (= origin-before session-id))
+           (is (string? created-id))
+           (is (not= session-id created-id))
+           (is (= :delivered (:status schedule)))
+           (is (= :prompt-submit (:delivery-phase schedule)))
+           (is (= session-id (:scheduled-origin-session-id created-sd)))
+           (is (= "sch-session-deliver" (:scheduled-from-schedule-id created-sd)))
+           (is (= "later" (:scheduled-from-label created-sd)))
+           (is (= "later session" (:session-name created-sd)))
+           (is (= :high (:thinking-level created-sd)))
+           (is (= session-id (:origin-session-id schedule)))
+           (is (= "seed" (get-in (first (persist/all-entries-in ctx created-id)) [:data :message :content 0 :text]))))))))
+
+(deftest scheduler-session-deliver-records-failed-status-on-prompt-submit-error-test
+  (let [[ctx session-id] (test-support/make-session-ctx {:persist? false})]
+    (with-registered-handlers
+      ctx
+      #(with-redefs [psi.agent-session.dispatch/dispatch!
+                     (let [real-dispatch psi.agent-session.dispatch/dispatch!]
+                       (fn [ctx* event-type event-data opts]
+                         (if (= :session/submit-synthetic-user-prompt event-type)
+                           (throw (ex-info "boom" {:created-session-id (:session-id event-data)
+                                                    :delivery-phase :prompt-submit}))
+                           (real-dispatch ctx* event-type event-data opts))))]
+         (let [create-r (invoke-handler ctx :scheduler/create {:session-id session-id
+                                                               :schedule-id "sch-session-fail"
+                                                               :kind :session
+                                                               :message "run in fresh session"
+                                                               :session-config {:session-name "later session"}
+                                                               :created-at (instant "2026-04-21T18:30:00Z")
+                                                               :fire-at (instant "2026-04-21T18:31:00Z")
+                                                               :delay-ms 1000})]
+           (apply-root-state-update! ctx create-r)
+           (let [result (invoke-handler ctx :scheduler/deliver {:session-id session-id :schedule-id "sch-session-fail"})]
+             (apply-root-state-update! ctx result)
+             (is (= :failed (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-session-fail" :status])))
+             (is (= :prompt-submit (get-in (ss/get-session-data-in ctx session-id) [:scheduler :schedules "sch-session-fail" :delivery-phase])))))))))
 
 (deftest scheduler-drain-and-statechart-idle-hooks-test
   (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:is-streaming true}})]

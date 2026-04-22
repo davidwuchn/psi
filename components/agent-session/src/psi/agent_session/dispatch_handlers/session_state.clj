@@ -88,7 +88,7 @@
         (assoc-in [:agent-session :sessions new-session-id :sc-session-id] sc-sid))))
 
 (defn initialize-new-session-state
-  [state current-sd {:keys [new-session-id worktree-path session-name spawn-mode session-file]}]
+  [state current-sd {:keys [new-session-id worktree-path session-name spawn-mode session-file scheduled-origin-session-id scheduled-from-schedule-id scheduled-from-label]}]
   (let [_source-sid (:session-id current-sd)
         baseline    (merge (session-data-ns/initial-session)
                            (select-keys current-sd [:model
@@ -119,6 +119,9 @@
                            :session-file session-file
                            :session-name session-name
                            :worktree-path worktree-path
+                           :scheduled-origin-session-id scheduled-origin-session-id
+                           :scheduled-from-schedule-id scheduled-from-schedule-id
+                           :scheduled-from-label scheduled-from-label
                            :parent-session-id nil
                            :parent-session-path nil
                            :spawn-mode (or spawn-mode :new-root)
