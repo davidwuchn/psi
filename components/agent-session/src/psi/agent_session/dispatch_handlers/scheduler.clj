@@ -101,6 +101,7 @@
    :scheduler/create
    (fn [ctx {:keys [session-id schedule-id kind label message session-config created-at fire-at]}]
      (let [created-at (or created-at (java.time.Instant/now))
+           kind       (or kind :message)
            {state' :state schedule :schedule}
            (scheduler/create-schedule
             (scheduler-state-in ctx session-id)
