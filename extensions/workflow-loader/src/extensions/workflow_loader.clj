@@ -400,8 +400,10 @@
   ;; Load and register all workflow definitions
   (let [{:keys [registered-count errors]} (reload-definitions!)]
     (when (seq errors)
-      (notify! (str "Workflow loader: " (count errors) " error(s) loading definitions") :warn))
-    (notify! (str "workflow-loader: " registered-count " workflows loaded") :info))
+      (notify! (str "Workflow loader: " (count errors) " error(s) loading definitions")
+               {:role :warn}))
+    (notify! (str "workflow-loader: " registered-count " workflows loaded")
+             {:role :info}))
 
   ;; Register delegate tool
   ((:register-tool api)

@@ -175,3 +175,40 @@
         (is (some #(and (= 'psi.workflow/remove-definition (:sym %))
                         (= "planner" (get-in % [:params :definition-id])))
                   @mutate-calls))))))
+
+(deftest init-registers-notifications-via-map-opts-test
+  (testing "init uses map-shaped notify opts so extension API notify contract is respected"
+    (let [notifications (atom [])
+          register-prompt-calls (atom [])
+          tools (atom {})
+          commands (atom {})
+          handlers (atom [])
+          api {:query (fn [_]
+                        {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                         :psi.agent-session/session-id "test-session-1"})
+               :mutate (fn [_ _] {})
+               :query-session (fn [& _] nil)
+               :mutate-session (fn [& _] nil)
+               :log (fn [_] nil)
+               :notify (fn [content & [opts]]
+                         (swap! notifications conj {:content content :opts opts}))
+               :register-tool (fn [tool-def] (swap! tools assoc (:name tool-def) tool-def))
+               :register-command (fn [name cmd-def] (swap! commands assoc name cmd-def))
+               :register-prompt-contribution (fn [& args] (swap! register-prompt-calls conj args))
+               :on (fn [event-name handler-fn] (swap! handlers conj [event-name handler-fn]))}]
+      (with-redefs [loader/load-workflow-definitions
+                    (fn [_]
+                      {:definitions {}
+                       :errors [{:error "boom"}]
+                       :warnings []})]
+        (wl/init api)
+        (is (= [{:content "Workflow loader: 1 error(s) loading definitions"
+                 :opts {:role :warn}}
+                {:content "workflow-loader: 0 workflows loaded"
+                 :opts {:role :info}}]
+               @notifications))
+        (is (= 1 (count @register-prompt-calls)))
+        (is (contains? @tools "delegate"))
+        (is (contains? @commands "delegate"))
+        (is (contains? @commands "delegate-reload"))
+        (is (= ["session_switch"] (mapv first @handlers)))))))
