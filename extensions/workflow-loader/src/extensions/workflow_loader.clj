@@ -21,7 +21,7 @@
 
 ;;; Extension state
 
-(def ^:private state (atom nil))
+(defonce ^:private state (atom nil))
 
 (def ^:private prompt-contribution-id "workflow-loader-workflows")
 

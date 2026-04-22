@@ -220,3 +220,37 @@
         (is (contains? @commands "delegate"))
         (is (contains? @commands "delegate-reload"))
         (is (= ["session_switch"] (mapv first @handlers)))))))
+
+(deftest reload-preserves-extension-state-atom-test
+  (testing "namespace reload preserves workflow-loader state so registered command handlers keep working"
+    (let [{:keys [api commands mutate-calls]} (make-loader-api
+                                               {'psi.workflow/register-definition (fn [_] {:psi.workflow/registered? true})
+                                                'psi.workflow/remove-definition (fn [_] {:psi.workflow/removed? true})})
+          load-call* (atom 0)]
+      (with-redefs [psi.agent-session.workflow-file-loader/load-workflow-definitions
+                    (fn [_]
+                      (case (swap! load-call* inc)
+                        1 {:definitions {"complexity-reduction-pr" {:definition-id "complexity-reduction-pr"
+                                                                     :name "complexity-reduction-pr"
+                                                                     :summary "Reduce complexity"
+                                                                     :step-order ["step-1"]
+                                                                     :steps {"step-1" {:label "complexity-reduction-pr"
+                                                                                        :capability-policy {:tools #{"read" "bash" "edit" "write" "work-on"}}}}}}
+                           :errors []
+                           :warnings []}
+                        2 {:definitions {"complexity-reduction-pr" {:definition-id "complexity-reduction-pr"
+                                                                     :name "complexity-reduction-pr"
+                                                                     :summary "Reduce complexity"
+                                                                     :step-order ["step-1"]
+                                                                     :steps {"step-1" {:label "complexity-reduction-pr"
+                                                                                        :capability-policy {:tools #{"read" "bash" "edit" "write" "work-on"}}}}}}
+                           :errors []
+                           :warnings []}))]
+        (wl/init api)
+        (is (= ["complexity-reduction-pr"]
+               (sort (keys (:loaded-definitions @@#'wl/state)))))
+        (require 'extensions.workflow-loader :reload)
+        ((:handler (get @commands "delegate-reload")) nil)
+        (is (= ["complexity-reduction-pr"]
+               (sort (keys (:loaded-definitions @@#'wl/state)))))
+        (is (= 2 (count (filter #(= 'psi.workflow/register-definition (:sym %)) @mutate-calls))))))))

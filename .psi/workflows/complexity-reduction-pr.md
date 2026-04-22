@@ -2,7 +2,7 @@
 name: complexity-reduction-pr
 description: Find the highest-complexity source unit over CC 25, refactor it in a worktree, and push a PR
 ---
-{:tools ["read" "bash" "edit" "write"]
+{:tools ["read" "bash" "edit" "write" "work-on"]
  :skills ["gordian" "rama-cc" "code-shaper" "git-workflow-guidelines"]
  :thinking-level :high}
 
@@ -17,7 +17,7 @@ Required procedure:
 
 1. Discover the target with a reduced-output Gordian complexity query.
    - Run:
-     `bb gordian complexity . --source-only --min cc=25 --top 1 --sort cc-risk --edn`
+     `bb gordian complexity --source-only --min cc=25 --top 1 --sort cc-risk --edn`
    - Use this result as the authoritative target-selection step.
    - Identify the single most complex qualifying unit from the report.
 
@@ -28,10 +28,10 @@ Required procedure:
    - Final response should clearly say that no source unit exceeded CC 25.
 
 3. Create an isolated worktree for the refactor.
-   - Use the `work-on` extension command, not manual `git worktree` shell commands.
-   - Derive a short description from the target unit, for example:
-     `/work-on reduce complexity of <target>`
-   - If the `work-on` command is unavailable in the current session, stop and report that limitation instead of improvising a different mechanism.
+   - Use the `work-on` tool, not manual `git worktree` shell commands.
+   - Call the tool with a short description derived from the target unit, for example:
+     `description: "reduce complexity of <target>"`
+   - If the `work-on` tool is unavailable in the current session, stop and report that limitation instead of improvising a different mechanism.
 
 4. Analyze before changing code.
    - Use the `code-shaper` skill to assess the target unit and nearby supporting code.
