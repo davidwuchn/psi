@@ -145,4 +145,18 @@
           parsed (read-string (:content result))]
       (is (true? (:is-error result)))
       (is (= :error (:psi-tool/overall-status parsed)))
+      (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
+
+  (testing "scheduler create rejects unsupported session-config keys"
+    (let [[ctx session-id] (create-session-context)
+          tool (tools/make-psi-tool (fn [_q] {}) {:ctx ctx :session-id session-id})
+          result ((:execute tool) {"action" "scheduler"
+                                   "op" "create"
+                                   "kind" "session"
+                                   "message" "run later"
+                                   "delay-ms" 1000
+                                   "session-config" "{:session-name \"later\" :workflow-run-id \"wr-1\"}"})
+          parsed (read-string (:content result))]
+      (is (true? (:is-error result)))
+      (is (= :error (:psi-tool/overall-status parsed)))
       (is (= :validate (get-in parsed [:psi-tool/error :phase]))))))

@@ -1,12 +1,13 @@
 (ns psi.agent-session.dispatch-handlers.scheduler
-  "Dispatch handlers for session-scoped scheduled prompt injection."
+  "Dispatch handlers for session-scoped delayed scheduler actions: same-session delayed prompts and delayed fresh top-level session creation."
   (:require
-   [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.scheduler :as scheduler]
+   [psi.agent-session.scheduler-runtime :as scheduler-runtime]
    [psi.agent-session.session-lifecycle :as session-lifecycle]
-   [psi.agent-session.session-state :as ss]))
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.tool-defs :as tool-defs]))
 
 (defn- register-core-handler! [event handler]
   (dispatch/register-handler! event handler))
@@ -37,18 +38,62 @@
    :schedule-id schedule-id
    :label label})
 
-(defn- session-config-summary
-  [session-config]
-  (when session-config
-    {:session-name (get session-config :session-name)
-     :model (get session-config :model)
-     :thinking-level (get session-config :thinking-level)
-     :skill-count (count (or (get session-config :skills) []))
-     :tool-count (count (or (get session-config :tool-defs) []))
-     :has-system-prompt? (boolean (get session-config :system-prompt))
-     :has-developer-prompt? (boolean (get session-config :developer-prompt))
-     :preloaded-message-count (count (or (get session-config :preloaded-messages) []))
-     :has-prompt-component-selection? (boolean (get session-config :prompt-component-selection))}))
+(defn- scheduled-session-config-dispatches
+  [ctx session-id {:keys [system-prompt thinking-level model cache-breakpoints developer-prompt developer-prompt-source skills tool-defs prompt-component-selection preloaded-messages]}]
+  (let [normalized-tool-defs (when (some? tool-defs)
+                               (tool-defs/normalize-tool-defs tool-defs))
+        existing-base-prompt (:base-system-prompt (ss/get-session-data-in ctx session-id))
+        base-events          (cond-> []
+                               (some? system-prompt)
+                               (conj {:event-type :session/set-system-prompt
+                                      :event-data {:session-id session-id
+                                                   :prompt system-prompt}})
+
+                               (some? thinking-level)
+                               (conj {:event-type :session/set-thinking-level
+                                      :event-data {:session-id session-id
+                                                   :level thinking-level
+                                                   :scope :session}})
+
+                               (some? model)
+                               (conj {:event-type :session/set-model
+                                      :event-data {:session-id session-id
+                                                   :model model
+                                                   :scope :session}})
+
+                               (some? cache-breakpoints)
+                               (conj {:event-type :session/set-cache-breakpoints
+                                      :event-data {:session-id session-id
+                                                   :breakpoints cache-breakpoints}})
+
+                               (or (some? developer-prompt)
+                                   (some? developer-prompt-source))
+                               (conj {:event-type :session/bootstrap-prompt-state
+                                      :event-data {:session-id session-id
+                                                   :system-prompt (or system-prompt existing-base-prompt "")
+                                                   :developer-prompt developer-prompt
+                                                   :developer-prompt-source developer-prompt-source}})
+
+                               (some? skills)
+                               (conj {:event-type :session/set-skills
+                                      :event-data {:session-id session-id
+                                                   :skills (vec skills)}})
+
+                               (some? normalized-tool-defs)
+                               (conj {:event-type :session/set-active-tools
+                                      :event-data {:session-id session-id
+                                                   :tool-maps normalized-tool-defs}})
+
+                               (contains? {:prompt-component-selection prompt-component-selection} :prompt-component-selection)
+                               (conj {:event-type :session/set-prompt-component-selection
+                                      :event-data {:session-id session-id
+                                                   :selection prompt-component-selection}}))
+        message-events       (mapv (fn [message]
+                                     {:event-type :session/append-extension-message
+                                      :event-data {:session-id session-id
+                                                   :message message}})
+                                   (vec (or preloaded-messages [])))]
+    (vec (concat base-events message-events))))
 
 (defn register!
   [_ctx]
@@ -60,14 +105,14 @@
            (scheduler/create-schedule
             (scheduler-state-in ctx session-id)
             {:schedule-id schedule-id
-             :kind (or kind :message)
+             :kind kind
              :label label
              :message message
              :created-at created-at
              :fire-at fire-at
              :origin-session-id session-id
              :session-config session-config
-             :session-config-summary (session-config-summary session-config)})]
+             :session-config-summary (scheduler-runtime/session-config-summary session-config)})]
        {:root-state-update (scheduler-update session-id (constantly state'))
         :effects [{:effect/type :scheduler/start-timer
                    :session-id session-id
@@ -134,39 +179,9 @@
                                    :scheduled-from-schedule-id schedule-id
                                    :scheduled-from-label (:label schedule)})
                  created-id      (:session-id created)
-                 _               (when-let [system-prompt (:system-prompt session-config)]
-                                   (dispatch/dispatch! ctx :session/set-system-prompt {:session-id created-id :prompt system-prompt} {:origin :core}))
-                 _               (when-let [thinking-level (:thinking-level session-config)]
-                                   (swap! (:state* ctx) update-in [:agent-session :sessions created-id :data]
-                                          assoc :thinking-level thinking-level))
-                 _               (when-let [model (:model session-config)]
-                                   (dispatch/dispatch! ctx :session/set-model {:session-id created-id :model model} {:origin :core}))
-                 _               (when-let [cache-breakpoints (:cache-breakpoints session-config)]
-                                   (dispatch/dispatch! ctx :session/set-cache-breakpoints {:session-id created-id :breakpoints cache-breakpoints} {:origin :core}))
-                 _               (when-let [developer-prompt (:developer-prompt session-config)]
-                                   (swap! (:state* ctx) update-in [:agent-session :sessions created-id :data]
-                                          assoc :developer-prompt developer-prompt))
-                 _               (when-let [developer-prompt-source (:developer-prompt-source session-config)]
-                                   (swap! (:state* ctx) update-in [:agent-session :sessions created-id :data]
-                                          assoc :developer-prompt-source developer-prompt-source))
-                 _               (when-let [skills (:skills session-config)]
-                                   (swap! (:state* ctx) update-in [:agent-session :sessions created-id :data]
-                                          assoc :skills (vec skills)))
-                 _               (when-let [tool-defs (:tool-defs session-config)]
-                                   (swap! (:state* ctx) update-in [:agent-session :sessions created-id :data]
-                                          assoc :tool-defs (vec tool-defs)))
-                 _               (when-let [prompt-component-selection (:prompt-component-selection session-config)]
-                                   (swap! (:state* ctx) update-in [:agent-session :sessions created-id :data]
-                                          assoc :prompt-component-selection prompt-component-selection))
-                 preloaded       (vec (or (:preloaded-messages session-config) []))
-                 _               (when (seq preloaded)
-                                   (swap! (:state* ctx)
-                                          (fn [state]
-                                            (-> state
-                                                (assoc-in [:agent-session :sessions created-id :persistence :journal]
-                                                          (vec (map persist/message-entry preloaded))))))
-                                   (when-let [agent-ctx (ss/agent-ctx-in ctx created-id)]
-                                     (agent/replace-messages-in! agent-ctx preloaded)))
+                 apply-dispatches (scheduled-session-config-dispatches ctx created-id session-config)
+                 _               (doseq [{:keys [event-type event-data]} apply-dispatches]
+                                   (dispatch/dispatch! ctx event-type event-data {:origin :core}))
                  prompt-result   (let [result (dispatch/dispatch! ctx :session/submit-synthetic-user-prompt
                                                                   {:session-id created-id
                                                                    :user-msg (scheduled-user-message schedule)}

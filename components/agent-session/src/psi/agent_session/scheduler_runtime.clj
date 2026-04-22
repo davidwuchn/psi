@@ -30,7 +30,7 @@
   ([ctx session-id statuses]
    (scheduler/list-schedules (scheduler-state-in ctx session-id) statuses)))
 
-(defn- session-config-summary
+(defn session-config-summary
   [session-config]
   (when session-config
     {:session-name (get session-config :session-name)

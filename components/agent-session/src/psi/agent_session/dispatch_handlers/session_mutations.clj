@@ -235,7 +235,21 @@
                                                                       :tool-defs tool-defs))
         :effects [{:effect/type :runtime/agent-set-tools
                    :tool-maps tool-defs}
-                  {:effect/type :runtime/refresh-system-prompt}]}))))
+                  {:effect/type :runtime/refresh-system-prompt}]})))
+
+  (register-core-handler!
+   :session/set-skills
+   (fn [_ctx {:keys [session-id skills]}]
+     {:root-state-update (session/session-update session-id #(assoc % :skills (vec (or skills []))))
+      :effects [{:effect/type :runtime/refresh-system-prompt}]
+      :return {:skills (vec (or skills []))}}))
+
+  (register-core-handler!
+   :session/set-prompt-component-selection
+   (fn [_ctx {:keys [session-id selection]}]
+     {:root-state-update (session/session-update session-id #(assoc % :prompt-component-selection selection))
+      :effects [{:effect/type :runtime/refresh-system-prompt}]
+      :return {:prompt-component-selection selection}})))
 
 (defn- register-session-state-handlers! []
   (register-core-handler!

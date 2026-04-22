@@ -69,3 +69,40 @@ Initialized on 2026-04-21 from user request to let the scheduler invoke fresh to
 - design/implementation alignment is strong: explicit `:kind`, compact config summaries, non-switching top-level session creation, canonical prompt submission, provenance persistence, and explicit `:failed` status all landed as designed
 - architectural fit is strong: scheduler remains delayed-intent state + timer/effect orchestration, while fresh-session delivery reuses canonical session lifecycle and prompt paths rather than inventing a parallel scheduler-only runtime path
 - task is ready to close; any remaining follow-on should be a separate shaping task rather than reopening this one
+
+2026-04-21 implementation review note:
+- verdict: approved overall; design fit and architectural fit are strong
+- strengths:
+  - explicit `:message` / `:session` kind model landed cleanly
+  - non-switching top-level session creation reuses canonical lifecycle initialization
+  - scheduled fresh-session delivery reuses canonical prompt submission via `:session/submit-synthetic-user-prompt`
+  - public scheduler projections converged on explicit origin/created session ids, delivery phase, error summary, and compact config summaries
+  - focused tests prove non-switching delivery, provenance, failure, and busy-origin bypass semantics
+- medium issues found in review:
+  - `:scheduler/deliver` mixed orchestration with direct `swap!`-based session shaping, which is weaker than the project preference for dispatch-owned state mutation paths
+  - explicit `:kind` was enforced at the psi-tool surface but still defaulted internally in scheduler creation paths
+- low-level shaping issues found in review:
+  - duplicated `session-config-summary` shaping in multiple modules risks drift
+  - scheduler docstrings/comments still described prompt injection only
+  - focused tests were strong, but explicit unsupported-key and internal explicit-kind proofs were worth adding
+- follow-up action for this task:
+  - keep the task open long enough to land the shaping fixes rather than spawning a separate follow-on task, since the issues are local and small enough to converge immediately
+
+2026-04-21 review-follow-up implementation:
+- centralized `session-config-summary` shaping in `scheduler_runtime.clj` and made scheduler handler projections use that shared helper
+- tightened scheduler model invariants so `create-schedule` and `validate-schedule-record!` require explicit `:kind`; internal handler creation no longer defaults missing kind to `:message`
+- removed scheduler-local direct session shaping in the fresh-session delivery path:
+  - scheduled session config is now applied through canonical dispatch handlers (`:session/set-system-prompt`, `:session/set-thinking-level`, `:session/set-model`, `:session/set-cache-breakpoints`, `:session/bootstrap-prompt-state`, `:session/set-active-tools`, plus newly added `:session/set-skills` and `:session/set-prompt-component-selection`)
+  - preloaded scheduled messages are now appended through canonical message/journal dispatch rather than direct journal/runtime mutation
+- refreshed stale scheduler docstrings so the local source now describes both delayed prompt and delayed fresh-session scheduling
+- expanded focused proof to cover:
+  - unsupported scheduler `session-config` keys rejected at the psi-tool surface
+  - explicit-kind enforcement in the pure scheduler model
+  - canonical scheduled config application for developer prompt, skills, tool defs, prompt-component-selection, and preloaded messages
+- aligned test support with production callback contracts by adding `:refresh-system-prompt-fn` to the minimal test context, since canonical config application now legitimately exercises prompt refresh effects
+- focused verification after the shaping changes is green:
+  - `psi.agent-session.scheduler-test`
+  - `psi.agent-session.scheduler-handlers-test`
+  - `psi.agent-session.psi-tool-scheduler-test`
+  - `psi.agent-session.prompt-lifecycle-test`
+  - result: 29 tests, 241 assertions, 0 failures

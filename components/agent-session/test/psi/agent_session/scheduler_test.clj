@@ -16,6 +16,7 @@
         (scheduler/create-schedule
          (scheduler/empty-state)
          {:schedule-id "sch-1"
+          :kind :message
           :label "check-build"
           :message "check build status"
           :created-at (instant "2026-04-21T18:00:00Z")
@@ -26,6 +27,17 @@
     (is (= 1 (scheduler/schedule-count state)))
     (is (= 1 (scheduler/pending-count state)))
     (is (= ["sch-1"] (mapv :schedule-id (scheduler/list-schedules state [:pending]))))))
+
+(deftest create-schedule-requires-explicit-kind-test
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                        #"kind is invalid"
+                        (scheduler/create-schedule
+                         (scheduler/empty-state)
+                         {:schedule-id "sch-missing-kind"
+                          :message "wake"
+                          :created-at (instant "2026-04-21T18:00:00Z")
+                          :fire-at (instant "2026-04-21T18:05:00Z")
+                          :session-id "sid-1"}))))
 
 (deftest validate-delay-ms-test
   (testing "accepts inclusive bounds"
@@ -47,6 +59,7 @@
         (scheduler/create-schedule
          nil
          {:schedule-id "sch-1"
+          :kind :message
           :message "wake up"
           :created-at (instant "2026-04-21T18:00:00Z")
           :fire-at (instant "2026-04-21T18:05:00Z")
@@ -71,6 +84,7 @@
         (scheduler/create-schedule
          nil
          {:schedule-id "sch-1"
+          :kind :message
           :message "wake up"
           :created-at (instant "2026-04-21T18:00:00Z")
           :fire-at (instant "2026-04-21T18:05:00Z")
@@ -90,11 +104,13 @@
 
 (deftest drain-one-test
   (let [{state0 :state} (scheduler/create-schedule nil {:schedule-id "sch-a"
+                                                        :kind :message
                                                         :message "a"
                                                         :created-at (instant "2026-04-21T18:00:00Z")
                                                         :fire-at (instant "2026-04-21T18:05:00Z")
                                                         :session-id "sid-1"})
         {state1 :state} (scheduler/create-schedule state0 {:schedule-id "sch-b"
+                                                           :kind :message
                                                            :message "b"
                                                            :created-at (instant "2026-04-21T18:00:01Z")
                                                            :fire-at (instant "2026-04-21T18:05:01Z")

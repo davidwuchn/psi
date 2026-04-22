@@ -1,5 +1,5 @@
 (ns psi.agent-session.scheduler
-  "Pure session-scoped scheduler state model for one-shot delayed prompt injection."
+  "Pure session-scoped scheduler state model for one-shot delayed work: same-session prompt injection and delayed fresh top-level session creation."
   (:require
    [clojure.string :as str]))
 
@@ -103,7 +103,7 @@
     (throw (ex-info "fire-at must be an Instant" {:schedule schedule})))
   (when-not (contains? schedule-statuses status)
     (throw (ex-info "status is invalid" {:schedule schedule :status status})))
-  (when-not (contains? schedule-kinds (or kind :message))
+  (when-not (contains? schedule-kinds kind)
     (throw (ex-info "kind is invalid" {:schedule schedule :kind kind})))
   (let [sid (or origin-session-id session-id)]
     (when (str/blank? (str sid))
@@ -116,8 +116,7 @@
 
 (defn create-schedule
   [scheduler-state {:keys [schedule-id kind label message created-at fire-at origin-session-id session-id created-session-id delivery-phase error-summary session-config session-config-summary]
-                    :or {kind :message
-                         label nil}}]
+                    :or {label nil}}]
   (let [state             (or scheduler-state (empty-state))
         origin-session-id (or origin-session-id session-id)
         _                 (validate-schedule-record!

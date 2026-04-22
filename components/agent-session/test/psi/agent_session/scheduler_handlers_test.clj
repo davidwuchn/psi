@@ -2,9 +2,11 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.dispatch-handlers.prompt-handlers :as prompt-handlers]
    [psi.agent-session.dispatch-handlers.prompt-lifecycle :as prompt-lifecycle]
    [psi.agent-session.dispatch-handlers.scheduler :as scheduler-handlers]
    [psi.agent-session.dispatch-handlers.session-lifecycle :as session-lifecycle-handlers]
+   [psi.agent-session.dispatch-handlers.session-mutations :as session-mutations]
    [psi.agent-session.dispatch-handlers.statechart-actions :as statechart-actions]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.scheduler :as scheduler]
@@ -31,8 +33,10 @@
   (dispatch/clear-handlers!)
   (try
     (scheduler-handlers/register! ctx)
+    (prompt-handlers/register! ctx)
     (prompt-lifecycle/register! ctx)
     (session-lifecycle-handlers/register! ctx)
+    (session-mutations/register! ctx)
     (statechart-actions/register! ctx)
     (f)
     (finally
@@ -154,6 +158,11 @@
                                                                :label "later"
                                                                :session-config {:session-name "later session"
                                                                                 :thinking-level :high
+                                                                                :developer-prompt "dev layer"
+                                                                                :developer-prompt-source :explicit
+                                                                                :skills [{:name "test-skill" :description "d"}]
+                                                                                :tool-defs [{:name "read" :description "Read" :parameters {:type "object"}}]
+                                                                                :prompt-component-selection {:tool-names ["read"]}
                                                                                 :preloaded-messages [{:role "user"
                                                                                                       :content [{:type :text :text "seed"}]
                                                                                                       :timestamp (instant "2026-04-21T18:29:00Z")}]}
@@ -177,8 +186,15 @@
            (is (= "later" (:scheduled-from-label created-sd)))
            (is (= "later session" (:session-name created-sd)))
            (is (= :high (:thinking-level created-sd)))
+           (is (= "dev layer" (:developer-prompt created-sd)))
+           (is (= :explicit (:developer-prompt-source created-sd)))
+           (is (= ["test-skill"] (mapv :name (:skills created-sd))))
+           (is (= ["read"] (mapv :name (:tool-defs created-sd))))
+           (is (= {:tool-names ["read"]} (:prompt-component-selection created-sd)))
            (is (= session-id (:origin-session-id schedule)))
-           (is (= "seed" (get-in (first (persist/all-entries-in ctx created-id)) [:data :message :content 0 :text]))))))))
+           (is (some (fn [entry]
+                       (= "seed" (get-in entry [:data :message :content 0 :text])))
+                     (persist/all-entries-in ctx created-id))))))))
 
 (deftest scheduler-session-deliver-records-failed-status-on-prompt-submit-error-test
   (let [[ctx session-id] (test-support/make-session-ctx {:persist? false})]

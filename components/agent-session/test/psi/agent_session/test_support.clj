@@ -134,6 +134,9 @@
                        :build-record-response-fn     #'prompt-recording/build-record-response
                        :continue-prompt-chain-fn     (fn [_ctx _session-id _execution-result _progress-queue]
                                                        {:continued? true})
+                       :refresh-system-prompt-fn     (fn
+                                                       ([_ctx] (throw (ex-info "refresh-system-prompt-fn requires explicit session-id" {:callback :refresh-system-prompt-fn})))
+                                                       ([ctx session-id] (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})))
                        :execute-prepared-request-fn  (fn [_ai-ctx _ctx sid prepared _progress-queue]
                                                        {:execution-result/turn-id (:prepared-request/id prepared)
                                                         :execution-result/session-id sid
