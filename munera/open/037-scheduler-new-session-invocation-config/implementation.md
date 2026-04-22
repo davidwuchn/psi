@@ -33,3 +33,27 @@ Initialized on 2026-04-21 from user request to let the scheduler invoke fresh to
 - implemented failure recording through canonical scheduler `:failed` status with delivery-phase and error-summary, including partial-failure handling when prompt submission fails after session creation
 - kept the origin active session unchanged; focused tests prove non-switching behavior
 - focused scheduler tests now pass for both the modeling/projection slice and the non-switching session creation/delivery slice
+
+2026-04-21 verification expansion:
+- expanded proof beyond the initial focused scheduler slice
+- verified scheduler-focused suites:
+  - scheduler-end-to-end
+  - scheduler-context-shutdown
+  - scheduler-cancel-job
+  - scheduler-lifecycle
+  - scheduler-timer-seam
+  - scheduler-effects
+  - scheduler-resolvers
+  - scheduler-background-jobs
+  - scheduler-tools
+  - psi-tool-scheduler
+  - scheduler-handlers
+  - result: 18 tests, 262 assertions, 0 failures
+- verified adjacent lifecycle/prompt suites still pass:
+  - session-lifecycle-test
+  - prompt-lifecycle-test
+  - result: 22 tests, 167 assertions, 0 failures
+- verified auto-session-name extension suites still pass after the new scheduler/session behavior:
+  - extensions.auto-session-name-runtime-test
+  - extensions.auto-session-name-test
+  - result: 14 tests, 35 assertions, 0 failures
