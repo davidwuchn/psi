@@ -63,3 +63,9 @@ Initialized on 2026-04-21 from user request to let the scheduler invoke fresh to
 - updated `README.md` built-in tool section to mention scheduler support and point to the new scheduler doc
 - updated psi-tool tool description text to describe scheduler as delayed one-shot work rather than prompt injection only
 - re-ran focused scheduler proof after doc/description alignment (`8 tests, 141 assertions, 0 failures`)
+
+2026-04-21 close-out:
+- review outcome: approved
+- design/implementation alignment is strong: explicit `:kind`, compact config summaries, non-switching top-level session creation, canonical prompt submission, provenance persistence, and explicit `:failed` status all landed as designed
+- architectural fit is strong: scheduler remains delayed-intent state + timer/effect orchestration, while fresh-session delivery reuses canonical session lifecycle and prompt paths rather than inventing a parallel scheduler-only runtime path
+- task is ready to close; any remaining follow-on should be a separate shaping task rather than reopening this one

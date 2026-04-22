@@ -2,9 +2,6 @@
 
 Open tasks in suggested execution order:
 
-1. `munera/open/033-psi-tool-scheduler-surface/`
-2. `munera/open/037-scheduler-new-session-invocation-config/`
-
 Backlog:
 
 `munera/open/021-emacs-session-tree-buffer-with-magit-sections/`
