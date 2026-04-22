@@ -27,14 +27,24 @@
                 :description "desc"
                 :parameters "{:type \"object\" :required [\"p\"]}"}
           normalized (tool-defs/normalize-tool-def tool)]
-      (is (= {:type "object" :required ["p"]}
+      (is (= {:type "object" :properties {} :required ["p"]}
              (:parameters normalized)))))
 
   (testing "invalid parameter strings degrade to empty object schema"
     (let [tool {:name "x"
                 :parameters "not-edn"}
           normalized (tool-defs/normalize-tool-def tool)]
-      (is (= {:type "object"}
+      (is (= {:type "object"
+              :properties {}}
+             (:parameters normalized)))))
+
+  (testing "object schemas always include properties for provider compatibility"
+    (let [normalized (tool-defs/normalize-tool-def {:name "x"
+                                                    :parameters {:type "object"
+                                                                 :required ["p"]}})]
+      (is (= {:type "object"
+              :properties {}
+              :required ["p"]}
              (:parameters normalized))))))
 
 (deftest agent-core-tool-projection-test
@@ -59,5 +69,6 @@
     (is (= {:name "x"
             :description "desc"
             :parameters {:type "object"
+                         :properties {}
                          :required ["p"]}}
            projected))))

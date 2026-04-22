@@ -6,17 +6,26 @@
   (:require
    [clojure.edn :as edn]))
 
+(defn- empty-object-schema []
+  {:type "object"
+   :properties {}})
+
 (defn- parse-parameters [parameters]
   (cond
-    (map? parameters) parameters
+    (map? parameters)
+    (merge (empty-object-schema) parameters)
+
     (string? parameters)
     (try
       (let [v (edn/read-string parameters)]
-        (if (map? v) v {:type "object"}))
+        (if (map? v)
+          (merge (empty-object-schema) v)
+          (empty-object-schema)))
       (catch Exception _
-        {:type "object"}))
-    (nil? parameters) {:type "object"}
-    :else {:type "object"}))
+        (empty-object-schema)))
+
+    (nil? parameters) (empty-object-schema)
+    :else (empty-object-schema)))
 
 (defn normalize-tool-def
   "Normalize a builtin/extension tool map into the canonical tool-def shape.

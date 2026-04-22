@@ -115,8 +115,8 @@
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")
           config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1")]
       (is (= "You are a planner." (:system-prompt config)))
-      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
-              {:name "bash" :label "bash" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}]
+      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "bash" :label "bash" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}]
              (:tool-defs config)))
       (is (= :medium (:thinking-level config)))
       (is (= [{:name "clojure-coding-standards"
@@ -152,8 +152,8 @@
       (is (= "You are a planner.\n\nCoordinate a plan-build cycle." (:system-prompt config1)))
       (is (= "You are a planner." (:base-system-prompt config1)))
       (is (= "Coordinate a plan-build cycle." (:framing-prompt config1)))
-      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
-              {:name "bash" :label "bash" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}]
+      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "bash" :label "bash" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}]
              (:tool-defs config1)))
       (is (= :medium (:thinking-level config1)))
       (is (= [{:name "clojure-coding-standards"
@@ -168,10 +168,10 @@
       (is (= "You are a builder.\n\nCoordinate a plan-build cycle." (:system-prompt config2)))
       (is (= "You are a builder." (:base-system-prompt config2)))
       (is (= "Coordinate a plan-build cycle." (:framing-prompt config2)))
-      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
-              {:name "bash" :label "bash" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
-              {:name "edit" :label "edit" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}
-              {:name "write" :label "write" :description "" :parameters {:type "object"} :lambda-description nil :source nil :ext-path nil :enabled? true}]
+      (is (= [{:name "read" :label "read" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "bash" :label "bash" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "edit" :label "edit" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}
+              {:name "write" :label "write" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}]
              (:tool-defs config2)))
       (is (= :off (:thinking-level config2)))
       (is (nil? (:skills config2))))))
@@ -353,8 +353,8 @@
                  :disable-model-invocation false}
           planner-with-skill (assoc single-step-definition-with-meta :workflow-file-meta
                                     {:system-prompt "You are a planner."
-                                     :tools [{:name "read" :description "Read" :parameters {:type "object"}}
-                                             {:name "bash" :description "Bash" :parameters {:type "object"}}]
+                                     :tools [{:name "read" :description "Read" :parameters {:type "object" :properties {}}}
+                                             {:name "bash" :description "Bash" :parameters {:type "object" :properties {}}}]
                                      :skills ["clojure-coding-standards"]
                                      :thinking-level :medium})
           _ (swap! (:state* ctx)
@@ -365,8 +365,8 @@
                                                                    :workflow-input {:input "plan it"}})
                            s (assoc-in s [:agent-session :sessions session-id :data :skills] [skill])
                            s (assoc-in s [:agent-session :sessions session-id :data :tool-defs]
-                                       [{:name "read" :description "Read" :parameters {:type "object"}}
-                                        {:name "bash" :description "Bash" :parameters {:type "object"}}])]
+                                       [{:name "read" :description "Read" :parameters {:type "object" :properties {}}}
+                                        {:name "bash" :description "Bash" :parameters {:type "object" :properties {}}}])]
                        s)))
           child-create-opts* (atom nil)]
       (with-redefs [psi.agent-session.workflow-attempts/create-step-attempt-session!
@@ -385,8 +385,8 @@
 (deftest execute-current-step-resolves-workflow-tool-names-before-child-session-test
   (testing "delegated workflow tool names are resolved to canonical tool defs before child session creation"
     (let [[ctx session-id] (create-session-context {:persist? false})
-          tool-defs [{:name "read" :description "Read" :parameters {:type "object"}}
-                     {:name "bash" :description "Bash" :parameters {:type "object"}}]
+          tool-defs [{:name "read" :description "Read" :parameters {:type "object" :properties {}}}
+                     {:name "bash" :description "Bash" :parameters {:type "object" :properties {}}}]
           planner-with-tools (assoc single-step-definition-with-meta :workflow-file-meta
                                     {:system-prompt "You are a planner."
                                      :tools ["read" "bash"]
@@ -412,8 +412,8 @@
                                                                                  {:content "planner output"})]
         (let [result (workflow-execution/execute-current-step! ctx session-id "run-tool-1")]
           (is (= "step-1" (:step-id result)))
-          (is (= [{:name "read" :description "Read" :parameters {:type "object"}}
-                  {:name "bash" :description "Bash" :parameters {:type "object"}}]
+          (is (= [{:name "read" :description "Read" :parameters {:type "object" :properties {}}}
+                  {:name "bash" :description "Bash" :parameters {:type "object" :properties {}}}]
                  (mapv #(select-keys % [:name :description :parameters])
                        (:tool-defs @child-create-opts*)))))))))
 
@@ -438,7 +438,7 @@
                                                                    :run-id "run-ext-1"
                                                                    :workflow-input {:input "plan it"}})
                            s (assoc-in s [:agent-session :sessions session-id :data :tool-defs]
-                                       [{:name "read" :description "Read" :parameters {:type "object"}}])
+                                       [{:name "read" :description "Read" :parameters {:type "object" :properties {}}}])
                            s (assoc-in s [:agent-session :sessions session-id :data :prompt-contributions]
                                        [contribution])]
                        s)))]
