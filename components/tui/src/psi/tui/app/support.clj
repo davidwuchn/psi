@@ -1,15 +1,18 @@
-(in-ns 'psi.tui.app)
-;; extracted: support
+(ns psi.tui.app.support
+  (:require
+   [charm.core :as charm]
+   [charm.message :as msg]
+   [clojure.string :as str])
+  (:import
+   [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
-;; ── Custom message predicates ───────────────────────────────
+(def agent-result? (fn [m] (= :agent-result (:type m))))
+(def agent-error?  (fn [m] (= :agent-error  (:type m))))
+(def agent-poll?   (fn [m] (= :agent-poll   (:type m))))
+(def agent-event?  (fn [m] (= :agent-event  (:type m))))
+(def external-message? (fn [m] (= :external-message (:type m))))
 
-(defn agent-result? [m] (= :agent-result (:type m)))
-(defn agent-error?  [m] (= :agent-error  (:type m)))
-(defn agent-poll?   [m] (= :agent-poll   (:type m)))
-(defn agent-event?  [m] (= :agent-event  (:type m)))
-(defn external-message? [m] (= :external-message (:type m)))
-
-(defn- key-token->string
+(defn key-token->string
   "Normalize charm key token to a string when possible."
   [k]
   (cond
@@ -18,7 +21,7 @@
     (char? k)    (str k)
     :else        nil))
 
-(defn- printable-key
+(defn printable-key
   "Return a single printable character string for key token, else nil."
   [k]
   (let [s (key-token->string k)]
@@ -27,34 +30,32 @@
                (>= (int (.charAt ^String s 0)) 32))
       s)))
 
-;; ── Dialog state helpers ────────────────────────────────────
-
-(defn- has-active-dialog? [state]
+(defn has-active-dialog? [state]
   (boolean (get-in state [:ui-snapshot :active-dialog])))
 
-(defn- clear-dialog-local-state
+(defn clear-dialog-local-state
   [state]
   (dissoc state :dialog-selected-index :dialog-input-text))
 
-(defn- dispatch-ui-event!
+(defn dispatch-ui-event!
   [state event data]
   (when-let [f (:ui-dispatch-fn state)]
     (f event data)))
 
-(defn- resolve-dialog!
+(defn resolve-dialog!
   [state dialog result]
   (dispatch-ui-event! state :session/ui-resolve-dialog {:dialog-id (:id dialog)
                                                         :result result}))
 
-(defn- cancel-dialog!
+(defn cancel-dialog!
   [state]
   (dispatch-ui-event! state :session/ui-cancel-dialog {}))
 
-(defn- dialog-select-index
+(defn dialog-select-index
   [state]
   (or (:dialog-selected-index state) 0))
 
-(defn- move-dialog-selection
+(defn move-dialog-selection
   [state dialog delta]
   (let [idx      (dialog-select-index state)
         last-idx (max 0 (dec (count (:options dialog))))]
@@ -62,14 +63,14 @@
             (-> idx (+ delta) (max 0) (min last-idx)))
      nil]))
 
-(defn- backspace-dialog-input
+(defn backspace-dialog-input
   [state]
   [(assoc state :dialog-input-text
           (let [s (or (:dialog-input-text state) "")]
             (if (pos? (count s)) (subs s 0 (dec (count s))) s)))
    nil])
 
-(defn- append-dialog-input
+(defn append-dialog-input
   [state m]
   (let [ch (printable-key (:key m))]
     [(if ch
@@ -77,7 +78,7 @@
        state)
      nil]))
 
-(defn- submit-dialog
+(defn submit-dialog
   [state dialog]
   (case (:kind dialog)
     :confirm
@@ -100,7 +101,7 @@
 
     [state nil]))
 
-(defn- handle-dialog-key
+(defn handle-dialog-key
   [state m]
   (when-let [dialog (get-in state [:ui-snapshot :active-dialog])]
     (cond
@@ -126,20 +127,8 @@
 
       :else [state nil])))
 
-;; ── Commands ────────────────────────────────────────────────
-
 (defn poll-cmd
-  "Command that polls the shared event queue with a short timeout.
-   Returns :agent-result, :agent-error, :agent-event, :external-message,
-   :agent-aborted, or :agent-poll.
-
-   Queue payloads accepted:
-   - {:kind :done  :result ...}
-   - {:kind :error :message ...}
-   - {:kind :aborted :message ... :queued-text ...}
-   - {:type :agent-event ...}       ; progress events
-   - {:type :external-message ...}  ; async extension transcript message
-   "
+  "Command that polls the shared event queue with a short timeout."
   ([^LinkedBlockingQueue queue]
    (poll-cmd queue 120))
   ([^LinkedBlockingQueue queue timeout-ms]
@@ -168,9 +157,7 @@
           {:type :agent-poll})
         {:type :agent-poll})))))
 
-;; ── Init ────────────────────────────────────────────────────
-
-(defn- key-debug-enabled?
+(defn key-debug-enabled?
   []
   (contains? #{"1" "true" "yes" "on"}
              (some-> (System/getenv "PSI_TUI_DEBUG_KEYS") str/lower-case)))
@@ -178,7 +165,7 @@
 (def ^:private command-refresh-query
   [:psi.extension/command-names])
 
-(defn- refresh-extension-command-names
+(defn refresh-extension-command-names
   [state]
   (if-let [query-fn (:query-fn state)]
     (try
@@ -191,12 +178,12 @@
         state))
     state))
 
-(defn make-init
-  ([model-name] (make-init model-name nil nil nil {}))
-  ([model-name query-fn] (make-init model-name query-fn nil nil {}))
-  ([model-name query-fn ui-read-fn] (make-init model-name query-fn ui-read-fn nil {}))
-  ([model-name query-fn ui-read-fn ui-dispatch-fn] (make-init model-name query-fn ui-read-fn ui-dispatch-fn {}))
-  ([model-name query-fn ui-read-fn ui-dispatch-fn opts]
+(defn build-init
+  ([model-name initial-prompt-input-state-fn] (build-init model-name nil nil nil {} initial-prompt-input-state-fn))
+  ([model-name query-fn initial-prompt-input-state-fn] (build-init model-name query-fn nil nil {} initial-prompt-input-state-fn))
+  ([model-name query-fn ui-read-fn initial-prompt-input-state-fn] (build-init model-name query-fn ui-read-fn nil {} initial-prompt-input-state-fn))
+  ([model-name query-fn ui-read-fn ui-dispatch-fn initial-prompt-input-state-fn] (build-init model-name query-fn ui-read-fn ui-dispatch-fn {} initial-prompt-input-state-fn))
+  ([model-name query-fn ui-read-fn ui-dispatch-fn opts initial-prompt-input-state-fn]
    (fn []
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
@@ -207,55 +194,53 @@
                                      :psi.extension/command-names]))
            queue        (or (:event-queue opts) (LinkedBlockingQueue.))
            ui-snap      (when ui-read-fn (ui-read-fn))]
-       [{:messages              (vec (or (:initial-messages opts) []))
-         :phase                 :idle
-         :error                 nil
-         :input                 (charm/text-input :prompt "刀: "
-                                                  :placeholder "Type a message…"
-                                                  :focused true)
-         :spinner-frame         0
-         :model-name            model-name
-         :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
-         :skills                (or (:psi.agent-session/skills introspected) [])
-         :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
+       [{:messages                (vec (or (:initial-messages opts) []))
+         :phase                   :idle
+         :error                   nil
+         :input                   (charm/text-input :prompt "刀: "
+                                                    :placeholder "Type a message…"
+                                                    :focused true)
+         :spinner-frame           0
+         :model-name              model-name
+         :prompt-templates        (or (:psi.agent-session/prompt-templates introspected) [])
+         :skills                  (or (:psi.agent-session/skills introspected) [])
+         :extension-summary       (or (:psi.agent-session/extension-summary introspected) {})
          :extension-command-names (vec (:psi.extension/command-names introspected))
-         :query-fn              query-fn
-         :ui-read-fn            ui-read-fn
-         :ui-dispatch-fn        ui-dispatch-fn
-         :ui-snapshot           ui-snap
-         :dialog-selected-index nil
-         :dialog-input-text     nil
-         :dispatch-fn           (:dispatch-fn opts)
-         :on-interrupt-fn!      (:on-interrupt-fn! opts)
-         :on-queue-input-fn!    (:on-queue-input-fn! opts)
-         :double-press-window-ms (or (:double-press-window-ms opts) 500)
-         :double-escape-action  (or (:double-escape-action opts) :none)
-         :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
-         :focus-session-id      (or (:focus-session-id opts)
-                                    (:psi.agent-session/session-id introspected))
-         :current-session-file  (or (:current-session-file opts)
-                                    (:psi.agent-session/session-file introspected))
-         :resume-fn!            (:resume-fn! opts)
-         :switch-session-fn!    (:switch-session-fn! opts)
-         :fork-session-fn!      (:fork-session-fn! opts)
-         :session-selector-fn   (:session-selector-fn opts)
-         :session-selector      nil   ;; non-nil when /resume or /tree picker is active
-         :session-selector-mode nil   ;; :resume | :tree
-         :prompt-input-state    (initial-prompt-input-state)
-         :queue                 queue
-         :width                 80
-         :height                24
-           ;; Live turn progress
-         :stream-text           nil
-         :stream-thinking       nil
-         :tool-calls            (or (:initial-tool-calls opts) {})
-         :tool-order            (vec (or (:initial-tool-order opts) []))
-         :active-turn-order     []
-         :active-turn-items     {}
-         :active-turn-events    []
-         :active-turn-next-seq  0
-         :tool-ui-id-by-tool-id {}
+         :query-fn                query-fn
+         :ui-read-fn              ui-read-fn
+         :ui-dispatch-fn          ui-dispatch-fn
+         :ui-snapshot             ui-snap
+         :dialog-selected-index   nil
+         :dialog-input-text       nil
+         :dispatch-fn             (:dispatch-fn opts)
+         :on-interrupt-fn!        (:on-interrupt-fn! opts)
+         :on-queue-input-fn!      (:on-queue-input-fn! opts)
+         :double-press-window-ms  (or (:double-press-window-ms opts) 500)
+         :double-escape-action    (or (:double-escape-action opts) :none)
+         :cwd                     (or (:cwd opts) (System/getProperty "user.dir"))
+         :focus-session-id        (or (:focus-session-id opts)
+                                      (:psi.agent-session/session-id introspected))
+         :current-session-file    (or (:current-session-file opts)
+                                      (:psi.agent-session/session-file introspected))
+         :resume-fn!              (:resume-fn! opts)
+         :switch-session-fn!      (:switch-session-fn! opts)
+         :fork-session-fn!        (:fork-session-fn! opts)
+         :session-selector-fn     (:session-selector-fn opts)
+         :session-selector        nil
+         :session-selector-mode   nil
+         :prompt-input-state      (initial-prompt-input-state-fn)
+         :queue                   queue
+         :width                   80
+         :height                  24
+         :stream-text             nil
+         :stream-thinking         nil
+         :tool-calls              (or (:initial-tool-calls opts) {})
+         :tool-order              (vec (or (:initial-tool-order opts) []))
+         :active-turn-order       []
+         :active-turn-items       {}
+         :active-turn-events      []
+         :active-turn-next-seq    0
+         :tool-ui-id-by-tool-id   {}
          :tool-ui-id-by-content-index {}
-         :tools-expanded?       (boolean (:tools-expanded? ui-snap))}
+         :tools-expanded?         (boolean (:tools-expanded? ui-snap))}
         (poll-cmd queue)]))))
-

@@ -2,17 +2,11 @@
   "Tool- and bootstrap-focused portions split from query_graph_test."
   (:require
    [clojure.test :refer [deftest testing is]]
-   [com.fulcrologic.statecharts.chart :as chart]
-   [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-core.core :as agent-core]
-   [psi.agent-session.bootstrap :as bootstrap]
    [psi.agent-session.core :as session]
-   [psi.agent-session.dispatch :as dispatch]
-   [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.statechart :as sc]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-plan :as tool-plan]
    [psi.query.core :as query])
@@ -63,9 +57,9 @@
                               :is-error false})]
       (ext/register-extension-in! reg "/ext/a")
       (ext/register-tool-in! reg "/ext/a" {:name "ext-tool"
-                                            :description "extension tool"
-                                            :parameters {:type "object"}
-                                            :execute exec-fn})
+                                           :description "extension tool"
+                                           :parameters {:type "object"}
+                                           :execute exec-fn})
       ;; Simulate the agent-core runtime projection stripping :execute while the
       ;; canonical extension registry still retains the executable fn.
       (agent-core/set-tools-in!
@@ -228,5 +222,4 @@
             r3 (mutate 'psi.extension/unregister-prompt-contribution {:ext-path "/ext/a" :id "c1"})]
         (is (true? (:psi.extension.prompt-contribution/registered? r1)))
         (is (true? (:psi.extension.prompt-contribution/updated? r2)))
-        (is (true? (:psi.extension.prompt-contribution/removed? r3))))))
-)
+        (is (true? (:psi.extension.prompt-contribution/removed? r3)))))))

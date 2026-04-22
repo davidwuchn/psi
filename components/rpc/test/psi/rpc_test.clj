@@ -1,19 +1,10 @@
 (ns psi.rpc-test
   (:require
-   [cheshire.core :as json]
-   [clj-http.client :as http]
-   [clojure.edn :as edn]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [psi.ai.models :as ai-models]
-   [psi.agent-core.core :as agent]
-   [psi.agent-session.background-jobs :as bg-jobs]
-   [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.state-accessors :as sa]
-   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.mutations :as mutations]
    [psi.rpc :as rpc]
@@ -21,10 +12,6 @@
    [psi.rpc.events :as rpc.events]
    [psi.agent-session.runtime :as runtime]
    [psi.query.core :as query]
-   [psi.agent-session.tools :as tools]
-   [psi.agent-session.prompt-runtime :as prompt-runtime]
-   [psi.memory.core :as memory]
-   [psi.memory.store :as store]
    [psi.rpc-test-support :as support]))
 
 (deftest footer-updated-payload-uses-default-footer-projection-values-test
@@ -458,9 +445,9 @@
           state (atom {:transport {:ready? true :pending {}}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                        :execute-prepared-request-fn (fn [_ai-ctx _ctx _session-id _prepared-request progress-queue]
-                                            (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
-                                                    {:event-kind :text-delta :text "Hello" :type :agent-event})
-                                            (support/assistant-msg->execution-result _session-id {:role "assistant" :content [{:type :text :text "Hello final"}] :stop-reason :stop :usage {:total-tokens 2}}))})
+                                                      (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
+                                                              {:event-kind :text-delta :text "Hello" :type :agent-event})
+                                                      (support/assistant-msg->execution-result _session-id {:role "assistant" :content [{:type :text :text "Hello final"}] :stop-reason :stop :usage {:total-tokens 2}}))})
           handler (support/make-handler ctx state)
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"q1\" :kind :request :op \"query_eql\" :params {:query \"[:psi.graph/domain-coverage :psi.memory/status]\"}}\n"

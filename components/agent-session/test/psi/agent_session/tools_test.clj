@@ -7,7 +7,8 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.workflow-runtime]
    [psi.agent-session.extension-runtime :as extension-runtime]
-   [psi.agent-session.psi_tool :as psi-tool]
+   [psi.agent-session.project-nrepl-ops]
+   [psi.agent-session.psi-tool :as psi-tool]
    [psi.agent-session.tools :as tools]))
 
 (defn- delete-tree! [path]
@@ -17,6 +18,7 @@
 
 (defmacro with-temp-dir [[sym prefix] & body]
   `(let [~sym (str (java.nio.file.Files/createTempDirectory ~prefix (make-array java.nio.file.attribute.FileAttribute 0)))]
+     ~sym
      (try
        ~@body
        (finally
@@ -297,12 +299,16 @@
       (is (= :validate (get-in parsed [:psi-tool/error :phase])))))
 
   (testing "worktree mode rejects unreloadable explicit worktree-path"
-    (with-temp-dir [dir "psi-tools-test-"]
-      (let [tool   (tools/make-psi-tool (fn [_q] {}))
-            result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
-            parsed (read-string (:content result))]
-        (is (true? (:is-error result)))
-        (is (= :validate (get-in parsed [:psi-tool/error :phase]))))))
+    (let [dir (str (java.nio.file.Files/createTempDirectory "psi-tools-test-"
+                                                            (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (try
+        (let [tool   (tools/make-psi-tool (fn [_q] {}))
+              result ((:execute tool) {"action" "reload-code" "worktree-path" dir})
+              parsed (read-string (:content result))]
+          (is (true? (:is-error result)))
+          (is (= :validate (get-in parsed [:psi-tool/error :phase]))))
+        (finally
+          (delete-tree! dir)))))
 
   (testing "worktree mode explicit target reports explicit worktree source"
     (with-redefs [psi-tool/worktree-reload-candidates (fn [worktree-path]

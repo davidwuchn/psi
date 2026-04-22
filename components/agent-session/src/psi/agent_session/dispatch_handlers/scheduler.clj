@@ -2,7 +2,6 @@
   "Dispatch handlers for session-scoped delayed scheduler actions: same-session delayed prompts and delayed fresh top-level session creation."
   (:require
    [psi.agent-session.dispatch :as dispatch]
-   [psi.agent-session.persistence :as persist]
    [psi.agent-session.scheduler :as scheduler]
    [psi.agent-session.scheduler-runtime :as scheduler-runtime]
    [psi.agent-session.session-lifecycle :as session-lifecycle]
@@ -196,8 +195,8 @@
                  {state' :state schedule' :schedule}
                  (scheduler/deliver-schedule (scheduler-state-in ctx session-id) schedule-id)
                  final-schedule  (assoc schedule'
-                                   :created-session-id created-id
-                                   :delivery-phase :prompt-submit)
+                                        :created-session-id created-id
+                                        :delivery-phase :prompt-submit)
                  final-state     (assoc-in state' [:schedules schedule-id] final-schedule)]
              {:root-state-update (scheduler-update session-id (constantly final-state))
               :return {:schedule final-schedule

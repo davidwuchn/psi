@@ -8,6 +8,7 @@
   (:require
    [cheshire.core :as json]
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [psi.agent-session.services :as services])
   (:import
    (java.io BufferedInputStream BufferedOutputStream ByteArrayOutputStream BufferedReader InputStreamReader)
@@ -18,8 +19,8 @@
   (.getBytes ^String s StandardCharsets/UTF_8))
 
 (defn- parse-header-line [line]
-  (let [[k v] (clojure.string/split line #":\s*" 2)]
-    [(some-> k clojure.string/lower-case) v]))
+  (let [[k v] (str/split line #":\s*" 2)]
+    [(some-> k str/lower-case) v]))
 
 (defn- read-line-crlf [^BufferedInputStream in]
   (let [line-bytes (ByteArrayOutputStream.)]
@@ -112,9 +113,9 @@
                                  (swap! stderr* conj line)
                                  (recur)))
                              (catch Throwable _))))
-                        (.setDaemon true)
-                        (.setName (str "psi-jsonrpc-stderr-" (:key service)))
-                        (.start))
+                         (.setDaemon true)
+                         (.setName (str "psi-jsonrpc-stderr-" (:key service)))
+                         (.start))
         reader-thread  (doto
                         (Thread.
                          ^Runnable
@@ -146,9 +147,9 @@
                              (catch Throwable t
                                (when on-error
                                  (on-error t))))))
-                        (.setDaemon true)
-                        (.setName (str "psi-jsonrpc-" (:key service)))
-                        (.start))]
+                         (.setDaemon true)
+                         (.setName (str "psi-jsonrpc-" (:key service)))
+                         (.start))]
     {:send-fn
      (fn [payload]
        (swap! debug* conj {:event :send :payload payload})
@@ -173,7 +174,7 @@
                (.remove pending request-id)
                (swap! debug* conj {:event :timeout :request-id request-id})
                {:payload {"error" {"message" "Timed out waiting for JSON-RPC response"
-                                    "request-id" request-id}}
+                                   "request-id" request-id}}
                 :is-error true})))))
 
      :await-response-sends? false

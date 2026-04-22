@@ -1,18 +1,8 @@
 (ns extensions.lsp-commands-test
   (:require
-   [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]
    [extensions.lsp :as sut]
    [psi.extension-test-helpers.nullable-api :as nullable]))
-
-(defn- mkdirs! [path]
-  (.mkdirs (io/file path))
-  path)
-
-(defn- tmp-dir []
-  (str (java.nio.file.Files/createTempDirectory
-        "psi-lsp-commands-"
-        (make-array java.nio.file.attribute.FileAttribute 0))))
 
 (deftest init-registers-lsp-commands-test
   (testing "init registers lsp status/restart commands and notifies ui"
@@ -25,7 +15,7 @@
                                         ((:mutate api) 'psi.extension/ensure-service spec))
                       :service-request (fn [spec]
                                          ((:mutate api) 'psi.extension/service-request
-                                          (assoc spec :response {"result" {"capabilities" {"textDocumentSync" {"change" 2}}}})))
+                                                        (assoc spec :response {"result" {"capabilities" {"textDocumentSync" {"change" 2}}}})))
                       :service-notify (fn [spec]
                                         ((:mutate api) 'psi.extension/service-notify spec))
                       :get-service (fn [_] nil))]
@@ -51,11 +41,11 @@
                                                                       :psi.service/ext-path]}]
                                              q)
                                         {:psi.service/services [{:psi.service/key [:lsp "/repo"]
-                                                                :psi.service/status :running
-                                                                :psi.service/command ["clojure-lsp"]
-                                                                :psi.service/cwd "/repo"
-                                                                :psi.service/transport :stdio
-                                                                :psi.service/ext-path "/test/lsp.clj"}]}
+                                                                 :psi.service/status :running
+                                                                 :psi.service/command ["clojure-lsp"]
+                                                                 :psi.service/cwd "/repo"
+                                                                 :psi.service/transport :stdio
+                                                                 :psi.service/ext-path "/test/lsp.clj"}]}
                                         {}))})
           lines (sut/workspace-status-lines (assoc api :list-services (fn []
                                                                         (:psi.service/services
@@ -66,7 +56,7 @@
                                                                                                    :psi.service/cwd
                                                                                                    :psi.service/transport
                                                                                                    :psi.service/ext-path]}]))))
-                                           {:cwd "/repo"})]
+                                            {:cwd "/repo"})]
       (is (= "LSP workspace: /repo" (first lines)))
       (is (some #(= "Initialized: true" %) lines))
       (is (some #(= "Service status: :running" %) lines))
@@ -116,7 +106,7 @@
                                         ((:mutate api) 'psi.extension/ensure-service spec))
                       :service-request (fn [spec]
                                          ((:mutate api) 'psi.extension/service-request
-                                          (assoc spec :response {"result" {"capabilities" {"textDocumentSync" {"change" 2}}}})))
+                                                        (assoc spec :response {"result" {"capabilities" {"textDocumentSync" {"change" 2}}}})))
                       :service-notify (fn [spec]
                                         ((:mutate api) 'psi.extension/service-notify spec))
                       :get-service (fn [_] nil))]

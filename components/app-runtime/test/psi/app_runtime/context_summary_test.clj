@@ -1,6 +1,6 @@
 (ns psi.app-runtime.context-summary-test
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is]]
    [psi.app-runtime.context-summary :as context-summary]))
 
 (deftest session-tree-line-label-prefers-display-name-and-includes-time-and-worktree-test
@@ -30,7 +30,7 @@
 
 (deftest context-widget-visible-only-for-multiple-sessions-test
   (let [one (context-summary/context-widget {:active-session-id "s1"
-                                            :sessions [{:id "s1" :name "main"}]})
+                                             :sessions [{:id "s1" :name "main"}]})
         many (context-summary/context-widget {:active-session-id "s1"
                                               :sessions [{:id "s1" :name "main"}
                                                          {:id "s2" :name "child"}]})]

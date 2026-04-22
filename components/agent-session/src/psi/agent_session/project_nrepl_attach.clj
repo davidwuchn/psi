@@ -12,8 +12,8 @@
    1. explicit port (+ optional host)
    2. `.nrepl-port` in effective worktree
 
-   Host defaults to 127.0.0.1 when not supplied." 
-  [worktree-path {:keys [host port] :as attach-input}]
+   Host defaults to 127.0.0.1 when not supplied."
+  [worktree-path attach-input]
   (let [effective-worktree (project-nrepl-config/absolute-directory-path! worktree-path)
         explicit-endpoint  (project-nrepl-config/resolved-attach-endpoint
                             {:project-nrepl {:attach attach-input}})]

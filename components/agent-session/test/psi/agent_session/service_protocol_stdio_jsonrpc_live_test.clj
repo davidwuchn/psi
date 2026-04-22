@@ -3,14 +3,13 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.mutations :as mutations]
-   [psi.agent-session.service-protocol :as protocol]
    [psi.agent-session.services :as services]
    [psi.agent-session.test-support :as test-support]
    [psi.query.core :as query]))
 
 (def ^:private jsonrpc-echo-command
   [(or (System/getenv "BB") "bb")
-   (str (.getCanonicalPath (java.io.File. "components/agent-session/test/psi/agent_session/jsonrpc_echo_bb.clj")))] )
+   (str (.getCanonicalPath (java.io.File. "components/agent-session/test/psi/agent_session/jsonrpc_echo_bb.clj")))])
 
 (defn- create-session-context []
   (let [ctx (session/create-context (test-support/safe-context-opts {}))

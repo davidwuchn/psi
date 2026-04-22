@@ -1,7 +1,6 @@
 (ns psi.agent-session.service-protocol
   "Shared stdio request/response and JSON-RPC helper semantics for managed services."
-  (:require [clojure.edn :as edn]
-            [psi.agent-session.dispatch :as dispatch]
+  (:require [psi.agent-session.dispatch :as dispatch]
             [psi.agent-session.services :as services]))
 
 (defn send-service-request!
@@ -13,7 +12,7 @@
    3. :send-fn            fire-and-forget write only
 
    Responses from request/await modes are surfaced as :response for higher-level
-   protocol adapters." 
+   protocol adapters."
   ([ctx service-key request]
    (send-service-request! ctx service-key request nil))
   ([ctx service-key {:keys [request-id payload timeout-ms] :as request} {:keys [dispatch-id]}]
@@ -61,7 +60,7 @@
   "Project one service-request response to a JSON-RPC result payload.
 
    Returns the inner `result` when present, the whole payload when no JSON-RPC
-   envelope/result is present, or nil when no response is available." 
+   envelope/result is present, or nil when no response is available."
   [request-result]
   (let [response (:response request-result)
         payload  (or (:payload response) response)]

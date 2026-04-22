@@ -150,19 +150,19 @@
         (let [qtrace (:psi.dispatch-trace/recent
                       (session/query-in ctx
                                         [{:psi.dispatch-trace/recent [:psi.dispatch-trace/trace-kind
-                                                                     :psi.dispatch-trace/dispatch-id
-                                                                     :psi.dispatch-trace/event-type
-                                                                     :psi.dispatch-trace/method
-                                                                     :psi.dispatch-trace/interceptor-id]}]
+                                                                      :psi.dispatch-trace/dispatch-id
+                                                                      :psi.dispatch-trace/event-type
+                                                                      :psi.dispatch-trace/method
+                                                                      :psi.dispatch-trace/interceptor-id]}]
                                         {:session-id session-id}))
               qtrace-by-id (:psi.dispatch-trace/by-id
                             (session/query-in ctx
                                               [{:psi.dispatch-trace/by-id [:psi.dispatch-trace/trace-kind
-                                                                          :psi.dispatch-trace/dispatch-id
-                                                                          :psi.dispatch-trace/event-type
-                                                                          :psi.dispatch-trace/method
-                                                                          :psi.dispatch-trace/effect-type
-                                                                          :psi.dispatch-trace/interceptor-id]}]
+                                                                           :psi.dispatch-trace/dispatch-id
+                                                                           :psi.dispatch-trace/event-type
+                                                                           :psi.dispatch-trace/method
+                                                                           :psi.dispatch-trace/effect-type
+                                                                           :psi.dispatch-trace/interceptor-id]}]
                                               {:session-id session-id
                                                :psi.dispatch-trace/dispatch-id dispatch-id}))]
           (is (some #(and (= :dispatch/received (:psi.dispatch-trace/trace-kind %))
@@ -300,14 +300,14 @@
                                                :tool-result {:effects [{:path file-path}]}
                                                :config {:command lsp-fixture-command
                                                         :startup-timeout-ms 2000
-                                                        :diagnostics-timeout-ms 2000}})
+                                                        :diagnostics-timeout-ms 5000}})
           _ (write-file! file-path "(ns demo) ;; warn\n")
           second-result (sut/sync-tool-result! api
                                                {:worktree-path worktree
                                                 :tool-result {:effects [{:path file-path}]}
                                                 :config {:command lsp-fixture-command
                                                          :startup-timeout-ms 2000
-                                                         :diagnostics-timeout-ms 2000}})
+                                                         :diagnostics-timeout-ms 5000}})
           root (:workspace-root second-result)
           svc (services/service-in ctx (sut/workspace-key root))
           debug @(:debug-atom svc)]
@@ -356,7 +356,7 @@
                                                 :tool-result {:effects [{:path file-path}]}
                                                 :config {:command lsp-fixture-command
                                                          :startup-timeout-ms 2000
-                                                         :diagnostics-timeout-ms 2000
+                                                         :diagnostics-timeout-ms 5000
                                                          :sync-timeout-ms 2000}})
           svc-after (services/service-in ctx (sut/workspace-key root))
           entries (dispatch/dispatch-trace-entries)]

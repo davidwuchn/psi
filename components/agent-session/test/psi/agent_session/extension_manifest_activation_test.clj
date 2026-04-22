@@ -3,8 +3,7 @@
    [clojure.java.io :as io]
    [clojure.repl.deps]
    [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.core :as session]
+   [clojure.test :refer [deftest is]]
    [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
@@ -43,8 +42,8 @@
     (intern *ns* 'init
             (fn [api]
               ((:register-command api) cmd-name
-               {:description (str "hello from " cmd-name)
-                :handler (fn [_] nil)})))))
+                                       {:description (str "hello from " cmd-name)
+                                        :handler (fn [_] nil)})))))
 
 (deftest reload-extensions-loads-manifest-local-root-extension-test
   (let [cwd        (test-support/temp-cwd)

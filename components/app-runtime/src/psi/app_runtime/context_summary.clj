@@ -50,7 +50,7 @@
             (as-> state (str " [" state "]")))))
 
 (defn session-tree-widget-lines
-  [slots active-id]
+  [slots _active-id]
   (let [slot-ids    (->> slots (map :id) (filter string?) vec)
         slot-id-set (set slot-ids)]
     (mapv (fn [slot]
@@ -60,7 +60,7 @@
                   is-active    (boolean (:is-active slot))
                   parent-id    (:parent-session-id slot)
                   indent       (if (or (= item-kind "fork-point")
-                                        (and parent-id (contains? slot-id-set parent-id)))
+                                       (and parent-id (contains? slot-id-set parent-id)))
                                  "  " "")
                   base-label   (session-tree-line-label slot)
                   current-text (when is-active " ← current")

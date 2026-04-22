@@ -49,6 +49,23 @@ jobs:
           sudo unzip -q /tmp/clj-kondo.zip -d /usr/local/bin
           clj-kondo --version
 
+      - name: Install cljfmt
+        run: |
+          VERSION=$(python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen('https://api.github.com/repos/weavejester/cljfmt/releases/latest') as r:
+              print(json.load(r)['tag_name'].removeprefix('v'))
+          PY
+          )
+          curl -fsSL "https://github.com/weavejester/cljfmt/releases/download/${VERSION}/cljfmt-${VERSION}-linux-amd64.tar.gz" \
+            -o /tmp/cljfmt.tar.gz
+          tar -xzf /tmp/cljfmt.tar.gz -C /tmp
+          sudo install /tmp/cljfmt /usr/local/bin/cljfmt
+          cljfmt --version
+
+      - name: Format check
+        run: bb fmt:check
+
       - name: Lint
         run: bb lint
 

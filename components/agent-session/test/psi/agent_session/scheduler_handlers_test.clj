@@ -9,7 +9,6 @@
    [psi.agent-session.dispatch-handlers.session-mutations :as session-mutations]
    [psi.agent-session.dispatch-handlers.statechart-actions :as statechart-actions]
    [psi.agent-session.persistence :as persist]
-   [psi.agent-session.scheduler :as scheduler]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]))
 
@@ -205,7 +204,7 @@
                        (fn [ctx* event-type event-data opts]
                          (if (= :session/submit-synthetic-user-prompt event-type)
                            (throw (ex-info "boom" {:created-session-id (:session-id event-data)
-                                                    :delivery-phase :prompt-submit}))
+                                                   :delivery-phase :prompt-submit}))
                            (real-dispatch ctx* event-type event-data opts))))]
          (let [create-r (invoke-handler ctx :scheduler/create {:session-id session-id
                                                                :schedule-id "sch-session-fail"

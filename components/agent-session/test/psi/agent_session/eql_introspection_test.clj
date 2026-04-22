@@ -25,6 +25,26 @@
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 
+(defn- inject-messages!
+  "Append a sequence of message maps into agent-core for testing."
+  [ctx session-id msgs]
+  (let [agent-ctx (ss/agent-ctx-in ctx session-id)]
+    (doseq [m msgs]
+      (agent-core/append-message-in! agent-ctx m))))
+
+(defn- make-user-msg [text]
+  {:role "user" :content [{:type :text :text text}]
+   :timestamp (java.time.Instant/now)})
+
+(defn- make-assistant-msg [text]
+  {:role "assistant" :content [{:type :text :text text}]
+   :stop-reason :stop :timestamp (java.time.Instant/now)})
+
+(defn- make-tool-result-msg [tool-id tool-name result]
+  {:role "toolResult" :tool-call-id tool-id :tool-name tool-name
+   :content [{:type :text :text result}] :is-error false
+   :timestamp (java.time.Instant/now)})
+
 ;; ── EQL introspection ───────────────────────────────────────────────────────
 
 (deftest eql-introspection-test
@@ -36,7 +56,7 @@
   (testing "query-in resolves phase"
     (let [[ctx session-id] (create-session-context)
           result (session/query-in ctx session-id [:psi.agent-session/phase
-                                        :psi.agent-session/is-idle])]
+                                                   :psi.agent-session/is-idle])]
       (is (= :idle (:psi.agent-session/phase result)))
       (is (true? (:psi.agent-session/is-idle result)))))
 
@@ -86,7 +106,7 @@
           child-session-id        (:session-id child-sd)
           _                       (dispatch/dispatch! ctx :session/set-model {:session-id child-session-id
                                                                               :model {:provider "local" :id "gemma-3" :reasoning false}}
-                                              {:origin :core})
+                                                      {:origin :core})
           result                  (session/query-in ctx
                                                     [:psi.agent-session/session-id
                                                      :psi.agent-session/session-name
@@ -100,10 +120,10 @@
 
   (testing "query-in resolves developer prompt"
     (let [[ctx session-id] (create-session-context {:session-defaults {:developer-prompt "dev layer"
-                                                                      :developer-prompt-source :explicit}})
+                                                                       :developer-prompt-source :explicit}})
           result (session/query-in ctx session-id [:psi.agent-session/developer-prompt
-                                        :psi.agent-session/developer-prompt-source
-                                        :psi.agent-session/prompt-layers])]
+                                                   :psi.agent-session/developer-prompt-source
+                                                   :psi.agent-session/prompt-layers])]
       (is (= "dev layer" (:psi.agent-session/developer-prompt result)))
       (is (= :explicit (:psi.agent-session/developer-prompt-source result)))
       (is (= {:base-system-prompt ""
@@ -144,18 +164,18 @@
                                                                   :tool-call-count 1
                                                                   :recorded-at recorded-at})
       (let [result (session/query-in ctx session-id [:psi.agent-session/last-prepared-request-summary
-                                          :psi.agent-session/last-prepared-turn-id
-                                          :psi.agent-session/last-prepared-message-count
-                                          :psi.agent-session/last-prepared-tool-count
-                                          :psi.agent-session/last-prepared-system-prompt-chars
-                                          :psi.agent-session/last-prepared-input-expansion
-                                          :psi.agent-session/last-prepared-at
-                                          :psi.agent-session/last-execution-result-summary
-                                          :psi.agent-session/last-execution-turn-id
-                                          :psi.agent-session/last-execution-turn-outcome
-                                          :psi.agent-session/last-execution-stop-reason
-                                          :psi.agent-session/last-execution-tool-call-count
-                                          :psi.agent-session/last-execution-recorded-at])]
+                                                     :psi.agent-session/last-prepared-turn-id
+                                                     :psi.agent-session/last-prepared-message-count
+                                                     :psi.agent-session/last-prepared-tool-count
+                                                     :psi.agent-session/last-prepared-system-prompt-chars
+                                                     :psi.agent-session/last-prepared-input-expansion
+                                                     :psi.agent-session/last-prepared-at
+                                                     :psi.agent-session/last-execution-result-summary
+                                                     :psi.agent-session/last-execution-turn-id
+                                                     :psi.agent-session/last-execution-turn-outcome
+                                                     :psi.agent-session/last-execution-stop-reason
+                                                     :psi.agent-session/last-execution-tool-call-count
+                                                     :psi.agent-session/last-execution-recorded-at])]
         (is (= {:turn-id "t-1"
                 :message-count 2
                 :tool-count 1
@@ -201,8 +221,8 @@
                            :contribution {:content "Hint" :priority 10 :enabled true}}
                           {:origin :core})
       (let [result (session/query-in ctx session-id [:psi.agent-session/base-system-prompt
-                                          :psi.agent-session/prompt-contributions
-                                          :psi.extension/prompt-contribution-count])]
+                                                     :psi.agent-session/prompt-contributions
+                                                     :psi.extension/prompt-contribution-count])]
         (is (= "" (:psi.agent-session/base-system-prompt result)))
         (is (= 1 (count (:psi.agent-session/prompt-contributions result))))
         (is (= 1 (:psi.extension/prompt-contribution-count result))))))
@@ -227,11 +247,11 @@
 
     (let [[ctx session-id] (create-session-context)
           result (session/query-in ctx session-id [:psi.agent-session/messages-count
-                                        :psi.agent-session/ai-call-count
-                                        :psi.agent-session/tool-call-count
-                                        :psi.agent-session/executed-tool-count
-                                        :psi.agent-session/start-time
-                                        :psi.agent-session/current-time])]
+                                                   :psi.agent-session/ai-call-count
+                                                   :psi.agent-session/tool-call-count
+                                                   :psi.agent-session/executed-tool-count
+                                                   :psi.agent-session/start-time
+                                                   :psi.agent-session/current-time])]
       (is (int? (:psi.agent-session/messages-count result)))
       (is (int? (:psi.agent-session/ai-call-count result)))
       (is (int? (:psi.agent-session/tool-call-count result)))
@@ -266,10 +286,10 @@
                                   [(persist/message-entry assistant-1)
                                    (persist/message-entry assistant-2)])
       (let [result (session/query-in ctx session-id [:psi.agent-session/usage-input
-                                          :psi.agent-session/usage-output
-                                          :psi.agent-session/usage-cache-read
-                                          :psi.agent-session/usage-cache-write
-                                          :psi.agent-session/usage-cost-total])]
+                                                     :psi.agent-session/usage-output
+                                                     :psi.agent-session/usage-cache-read
+                                                     :psi.agent-session/usage-cache-write
+                                                     :psi.agent-session/usage-cost-total])]
         (is (= 1500 (:psi.agent-session/usage-input result)))
         (is (= 300 (:psi.agent-session/usage-output result)))
         (is (= 50 (:psi.agent-session/usage-cache-read result)))
@@ -282,11 +302,11 @@
           model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [result (session/query-in ctx session-id [:psi.agent-session/model-provider
-                                          :psi.agent-session/model-id
-                                          :psi.agent-session/model-reasoning
-                                          :psi.agent-session/effective-reasoning-effort
-                                          :psi.agent-session/worktree-path
-                                          :psi.agent-session/git-branch])]
+                                                     :psi.agent-session/model-id
+                                                     :psi.agent-session/model-reasoning
+                                                     :psi.agent-session/effective-reasoning-effort
+                                                     :psi.agent-session/worktree-path
+                                                     :psi.agent-session/git-branch])]
         (is (= "openai" (:psi.agent-session/model-provider result)))
         (is (= "gpt-5.3-codex" (:psi.agent-session/model-id result)))
         (is (true? (:psi.agent-session/model-reasoning result)))
@@ -312,13 +332,13 @@
 
   (testing "query-in resolves effective reasoning effort for reasoning models"
     (let [[ctx session-id] (create-session-context {:session-defaults {:model {:provider "openai"
-                                                                              :id "gpt-5.3-codex"
-                                                                              :reasoning true}
-                                                                      :thinking-level :high}})
+                                                                               :id "gpt-5.3-codex"
+                                                                               :reasoning true}
+                                                                       :thinking-level :high}})
           result (session/query-in ctx session-id [:psi.agent-session/model-reasoning
-                                        :psi.agent-session/effective-reasoning-effort])]
+                                                   :psi.agent-session/effective-reasoning-effort])]
       (is (true? (:psi.agent-session/model-reasoning result)))
-      (is (= "high" (:psi.agent-session/effective-reasoning-effort result)))))
+      (is (= "high" (:psi.agent-session/effective-reasoning-effort result))))))
 
 (deftest tool-output-eql-introspection-test
   (testing "query-in resolves tool-output policy defaults and overrides"
@@ -326,8 +346,8 @@
                                                     {:tool-output-overrides
                                                      {"bash" {:max-lines 77 :max-bytes 2048}}}})
           result (session/query-in ctx session-id [:psi.tool-output/default-max-lines
-                                        :psi.tool-output/default-max-bytes
-                                        :psi.tool-output/overrides])]
+                                                   :psi.tool-output/default-max-bytes
+                                                   :psi.tool-output/overrides])]
       (is (= 1000 (:psi.tool-output/default-max-lines result)))
       (is (= 51200 (:psi.tool-output/default-max-bytes result)))
       (is (= {"bash" {:max-lines 77 :max-bytes 2048}}
@@ -349,15 +369,15 @@
                                              :by-tool {"bash" 64}
                                              :limit-hits-by-tool {"bash" 1}}})
       (let [result (session/query-in ctx session-id [{:psi.tool-output/calls
-                                           [:psi.tool-output.call/tool-call-id
-                                            :psi.tool-output.call/tool-name
-                                            :psi.tool-output.call/limit-hit?
-                                            :psi.tool-output.call/truncated-by
-                                            :psi.tool-output.call/effective-max-lines
-                                            :psi.tool-output.call/effective-max-bytes
-                                            :psi.tool-output.call/output-bytes
-                                            :psi.tool-output.call/context-bytes-added]}
-                                          :psi.tool-output/stats])
+                                                      [:psi.tool-output.call/tool-call-id
+                                                       :psi.tool-output.call/tool-name
+                                                       :psi.tool-output.call/limit-hit?
+                                                       :psi.tool-output.call/truncated-by
+                                                       :psi.tool-output.call/effective-max-lines
+                                                       :psi.tool-output.call/effective-max-bytes
+                                                       :psi.tool-output.call/output-bytes
+                                                       :psi.tool-output.call/context-bytes-added]}
+                                                     :psi.tool-output/stats])
             calls  (:psi.tool-output/calls result)
             first-call (first calls)
             stats  (:psi.tool-output/stats result)]
@@ -374,32 +394,6 @@
                 :by-tool {"bash" 64}
                 :limit-hits-by-tool {"bash" 1}}
                stats))))))
-
-(defn- inject-messages!
-  "Append a sequence of message maps into agent-core for testing."
-  [ctx session-id msgs]
-  (let [agent-ctx (ss/agent-ctx-in ctx session-id)]
-    (doseq [m msgs]
-      (agent-core/append-message-in! agent-ctx m))))
-
-(defn- make-user-msg [text]
-  {:role "user" :content [{:type :text :text text}]
-   :timestamp (java.time.Instant/now)})
-
-(defn- make-assistant-msg [text]
-  {:role "assistant" :content [{:type :text :text text}]
-   :stop-reason :stop :timestamp (java.time.Instant/now)})
-
-(defn- make-tool-call-msg [text tool-id tool-name]
-  {:role "assistant"
-   :content [{:type :text :text text}
-             {:type :tool-call :id tool-id :name tool-name :arguments "{}"}]
-   :stop-reason :tool_use :timestamp (java.time.Instant/now)})
-
-(defn- make-tool-result-msg [tool-id tool-name result]
-  {:role "toolResult" :tool-call-id tool-id :tool-name tool-name
-   :content [{:type :text :text result}] :is-error false
-   :timestamp (java.time.Instant/now)})
 
 (deftest tool-call-attempts-eql-introspection-test
   (testing "query-in resolves tool-call attempts and unmatched counts"
@@ -740,13 +734,13 @@
                                              :http-status 400}})
 
         (let [req ((resolve 'psi.agent-session.resolvers.telemetry/provider-request-by-turn-id)
-                    {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
-                     :psi/agent-session-ctx ctx
-                     :psi.agent-session/session-id session-id})
+                   {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                    :psi/agent-session-ctx ctx
+                    :psi.agent-session/session-id session-id})
               reply ((resolve 'psi.agent-session.resolvers.telemetry/provider-reply-by-turn-id)
-                      {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
-                       :psi/agent-session-ctx ctx
-                       :psi.agent-session/session-id session-id})]
+                     {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                      :psi/agent-session-ctx ctx
+                      :psi.agent-session/session-id session-id})]
           (is (= :anthropic
                  (get-in req [:psi.agent-session/provider-request-for-turn-id
                               :psi.provider-request/provider])))
@@ -797,4 +791,4 @@
                                    [{:psi.agent-session/request-shape
                                      [:psi.request-shape/headroom-tokens]}])
               h2 (-> r2 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]
-          (is (< h2 h1))))))))
+          (is (< h2 h1)))))))

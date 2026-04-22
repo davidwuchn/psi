@@ -1,6 +1,5 @@
 (ns psi.ai.user-models-test
   (:require
-   [clojure.java.io :as io]
    [clojure.test :refer [deftest testing is]]
    [psi.ai.user-models :as user-models]))
 
@@ -66,7 +65,7 @@
                 :api      :openai-completions
                 :auth     {:api-key "env:REMOTE_KEY"}
                 :models   [{:id "model-b" :name "Remote Model B"}
-                            {:id "model-c"}]}}})
+                           {:id "model-c"}]}}})
 
 (deftest parse-minimal-config-test
   (let [result (user-models/parse-models-config minimal-config)]

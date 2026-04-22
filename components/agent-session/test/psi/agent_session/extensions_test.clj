@@ -224,7 +224,7 @@
     (let [reg (ext/create-registry)]
       (ext/register-extension-in! reg "/ext/a")
       (ext/register-handler-in! reg "/ext/a" "session_switch"
-                                 (fn [_] "some-branch-name"))
+                                (fn [_] "some-branch-name"))
       (let [result (ext/dispatch-in reg "session_switch" {:reason :new})]
         (is (false? (:cancelled? result)))
         (is (nil? (:override result)))
@@ -435,7 +435,7 @@
         (is (= "my-tool" (:name (first tools))))
         (is (= "/ext/a" (:extension-path (first tools))))
         (is (= :extension (:source (first tools))))
-        (is (= {:type "object"} (:parameters (first tools)))))))
+        (is (= {:type "object" :properties {}} (:parameters (first tools)))))))
 
   (testing "first registration per name wins"
     (let [reg (ext/create-registry)]
@@ -521,7 +521,7 @@
       (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "T"})
       (let [tool (ext/get-tool-in reg "my-tool")]
         (is (= "my-tool" (:name tool)))
-        (is (= {:type "object"} (:parameters tool))))))
+        (is (= {:type "object" :properties {}} (:parameters tool))))))
 
   (testing "returns nil for unknown tool"
     (let [reg (ext/create-registry)]
@@ -669,9 +669,9 @@
                        :payload {:session-id "s1"}
                        :ext-path "/ext/test"}}
              ((:mutate api) 'psi.extension/schedule-event
-              {:delay-ms 250
-               :event-name "rename-checkpoint"
-               :payload {:session-id "s1"}})))))
+                            {:delay-ms 250
+                             :event-name "rename-checkpoint"
+                             :payload {:session-id "s1"}})))))
 
   (testing "API query-session and mutate-session target explicit sessions"
     (let [reg         (ext/create-registry)

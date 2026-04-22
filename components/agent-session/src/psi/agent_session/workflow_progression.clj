@@ -25,10 +25,6 @@
   (some->> (latest-attempt-index workflow-run step-id)
            (get-in workflow-run [:step-runs step-id :attempts])))
 
-(defn- attempt-path
-  [run-id step-id attempt-idx]
-  [:workflows :runs run-id :step-runs step-id :attempts attempt-idx])
-
 (defn- step-definition
   [workflow-run step-id]
   (get-in workflow-run [:effective-definition :steps step-id]))
@@ -75,7 +71,7 @@
                    (append-history :workflow/attempt-started
                                    {:run-id run-id
                                     :step-id step-id
-                                    :attempt-id (:attempt-id (latest-attempt workflow-run step-id))})))) )
+                                    :attempt-id (:attempt-id (latest-attempt workflow-run step-id))})))))
 
 (defn- generic-envelope-validation
   [envelope]

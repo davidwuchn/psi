@@ -1,6 +1,6 @@
 (ns psi.agent-session.extension-installs-test
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is]]
    [psi.agent-session.core :as session]
    [psi.agent-session.extension-installs :as installs]
    [psi.agent-session.test-support :as test-support])
@@ -83,7 +83,7 @@
   (let [install-state {:psi.extensions/effective {:raw-deps {'foo/ext {:mvn/version "1.1.0"
                                                                        :psi/init 'foo.ext/init}}
                                                   :entries-by-lib {'foo/ext {:dep {:mvn/version "1.1.0"
-                                                                                    :psi/init 'foo.ext/init}
+                                                                                   :psi/init 'foo.ext/init}
                                                                              :extension? true
                                                                              :enabled? true}}}}
         previous-state {:psi.extensions/effective {:raw-deps {'foo/ext {:mvn/version "1.0.0"

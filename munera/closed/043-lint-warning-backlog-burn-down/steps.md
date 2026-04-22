@@ -1,0 +1,21 @@
+- [x] Clean up TUI split-file warning backlog
+  - removed dead top-level aliases/helpers from `psi.tui.app` and split TUI tests
+  - warning count moved from `235` to `213` on `bb lint`
+- [x] Clean up RPC test warning backlog
+  - removed unused requires/bindings across `components/rpc/src` and `components/rpc/test`
+  - fixed direct fully-qualified test references so `clj-kondo` resolves aliased vars cleanly
+- [x] Clean up agent-session warning backlog
+  - removed an initial low-risk source slice of dead requires/bindings/private helpers across dispatch, resolvers, workflow, service, and nREPL support namespaces
+  - targeted `clj-kondo` on that source slice now reports `errors: 0, warnings: 0`
+- [x] Clean up extension warning backlog
+  - started a scattered source cleanup slice across AI/app-runtime/agent-session/LSP low-risk warnings
+  - fixed missing `clojure.string` aliases and removed several unused helper/binding warnings
+  - targeted `clj-kondo` for the touched slice reports `errors: 0, warnings: 0`
+  - trimmed low-risk extension/test warnings and fixed workflow-loader test alias resolution drift
+- [x] Clean up remaining scattered warnings and run `bb lint` to green
+  - app-runtime test cleanup slice removed unused `testing` refers and one dead binding
+  - agent-session test slice 1 targets low-risk extension/scheduler/post-tool warning cleanup
+  - agent-session/introspection/recursion/ai warning slice removed duplicate requires, added missing `clojure.string`/`clojure.edn` aliases, and trimmed unused test requires/helpers; targeted `clj-kondo` on the touched files reports `errors: 0, warnings: 0`
+  - project-nREPL/workflow/tool warning slice added explicit namespaces needed by `with-redefs` and helper call sites; targeted `clj-kondo` on the touched files reports `errors: 0, warnings: 0`
+  - prompt/session/query/runtime test warning slice removed low-risk unused bindings/requires and redundant lets across prompt execution, turn accumulation, session lifecycle, query graph, service protocol, and resolver tests; targeted `clj-kondo` on the touched files reports `errors: 0, warnings: 0`
+  - eql/workflow file warning slice moved helper defs out of inline test positions and cleaned workflow compiler/loader assertions; targeted `clj-kondo` on the touched files reports `errors: 0, warnings: 0`

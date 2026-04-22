@@ -6,7 +6,6 @@
    extension API's `mutate!`."
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
-   [psi.agent-session.workflow-model :as workflow-model]
    [psi.agent-session.workflow-progression :as workflow-progression]
    [psi.agent-session.workflow-runtime :as workflow-runtime]))
 
@@ -161,7 +160,7 @@
       (when (contains? #{:completed :failed :cancelled} (:status workflow-run))
         (throw (ex-info "Workflow run is already terminal" {:run-id run-id :status (:status workflow-run)})))
       (let [new-state (workflow-progression/cancel-run @(:state* agent-session-ctx) run-id
-                                                        (or reason "cancelled"))
+                                                       (or reason "cancelled"))
             cancelled-run (workflow-runtime/workflow-run-in new-state run-id)]
         (reset! (:state* agent-session-ctx) new-state)
         {:psi.workflow/run-id run-id

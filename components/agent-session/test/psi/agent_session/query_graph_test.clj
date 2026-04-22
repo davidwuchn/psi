@@ -7,15 +7,12 @@
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.background-job-runtime :as bg-rt]
-   [psi.agent-session.bootstrap :as bootstrap]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.statechart :as sc]
    [psi.agent-session.test-support :as test-support]
-   [psi.agent-session.tool-plan :as tool-plan]
    [psi.history.git :as history-git]
    [psi.query.core :as query]
    [psi.recursion.core :as recursion])
@@ -124,7 +121,7 @@
     (is (= {:psi.agent-session/rpc-trace-enabled false
             :psi.agent-session/rpc-trace-file nil}
            (session/query-in ctx session-id [:psi.agent-session/rpc-trace-enabled
-                                  :psi.agent-session/rpc-trace-file])))
+                                             :psi.agent-session/rpc-trace-file])))
 
     (let [r1 (mutate 'psi.extension/set-rpc-trace
                      {:session-id session-id
