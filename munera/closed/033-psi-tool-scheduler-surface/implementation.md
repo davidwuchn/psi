@@ -44,3 +44,15 @@ Relevant files:
 - Follow-up landed: `:scheduler/deliver` and `:scheduler/drain-queue` now share extracted scheduled-prompt lifecycle effect construction.
 - Follow-up landed: the graph surface now supports entity-seeded single-schedule lookup by `:psi.scheduler/schedule-id` in addition to session-scoped `:psi.scheduler/schedules` and `:psi.scheduler/pending-count`.
 - Follow-up landed: queued schedules no longer masquerade as `:pending-cancel` in the background-job projection; they now remain visible under the running/non-terminal job views, which is a truer mapping for “timer fired, awaiting idle delivery”.
+
+## Post-close review note
+
+- Review outcome: approved.
+- Design/implementation alignment is strong: the delivered `psi-tool` scheduler surface, pure scheduler model, dispatch handlers, background-job projection, resolver exposure, and shutdown behavior all match the task design closely.
+- Architectural fit is strong: scheduler state is modeled as pure session state, dispatch remains the coordination boundary, background jobs stay a projection rather than a second source of truth, and runtime timer handles remain outside replayed state.
+- Shaping quality is strong: the follow-up extraction of shared scheduled-prompt delivery behavior reduced local duplication without changing semantics.
+- Minor concerns remain and are small rather than blocking:
+  - `psi_tool_scheduler.clj` still falls back to the first context session when `session-id` is omitted; this is looser than the project's preference for explicit session targeting.
+  - schedule summary/projection shaping is spread across a few nearby modules (`scheduler.clj`, `psi_tool_scheduler.clj`, `scheduler_runtime.clj`), which is workable now but a possible future drift point.
+  - resolver ownership should stay singular and obvious as surrounding resolver cleanup continues.
+- Recommended follow-up: capture the non-blocking concerns in a focused shaping task rather than reopening this task.

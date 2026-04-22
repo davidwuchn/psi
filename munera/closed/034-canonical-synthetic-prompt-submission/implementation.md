@@ -18,3 +18,11 @@
   - `:session/prompt-submit`
   - `:session/prompt`
   - `:session/prompt-prepare-request`
+
+## Post-close review note
+
+- Review outcome: approved.
+- Design/implementation alignment is precise: the task asked for one canonical dispatch-owned synthetic prompt submission entry point, and the implementation added `:session/submit-synthetic-user-prompt` and migrated scheduler delivery/drain to use it.
+- Architectural fit is strong: feature code no longer owns prompt lifecycle wiring, and synthetic prompt submission semantics are centralized in the prompt lifecycle boundary rather than copied into feature handlers.
+- This follow-up improves convergence rather than introducing a new parallel pattern.
+- Non-blocking follow-up concerns are adjacent rather than local to this task: keep synthetic prompt submission ownership centralized, and let any remaining scheduler surface tightening happen in a dedicated shaping task rather than re-expanding feature-local lifecycle knowledge.
