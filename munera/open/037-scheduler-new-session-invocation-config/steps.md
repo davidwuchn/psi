@@ -1,0 +1,8 @@
+- [ ] Evolve scheduler record/state model for explicit `:kind`, `:failed`, origin/created session ids, delivery phase, and error summary
+- [ ] Validate and parse kind-aware `psi-tool` scheduler create requests
+- [ ] Add canonical non-switching top-level session creation support
+- [ ] Route `:kind :session` fire-time delivery through canonical creation + prompt submission
+- [ ] Persist scheduler provenance on created sessions
+- [ ] Converge psi-tool, EQL, and background-job/public projections on the richer scheduler model
+- [ ] Add focused tests for validation, delivery, failure, provenance, projection naming/shape, and unchanged active-session behavior
+- [ ] Record implementation notes and close remaining shape gaps discovered during the work
