@@ -27,25 +27,31 @@ Required procedure:
    - Do not create a worktree, branch, push, or PR.
    - Final response should clearly say that no source unit exceeded CC 25.
 
-3. Create an isolated worktree for the refactor.
+3. Refresh the base branch before creating the worktree.
+   - Run `git fetch origin master`.
+   - Treat `origin/master` as the authoritative base for the refactor branch.
+   - If the fetch fails, stop and report the failure rather than proceeding on a stale base.
+
+4. Create an isolated worktree for the refactor.
    - Use the `work-on` tool, not manual `git worktree` shell commands.
+   - Base the worktree on `origin/master`.
    - Call the tool with a short description derived from the target unit, for example:
      `description: "reduce complexity of <target>"`
    - If the `work-on` tool is unavailable in the current session, stop and report that limitation instead of improvising a different mechanism.
 
-4. Analyze before changing code.
+5. Analyze before changing code.
    - Use the `code-shaper` skill to assess the target unit and nearby supporting code.
    - Prefer small structural simplifications that lower complexity while preserving behavior.
    - Refactor surrounding helpers when that is the simplest way to reduce the target's complexity.
    - Avoid unrelated cleanup.
 
-5. Verify the refactor.
+6. Verify the refactor.
    - Re-run a focused complexity check to confirm the hotspot improved.
    - Run relevant tests for the affected area when you can identify them.
    - If there is an obvious project-wide verification command that is cheap and relevant, run it too.
    - If verification fails, stop and report the failure rather than pushing broken work.
 
-6. Prepare the branch for review.
+7. Prepare the branch for review.
    - Summarize what changed and why.
    - Push the current branch to origin with upstream tracking.
    - Create a pull request using `gh pr create`.
