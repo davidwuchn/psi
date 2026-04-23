@@ -4,6 +4,7 @@
    [charm.message :as msg]
    [clojure.string :as str]
    [psi.tui.app.autocomplete :as autocomplete]
+   [psi.tui.app.frontend-actions :as frontend-actions]
    [psi.tui.app.render :as render]
    [psi.tui.app.shared :as shared]
    [psi.tui.app.support :as support]
@@ -218,8 +219,17 @@
       (or (when (msg/key-match? m "ctrl+c")
             (app-update/handle-ctrl-c state))
           (handle-window-size-message state m)
-          (when (and (support/has-active-dialog? state) (msg/key-press? m))
-            (or (support/handle-dialog-key state m) [state nil]))
+          (when (and (support/has-active-dialog? state)
+                     (or (msg/key-press? m)
+                         (msg/key-match? m "escape")
+                         (msg/key-match? m "up")
+                         (msg/key-match? m "down")
+                         (msg/key-match? m "enter")
+                         (msg/key-match? m "backspace")
+                         (msg/key-match? m "space")))
+            (or (frontend-actions/handle-frontend-action-dialog-key state m app-update/handle-dispatch-result)
+                (support/handle-dialog-key state m)
+                [state nil]))
           (handle-agent-message state m)
           (when (= :selecting-session (:phase state))
             (app-update/handle-selector-key state m))

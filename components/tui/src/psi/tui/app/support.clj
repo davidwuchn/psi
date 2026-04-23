@@ -30,8 +30,13 @@
                (>= (int (.charAt ^String s 0)) 32))
       s)))
 
+(defn active-dialog
+  [state]
+  (or (:frontend-action/dialog state)
+      (get-in state [:ui-snapshot :active-dialog])))
+
 (defn has-active-dialog? [state]
-  (boolean (get-in state [:ui-snapshot :active-dialog])))
+  (boolean (active-dialog state)))
 
 (defn clear-dialog-local-state
   [state]
@@ -63,6 +68,13 @@
             (-> idx (+ delta) (max 0) (min last-idx)))
      nil]))
 
+(defn selected-dialog-value
+  [state dialog]
+  (let [idx     (dialog-select-index state)
+        options (:options dialog)]
+    (when (seq options)
+      (:value (nth options idx nil)))))
+
 (defn backspace-dialog-input
   [state]
   [(assoc state :dialog-input-text
@@ -87,9 +99,7 @@
       [(clear-dialog-local-state state) nil])
 
     :select
-    (let [idx     (dialog-select-index state)
-          options (:options dialog)
-          value   (when (seq options) (:value (nth options idx nil)))]
+    (let [value (selected-dialog-value state dialog)]
       (when value
         (resolve-dialog! state dialog value))
       [(clear-dialog-local-state state) nil])
@@ -103,7 +113,7 @@
 
 (defn handle-dialog-key
   [state m]
-  (when-let [dialog (get-in state [:ui-snapshot :active-dialog])]
+  (when-let [dialog (active-dialog state)]
     (cond
       (msg/key-match? m "escape")
       (do
@@ -209,6 +219,7 @@
          :query-fn                query-fn
          :ui-read-fn              ui-read-fn
          :ui-dispatch-fn          ui-dispatch-fn
+         :frontend-action-handler-fn! (:frontend-action-handler-fn! opts)
          :ui-snapshot             ui-snap
          :dialog-selected-index   nil
          :dialog-input-text       nil

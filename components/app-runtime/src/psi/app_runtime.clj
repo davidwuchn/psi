@@ -66,6 +66,7 @@
    [psi.app-runtime.projections :as projections]
    [psi.app-runtime.selectors :as selectors]
    [psi.app-runtime.transcript :as transcript]
+   [psi.app-runtime.tui-frontend-actions :as tui-frontend-actions]
    [psi.app-runtime.ui-actions :as ui-actions]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.config-resolution :as config-res]
@@ -640,14 +641,28 @@ Available: " (str/join ", " (map name (keys all))))
          ;; Returns a command result map, or nil if not a command.
          ;; When a login is pending (waiting for auth code), returns nil
          ;; so the input falls through to run-agent-fn! which handles it.
+         frontend-action-handler-fn!
+         (fn [action-result]
+           (tui-frontend-actions/handle-action-result
+            {:ctx ctx
+             :sid @tui-focus*
+             :action-result action-result
+             :resolve-model-by-provider+id resolve-model-by-provider+id
+             :switch-session-fn! switch-session-fn!
+             :fork-session-fn! fork-session-fn!
+             :set-focus! #(reset! tui-focus* %)}))
+
          dispatch-fn (fn [text]
                        (if (:pending-login @session-state)
                          nil  ;; fall through to run-agent-fn! for login code
                          (let [sid    @tui-focus*
-                               result (commands/dispatch-in ctx sid text cmd-opts)]
-                           (when result
-                             ;; Keep command inputs in the session journal for parity with RPC/CLI.
-                             (runtime/journal-user-message-in! ctx sid text nil))
+                               result (tui-frontend-actions/command-result
+                                       {:ctx ctx
+                                        :sid sid
+                                        :text text
+                                        :cmd-opts cmd-opts})]
+                           (tui-frontend-actions/journal-command-result!
+                            {:ctx ctx :sid sid :text text :result result})
                            (when (= :login-start (:type result))
                              (if (:uses-callback-server result)
                                nil
@@ -702,6 +717,7 @@ Available: " (str/join ", " (map name (keys all))))
                      :ui-read-fn       (fn [] (projections/extension-ui-snapshot ctx))
                      :ui-dispatch-fn   (fn [event-type payload]
                                          (dispatch/dispatch! ctx event-type payload {:origin :tui}))
+                     :frontend-action-handler-fn! frontend-action-handler-fn!
                      :dispatch-fn          dispatch-fn
                      :on-interrupt-fn!     on-interrupt-fn!
                      :on-queue-input-fn!   (fn [text _state]
