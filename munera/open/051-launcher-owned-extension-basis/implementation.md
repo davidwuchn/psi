@@ -27,4 +27,5 @@
 - Added `doc/extensions.md` alignment so extension docs now describe launcher-owned startup basis construction and psi-owned defaulting consistently.
 - Proved a local `bbin`-installed launcher command can execute the launcher path and emit the canonical debug summary when invoked from a cwd without project manifests.
 - During that proof, fixed launcher handling for a leading `--` argument separator, fixed `bb/psi.clj` launcher-root derivation, fixed absolute-cwd resolution, and stripped runtime-only manifest metadata (`:psi/init`, `:psi/enabled`) from launch-time basis deps before `-Sdeps` handoff.
-- Remaining bbin proof gap is now narrower: installation currently required explicit `--main-opts '["bb/psi.clj"]'` even with repo metadata present, so fully frictionless `bbin install io.github.hugoduncan/psi --as psi` still needs follow-up packaging confirmation.
+- Local frictionless `bbin install . --as psi-launcher-auto` now succeeds using repo metadata, and the resulting installed command was exercised successfully against the launcher path with `--cwd`, `--launcher-debug`, and `--rpc-edn`.
+- Remaining packaging gap is now specifically about the final remote/canonical install path (`bbin install io.github.hugoduncan/psi --as psi`), not local metadata-driven installation behavior.

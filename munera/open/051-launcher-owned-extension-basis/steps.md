@@ -66,7 +66,8 @@
   - [x] Define or update any babashka package metadata needed for installation
   - [x] Add a lightweight proof or testable check for the installable command contract where practical
   - [x] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
-  - [ ] Confirm frictionless install without explicit `--main-opts` for the final canonical package path
+  - [x] Confirm local frictionless install without explicit `--main-opts`
+  - [ ] Confirm frictionless install for the final canonical remote package path
 
 - [x] Slice 7 — Documentation migration
   - [x] Update `README.md` quick start to use `bbin` installation and the `psi` command
@@ -117,4 +118,4 @@
   - [x] startup basis is derived from user/project extension manifests before psi starts
   - [x] recognized psi-owned manifest entries can use concise syntax through launcher defaults and deterministic `:psi/init` inference
   - [x] docs present the launcher-owned startup path as the canonical operator workflow
-  - [ ] final packaging path proves canonical `bbin install ...` works without extra install flags
+  - [ ] final remote packaging path proves canonical `bbin install ...` works without extra install flags
