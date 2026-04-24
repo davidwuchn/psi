@@ -94,3 +94,23 @@ Closure recommendation:
     - `clojure -M:test-paths -e "(require 'psi.launcher-test 'psi.launcher.extensions-test 'clojure.test) (let [result (clojure.test/run-tests 'psi.launcher-test 'psi.launcher.extensions-test)] (println result) (System/exit (if (clojure.test/successful? result) 0 1)))"`
   - verification result: `13 tests, 39 assertions, 0 failures, 0 errors`
 - Remaining open closure gap is still remote publication/package proof for `bbin install io.github.hugoduncan/psi --as psi`; local/install/docs/policy/debug follow-up fixes are now in place.
+
+2026-04-24 — PR #42 CI follow-up
+
+- PR #42 was still failing in GitHub Actions in the `Clojure Tests` job, specifically the tmux-backed integration test `psi.tui.tmux-integration-harness-test/tui-tmux-harness-basic-scenario-test`.
+- The observed GH failure shape was a startup timeout followed by a missing tmux server snapshot, which initially looked like a flaky TUI/tmux startup issue.
+- Investigation showed the more direct cause was launcher startup failure in the CI-installed `psi` shim path:
+  - the integration-job shim invokes `bb bb/psi.clj -- ...`
+  - `bb/psi.clj` now depends on `psi.launcher`
+  - `psi.launcher` lives under `bases/main/src`, which was not on babashka's classpath from `bb.edn`
+- Added `bases/main/src` to the top-level `bb.edn` `:paths` so `bb bb/psi.clj ...` can load `psi.launcher` in ordinary repo-local and CI shim execution.
+- After that fix, direct launcher invocation became runnable (`bb bb/psi.clj --help` reached the launcher path rather than failing namespace resolution), but installed-mode default policy immediately exposed a second problem for repo/CI shim usage:
+  - installed policy materializes psi self-basis as git deps
+  - local repo/CI shim execution should use the development realization policy instead
+- Updated the CI integration-job shim to set `PSI_LAUNCHER_POLICY=development` explicitly, both in the generated `psi` wrapper and in the job environment.
+- Tightened the shim smoke check to fail fast instead of swallowing launcher startup problems:
+  - changed `... >/dev/null || true` to a plain launcher invocation so CI will stop immediately if the shim cannot start.
+- Local verification after the fixes:
+  - `clojure -M:test --focus psi.tui.tmux-integration-harness-test --skip-meta foo` → passes (`1 tests, 1 assertions, 0 failures`)
+  - `bb bb/psi.clj --help` now resolves launcher code instead of failing with `Could not locate psi/launcher...`
+- Net result: the PR failure was not a tmux harness logic regression; it was a launcher-classpath plus policy-selection mismatch in the CI shim path.

@@ -111,13 +111,15 @@ jobs:
           BB_BIN="$(command -v bb)"
           export BB="$BB_BIN"
           echo "BB=$BB_BIN" >> "$GITHUB_ENV"
+          echo "PSI_LAUNCHER_POLICY=development" >> "$GITHUB_ENV"
           cat > "$HOME/.local/bin/psi" <<EOF
           #!/usr/bin/env bash
+          export PSI_LAUNCHER_POLICY=development
           exec "$BB_BIN" bb/psi.clj -- "\$@"
           EOF
           chmod +x "$HOME/.local/bin/psi"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/psi" --launcher-debug --help >/dev/null || true
+          "$HOME/.local/bin/psi" --launcher-debug --help >/dev/null
 
       - name: Run Clojure tests
         run: bb clojure:test

@@ -1,4 +1,4 @@
-{:paths ["bb" ".bbum/lib"]
+{:paths ["bb" ".bbum/lib" "bases/main/src"]
  :bbin/bin {psi {:main-opts ["bb/psi.clj"]}}
  :tasks
  {:requires ([babashka.tasks :refer [shell]]
