@@ -105,6 +105,12 @@ jobs:
           sudo apt-get install -y tmux
           tmux -V
 
+      - name: Install psi launcher for integration tests
+        run: |
+          bbin install . --as psi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/psi" --launcher-debug --help >/dev/null || true
+
       - name: Run Clojure tests
         run: bb clojure:test
 
