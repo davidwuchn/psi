@@ -12,7 +12,7 @@
   "psi Emacs frontend."
   :group 'applications)
 
-(defcustom psi-emacs-command '("clojure" "-M:psi" "--rpc-edn")
+(defcustom psi-emacs-command '("psi" "--rpc-edn")
   "Command used to start the owned psi rpc-edn subprocess."
   :type '(repeat string)
   :safe (lambda (value)

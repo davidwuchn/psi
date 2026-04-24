@@ -145,7 +145,7 @@ Scenario:
 3. send `/history` and assert backend history output appears
 4. send `/thinking`, auto-complete backend-requested frontend action, and assert result
 5. send `/quit` and assert buffer exits"
-  (let ((psi-emacs-command '("clojure" "-M:psi" "--rpc-edn"))
+  (let ((psi-emacs-command '("psi" "--rpc-edn"))
         (psi-emacs-working-directory default-directory)
         (buffer nil)
         (frontend-prompts nil)

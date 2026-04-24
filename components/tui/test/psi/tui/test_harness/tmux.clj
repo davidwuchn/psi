@@ -6,8 +6,11 @@
    [clojure.string :as str]
    [psi.tui.ansi :as ansi]))
 
-(def default-launch-command
-  "exec clojure -M:psi --tui")
+(def canonical-launch-command
+  "exec psi --tui")
+
+(def repo-local-launch-command
+  "exec bb bb/psi.clj -- --tui")
 
 (def default-startup-timeout-ms 120000)
 (def default-step-timeout-ms 15000)
@@ -23,6 +26,22 @@
 (defn tmux-available?
   []
   (zero? (:exit (run-sh "command -v tmux >/dev/null 2>&1"))))
+
+(defn command-available?
+  [cmd]
+  (zero? (:exit (run-sh (format "command -v %s >/dev/null 2>&1" cmd)))))
+
+(defn launcher-command
+  []
+  (cond
+    (command-available? "psi")
+    canonical-launch-command
+
+    (command-available? "bb")
+    repo-local-launch-command
+
+    :else
+    canonical-launch-command))
 
 (defn ci-env?
   []
@@ -132,7 +151,7 @@
 (defn start-session!
   [{:keys [session-name working-dir launch-command]
     :or {working-dir (str (.getCanonicalPath (io/file ".")))
-         launch-command default-launch-command}}]
+         launch-command (launcher-command)}}]
   (run-sh (format "tmux new-session -d -s %s -c %s"
                   session-name
                   (pr-str working-dir)))
@@ -182,7 +201,7 @@
            help-marker
            keep-session-on-failure?]
     :or {working-dir (str (.getCanonicalPath (io/file ".")))
-         launch-command default-launch-command
+         launch-command (launcher-command)
          startup-timeout-ms default-startup-timeout-ms
          step-timeout-ms default-step-timeout-ms
          ready-markers default-ready-markers
