@@ -1,0 +1,93 @@
+- [ ] Slice 1 — Establish launcher skeleton and CLI contract
+  - [ ] Add a babashka launcher entrypoint suitable for `bbin` installation
+  - [ ] Implement launcher-only arg parsing for `--cwd <path>`
+  - [ ] Implement launcher-only arg parsing for `--launcher-debug`
+  - [ ] Ensure launcher-only flags are consumed locally and not forwarded to `psi.main`
+  - [ ] Ensure ordinary psi runtime flags are forwarded unchanged and in order
+  - [ ] Implement the exec handoff shape to Clojure CLI / `psi.main`
+  - [ ] Add focused tests for arg separation, cwd selection, and pass-through behavior
+
+- [ ] Slice 2 — Implement manifest read/merge and expanded-entry model in the launcher
+  - [ ] Read user manifest from `~/.psi/agent/extensions.edn`
+  - [ ] Read project manifest from `<cwd>/.psi/extensions.edn`
+  - [ ] Implement project-over-user merge by lib key
+  - [ ] Reuse or mirror canonical manifest validation semantics where appropriate
+  - [ ] Add launcher-local expanded-entry pipeline
+    - [ ] merged entry
+    - [ ] psi-owned catalog lookup
+    - [ ] default filling
+    - [ ] `:psi/init` inference for recognized psi-owned libs
+    - [ ] final validation
+  - [ ] Add clear error shaping for malformed manifests
+  - [ ] Add clear error shaping for incomplete defaults
+  - [ ] Add clear error shaping for ambiguous init inference
+  - [ ] Add focused tests for user/project precedence and entry expansion behavior
+
+- [ ] Slice 3 — Define and wire the psi-owned extension catalog
+  - [ ] Introduce one explicit catalog representation owned by psi
+  - [ ] Populate the catalog for the psi-owned extensions covered by this task
+  - [ ] Store explicit `:psi/init` values in catalog entries rather than deriving them from naming convention at runtime
+  - [ ] Define the policy boundary between logical catalog identity and dev-vs-installed realization
+  - [ ] Define one explicit launcher-owned source of truth for the default psi runtime/version identity used in installed mode
+  - [ ] Ensure catalog entries are sufficient to expand minimal `{}` psi-owned manifest entries into concrete dep entries
+  - [ ] Add focused tests for catalog completeness
+  - [ ] Add focused tests for deterministic init inference
+  - [ ] Add focused tests proving unrecognized libs do not receive psi-owned defaults
+
+- [ ] Slice 4 — Implement startup basis synthesis and exec integration
+  - [ ] Define launcher policy for psi self-basis construction
+  - [ ] Make dev-vs-installed realization policy explicit rather than heuristic
+  - [ ] Synthesize startup basis from psi self-basis plus expanded manifest deps
+  - [ ] Materialize the basis through `-Sdeps` pre-startup Clojure CLI basis construction
+  - [ ] Enforce coherent one-family dep entries only
+  - [ ] Add launcher debug output for:
+    - [ ] effective cwd
+    - [ ] manifest presence
+    - [ ] merged manifest keys
+    - [ ] psi-owned default usage
+    - [ ] inferred `:psi/init` usage
+    - [ ] effective basis additions summary
+  - [ ] Add focused tests for basis synthesis shape
+  - [ ] Add focused tests for basis synthesis failure conditions
+  - [ ] Prove a recognized psi-owned minimal `{}` entry expands into startup basis data successfully
+  - [ ] Prove an explicit third-party manifest entry participates in startup basis construction without psi-owned defaulting
+  - [ ] Prove conflicting coordinate-family data fails clearly before exec
+
+- [ ] Slice 5 — Connect startup runtime behavior to launcher-owned basis ownership
+  - [ ] Review startup docs/comments and runtime-facing messaging that still implies alias-owned startup
+  - [ ] Review startup docs/comments and runtime-facing messaging that still implies runtime-owned startup dependency availability
+  - [ ] Narrow misleading runtime messaging so startup ownership is clearly launcher-owned
+  - [ ] Preserve manifest introspection behavior
+  - [ ] Ensure `:restart-required` messaging remains coherent as a runtime convenience/recovery story rather than the primary startup contract
+
+- [ ] Slice 6 — BBIN packaging and installation surface
+  - [ ] Add the `bbin`-installable entrypoint/package shape
+  - [ ] Ensure installation yields a `psi` command on `PATH`
+  - [ ] Define or update any babashka package metadata needed for installation
+  - [ ] Add a lightweight proof or testable check for the installable command contract where practical
+  - [ ] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
+
+- [ ] Slice 7 — Documentation migration
+  - [ ] Update `README.md` quick start to use `bbin` installation and the `psi` command
+  - [ ] Update `doc/cli.md` to present launcher invocation as canonical
+  - [ ] Update `doc/cli.md` to distinguish launcher-only flags from forwarded psi runtime flags
+  - [ ] Update `doc/extensions-install.md` to explain launcher-owned startup dependency availability
+  - [ ] Update `doc/extensions-install.md` to document concise psi-owned manifest syntax, launcher defaults, and inferred `:psi/init`
+  - [ ] Update `doc/extensions.md` to stay consistent with the psi-owned extension catalog/defaulting story
+  - [ ] Update other startup-facing docs that still present `clojure -M:psi` as primary
+  - [ ] Add an explicit migration note mapping alias-based `clojure -M:psi ...` examples to `psi ...`
+  - [ ] Mark any retained alias-based/dev-only flows as non-canonical
+
+- [ ] Review checkpoints
+  - [ ] Confirm launcher contract and arg surface are stable after Slice 1
+  - [ ] Confirm catalog/defaulting/inference rules are concrete and deterministic after Slice 3
+  - [ ] Confirm startup basis synthesis is real and explainable after Slice 4
+  - [ ] Confirm canonical install surface exists after Slice 6
+  - [ ] Confirm docs and operator story are coherent after Slice 7
+
+- [ ] Definition of done
+  - [ ] psi can be installed as a `bbin` command named `psi`
+  - [ ] psi can be started without a user-defined `:psi` alias
+  - [ ] startup basis is derived from user/project extension manifests before psi starts
+  - [ ] recognized psi-owned manifest entries can use concise syntax through launcher defaults and deterministic `:psi/init` inference
+  - [ ] docs present the launcher-owned startup path as the canonical operator workflow
