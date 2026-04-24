@@ -1,8 +1,10 @@
 (ns psi.launcher
-  "Launcher-side CLI parsing and command construction for psi startup."
+  "Launcher-side CLI parsing and startup-basis construction for psi startup."
   (:require
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [psi.launcher.extensions :as extensions]))
 
 (defn- blank-path?
   [x]
@@ -20,9 +22,9 @@
    Throws ex-info on malformed launcher-owned args."
   [args]
   (loop [remaining args
-         parsed    {:cwd nil
-                    :launcher-debug? false
-                    :psi-args []}]
+         parsed {:cwd nil
+                 :launcher-debug? false
+                 :psi-args []}]
     (if-let [arg (first remaining)]
       (cond
         (= "--cwd" arg)
@@ -47,19 +49,121 @@
   (let [candidate (or cwd process-cwd)]
     (.getAbsolutePath (io/file process-cwd candidate))))
 
-(defn build-clojure-command
-  "Build the clojure CLI argv used for launcher handoff.
+(defn user-manifest-path
+  [home]
+  (.getAbsolutePath (io/file home ".psi" "agent" "extensions.edn")))
 
-   Slice 1 intentionally keeps the startup handoff minimal and repo-local:
-   launch psi via the project deps.edn without relying on a user-defined alias."
-  [{:keys [psi-args]}]
-  (into ["clojure" "-M" "-m" "psi.main"] psi-args))
+(defn project-manifest-path
+  [cwd]
+  (.getAbsolutePath (io/file cwd ".psi" "extensions.edn")))
+
+(defn- read-edn-file
+  [file]
+  (-> file slurp edn/read-string))
+
+(defn- absolutize-local-root
+  [base-dir dep]
+  (if-let [local-root (:local/root dep)]
+    (let [f (io/file local-root)]
+      (if (.isAbsolute f)
+        dep
+        (assoc dep :local/root (.getAbsolutePath (io/file base-dir local-root)))))
+    dep))
+
+(defn repo-basis-config
+  [launcher-root]
+  (read-edn-file (io/file launcher-root "deps.edn")))
+
+(defn- materialize-self-dep
+  [launcher-root policy dep]
+  (case policy
+    :development
+    (absolutize-local-root launcher-root dep)
+
+    :installed
+    (if-let [local-root (:local/root dep)]
+      (-> dep
+          (dissoc :local/root)
+          (assoc :git/url extensions/default-psi-git-url
+                 :git/tag extensions/default-installed-psi-version
+                 :deps/root local-root))
+      dep)
+
+    (throw (ex-info "Unknown launcher policy"
+                    {:stage :basis-construction
+                     :policy policy}))))
+
+(defn- psi-self-basis-from-repo-config
+  [repo-config launcher-root policy]
+  {:deps (into {}
+               (map (fn [[lib dep]]
+                      [lib (materialize-self-dep launcher-root policy dep)]))
+               (:deps repo-config))
+   :paths []})
+
+(defn psi-self-basis
+  [launcher-root policy]
+  (-> (repo-basis-config launcher-root)
+      (psi-self-basis-from-repo-config launcher-root policy)
+      (update :deps assoc 'nrepl/nrepl {:mvn/version "1.5.1"})))
+
+(defn manifest-state
+  [cwd policy]
+  (let [home              (System/getProperty "user.home")
+        user-path         (user-manifest-path home)
+        project-path      (project-manifest-path cwd)
+        user-manifest     (extensions/read-manifest-file user-path)
+        project-manifest  (extensions/read-manifest-file project-path)
+        merged-manifest   (extensions/merge-manifests user-manifest project-manifest)
+        expanded-manifest (extensions/expand-manifest merged-manifest {:policy policy})
+        merged-deps       (:deps merged-manifest)]
+    {:user-path          user-path
+     :project-path       project-path
+     :user-present?      (.exists (io/file user-path))
+     :project-present?   (.exists (io/file project-path))
+     :user-manifest      user-manifest
+     :project-manifest   project-manifest
+     :merged-manifest    merged-manifest
+     :expanded-manifest  expanded-manifest
+     :defaulted-libs     (->> merged-deps
+                              (keep (fn [[lib dep]]
+                                      (when (and (extensions/recognized-psi-owned-lib? lib)
+                                                 (nil? (extensions/coordinate-family dep)))
+                                        lib)))
+                              vec)
+     :inferred-init-libs (->> merged-deps
+                              (keep (fn [[lib dep]]
+                                      (when (and (extensions/recognized-psi-owned-lib? lib)
+                                                 (not (contains? dep :psi/init)))
+                                        lib)))
+                              vec)}))
+
+(defn startup-basis
+  [launcher-root cwd policy]
+  (let [self-basis    (psi-self-basis launcher-root policy)
+        manifest-info (manifest-state cwd policy)]
+    {:basis (update self-basis :deps merge (get-in manifest-info [:expanded-manifest :deps]))
+     :manifest-info manifest-info
+     :policy policy}))
+
+(defn build-clojure-command
+  "Build the clojure CLI argv used for launcher handoff."
+  [{:keys [basis psi-args]}]
+  (into ["clojure" "-Sdeps" (pr-str basis) "-M" "-m" "psi.main"] psi-args))
 
 (defn launch-plan
-  "Build a pure launcher execution plan from raw args and process cwd."
-  [args process-cwd]
-  (let [parsed (parse-launcher-args args)]
-    {:cwd             (resolve-effective-cwd parsed process-cwd)
+  "Build a pure launcher execution plan from raw args, process cwd, launcher
+   root, and explicit realization policy."
+  [args process-cwd launcher-root policy]
+  (let [parsed (parse-launcher-args args)
+        cwd (resolve-effective-cwd parsed process-cwd)
+        basis-state (startup-basis launcher-root cwd policy)]
+    {:cwd cwd
+     :launcher-root launcher-root
      :launcher-debug? (:launcher-debug? parsed)
-     :psi-args        (:psi-args parsed)
-     :command         (build-clojure-command parsed)}))
+     :psi-args (:psi-args parsed)
+     :policy policy
+     :basis (:basis basis-state)
+     :manifest-info (:manifest-info basis-state)
+     :command (build-clojure-command {:basis (:basis basis-state)
+                                      :psi-args (:psi-args parsed)})}))

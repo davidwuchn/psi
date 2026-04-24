@@ -7,32 +7,32 @@
   - [x] Implement the exec handoff shape to Clojure CLI / `psi.main`
   - [x] Add focused tests for arg separation, cwd selection, and pass-through behavior
 
-- [ ] Slice 2 — Implement manifest read/merge and expanded-entry model in the launcher
+- [x] Slice 2 — Implement manifest read/merge and expanded-entry model in the launcher
   - [ ] Read user manifest from `~/.psi/agent/extensions.edn`
   - [ ] Read project manifest from `<cwd>/.psi/extensions.edn`
-  - [ ] Implement project-over-user merge by lib key
-  - [ ] Reuse or mirror canonical manifest validation semantics where appropriate
-  - [ ] Add launcher-local expanded-entry pipeline
-    - [ ] merged entry
-    - [ ] psi-owned catalog lookup
-    - [ ] default filling
-    - [ ] `:psi/init` inference for recognized psi-owned libs
-    - [ ] final validation
-  - [ ] Add clear error shaping for malformed manifests
-  - [ ] Add clear error shaping for incomplete defaults
+  - [x] Implement project-over-user merge by lib key
+  - [x] Reuse or mirror canonical manifest validation semantics where appropriate
+  - [x] Add launcher-local expanded-entry pipeline
+    - [x] merged entry
+    - [x] psi-owned catalog lookup
+    - [x] default filling
+    - [x] `:psi/init` inference for recognized psi-owned libs
+    - [x] final validation
+  - [x] Add clear error shaping for malformed manifests
+  - [x] Add clear error shaping for incomplete defaults
   - [ ] Add clear error shaping for ambiguous init inference
-  - [ ] Add focused tests for user/project precedence and entry expansion behavior
+  - [x] Add focused tests for user/project precedence and entry expansion behavior
 
-- [ ] Slice 3 — Define and wire the psi-owned extension catalog
-  - [ ] Introduce one explicit catalog representation owned by psi
-  - [ ] Populate the catalog for the psi-owned extensions covered by this task
-  - [ ] Store explicit `:psi/init` values in catalog entries rather than deriving them from naming convention at runtime
-  - [ ] Define the policy boundary between logical catalog identity and dev-vs-installed realization
-  - [ ] Define one explicit launcher-owned source of truth for the default psi runtime/version identity used in installed mode
-  - [ ] Ensure catalog entries are sufficient to expand minimal `{}` psi-owned manifest entries into concrete dep entries
-  - [ ] Add focused tests for catalog completeness
-  - [ ] Add focused tests for deterministic init inference
-  - [ ] Add focused tests proving unrecognized libs do not receive psi-owned defaults
+- [x] Slice 3 — Define and wire the psi-owned extension catalog
+  - [x] Introduce one explicit catalog representation owned by psi
+  - [x] Populate the catalog for the psi-owned extensions covered by this task
+  - [x] Store explicit `:psi/init` values in catalog entries rather than deriving them from naming convention at runtime
+  - [x] Define the policy boundary between logical catalog identity and dev-vs-installed realization
+  - [x] Define one explicit launcher-owned source of truth for the default psi runtime/version identity used in installed mode
+  - [x] Ensure catalog entries are sufficient to expand minimal `{}` psi-owned manifest entries into concrete dep entries
+  - [x] Add focused tests for catalog completeness
+  - [x] Add focused tests for deterministic init inference
+  - [x] Add focused tests proving unrecognized libs do not receive psi-owned defaults
 
 - [ ] Slice 4 — Implement startup basis synthesis and exec integration
   - [ ] Define launcher policy for psi self-basis construction
