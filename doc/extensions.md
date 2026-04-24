@@ -212,14 +212,20 @@ Purpose: minimal example extension used in docs/tests.
 
 ## Install manifests
 
-Psi now also supports `extensions.edn` install manifests for explicit
+Psi now supports launcher-owned `extensions.edn` install manifests for explicit
 user/project extension configuration.
 
 See:
 - [`doc/extensions-install.md`](extensions-install.md)
 
+Canonical ownership:
+- launcher owns startup dependency availability
+- runtime owns post-startup extension behavior, introspection, and reload/apply convenience behavior
+
 Current behavior:
-- manifest-backed `:local/root`, git, and mvn extension entries are startup-activatable when their dependencies and `:psi/init` vars are realizable in the runtime
+- user/project manifests participate in startup basis construction before `psi.main` starts
+- recognized psi-owned extension libs can use concise manifest entries such as `{}` and receive launcher defaults plus deterministic `:psi/init` inference
+- manifest-backed `:local/root`, git, and mvn extension entries are startup-activatable when their expanded dependency entries are valid
 - local-root installs activate from resolved source file paths
 - non-file-backed git/mvn installs activate by resolving and calling `:psi/init`, not by source-file path discovery
 - non-file-backed manifest installs register in the live extension registry under stable identities of the form `manifest:{lib}`

@@ -34,24 +34,49 @@
   - [x] Add focused tests for deterministic init inference
   - [x] Add focused tests proving unrecognized libs do not receive psi-owned defaults
 
-- [ ] Slice 4 — Implement startup basis synthesis and exec integration
-  - [ ] Define launcher policy for psi self-basis construction
-  - [ ] Make dev-vs-installed realization policy explicit rather than heuristic
-  - [ ] Synthesize startup basis from psi self-basis plus expanded manifest deps
-  - [ ] Materialize the basis through `-Sdeps` pre-startup Clojure CLI basis construction
-  - [ ] Enforce coherent one-family dep entries only
-  - [ ] Add launcher debug output for:
-    - [ ] effective cwd
-    - [ ] manifest presence
-    - [ ] merged manifest keys
-    - [ ] psi-owned default usage
-    - [ ] inferred `:psi/init` usage
-    - [ ] effective basis additions summary
-  - [ ] Add focused tests for basis synthesis shape
-  - [ ] Add focused tests for basis synthesis failure conditions
-  - [ ] Prove a recognized psi-owned minimal `{}` entry expands into startup basis data successfully
-  - [ ] Prove an explicit third-party manifest entry participates in startup basis construction without psi-owned defaulting
-  - [ ] Prove conflicting coordinate-family data fails clearly before exec
+- [x] Slice 4 — Implement startup basis synthesis and exec integration
+  - [x] Define launcher policy for psi self-basis construction
+  - [x] Make dev-vs-installed realization policy explicit rather than heuristic
+  - [x] Synthesize startup basis from psi self-basis plus expanded manifest deps
+  - [x] Materialize the basis through `-Sdeps` pre-startup Clojure CLI basis construction
+  - [x] Enforce coherent one-family dep entries only
+  - [x] Add launcher debug output for:
+    - [x] effective cwd
+    - [x] manifest presence
+    - [x] merged manifest keys
+    - [x] psi-owned default usage
+    - [x] inferred `:psi/init` usage
+    - [x] effective basis additions summary
+  - [x] Add focused tests for basis synthesis shape
+  - [x] Add focused tests for basis synthesis failure conditions
+  - [x] Prove a recognized psi-owned minimal `{}` entry expands into startup basis data successfully
+  - [x] Prove an explicit third-party manifest entry participates in startup basis construction without psi-owned defaulting
+  - [x] Prove conflicting coordinate-family data fails clearly before exec
+
+- [ ] Slice 5 — Connect startup runtime behavior to launcher-owned basis ownership
+  - [x] Review startup docs/comments and runtime-facing messaging that still implies alias-owned startup
+  - [x] Review startup docs/comments and runtime-facing messaging that still implies runtime-owned startup dependency availability
+  - [x] Narrow misleading runtime messaging so startup ownership is clearly launcher-owned
+  - [x] Preserve manifest introspection behavior
+  - [x] Ensure `:restart-required` messaging remains coherent as a runtime convenience/recovery story rather than the primary startup contract
+
+- [x] Slice 6 — BBIN packaging and installation surface
+  - [x] Add the `bbin`-installable entrypoint/package shape
+  - [x] Ensure installation yields a `psi` command on `PATH`
+  - [x] Define or update any babashka package metadata needed for installation
+  - [x] Add a lightweight proof or testable check for the installable command contract where practical
+  - [ ] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
+
+- [x] Slice 7 — Documentation migration
+  - [x] Update `README.md` quick start to use `bbin` installation and the `psi` command
+  - [x] Update `doc/cli.md` to present launcher invocation as canonical
+  - [x] Update `doc/cli.md` to distinguish launcher-only flags from forwarded psi runtime flags
+  - [x] Update `doc/extensions-install.md` to explain launcher-owned startup dependency availability
+  - [x] Update `doc/extensions-install.md` to document concise psi-owned manifest syntax, launcher defaults, and inferred `:psi/init`
+  - [ ] Update `doc/extensions.md` to stay consistent with the psi-owned extension catalog/defaulting story
+  - [x] Update other startup-facing docs that still present `clojure -M:psi` as primary
+  - [x] Add an explicit migration note mapping alias-based `clojure -M:psi ...` examples to `psi ...`
+  - [x] Mark any retained alias-based/dev-only flows as non-canonical
 
 - [ ] Slice 5 — Connect startup runtime behavior to launcher-owned basis ownership
   - [ ] Review startup docs/comments and runtime-facing messaging that still implies alias-owned startup

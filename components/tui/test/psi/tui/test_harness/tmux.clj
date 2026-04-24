@@ -7,7 +7,7 @@
    [psi.tui.ansi :as ansi]))
 
 (def default-launch-command
-  "exec clojure -M:psi --tui")
+  "exec psi --tui")
 
 (def default-startup-timeout-ms 120000)
 (def default-step-timeout-ms 15000)

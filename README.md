@@ -4,7 +4,6 @@ A self-evolving AI coding agent built in Clojure. Statechart-driven,
 EQL-queryable, extensible. Inspired by
 [pi-mono](https://github.com/badlogic/pi-mono).
 
-
 ## Values
 
 - Extensions can completely customise the agent.
@@ -16,26 +15,40 @@ EQL-queryable, extensible. Inspired by
 
 ## Quick Start
 
-Define a user alias in `~/.clojure/deps.edn` that points to your local psi clone:
+Install the canonical launcher:
 
-```clojure
-{:aliases
- {:psi {:replace-deps {psi/psi {:local/root "/path/to/your/psi-main"}}
-        :main-opts ["-m" "psi.main"]}}}
+```bash
+bbin install io.github.hugoduncan/psi --as psi
 ```
 
-Then run psi with that alias:
+Then run psi directly:
 
 ```bash
 # Bare console
-clojure -M:psi
+psi
 
 # Terminal UI
-clojure -M:psi --tui
+psi --tui
+
+# RPC mode
+psi --rpc-edn
 ```
 
-For CLI flags, environment variables, and switch behavior, see:
+For CLI flags, launcher-only flags, environment variables, and switch behavior, see:
 - [`doc/cli.md`](doc/cli.md)
+
+### Migration note
+
+Old alias-based startup is now non-canonical:
+
+```bash
+clojure -M:psi           -> psi
+clojure -M:psi --tui     -> psi --tui
+clojure -M:psi --rpc-edn -> psi --rpc-edn
+```
+
+Development contributors may still use repo-local invocation paths during transition,
+but the launcher-owned `psi` command is the primary operator-facing startup surface.
 
 ### Emacs UI usage
 
@@ -72,8 +85,8 @@ workflow-backed extensions.
 
 ### Extension install manifests
 
-For the deps-shaped `extensions.edn` install model, apply semantics, and
-introspection fields, see:
+For the deps-shaped `extensions.edn` install model, launcher-owned startup basis construction,
+concise psi-owned manifest syntax, apply semantics, and introspection fields, see:
 - [`doc/extensions-install.md`](doc/extensions-install.md)
 
 Note: extension slash commands now route implicit extension query/mutate calls through

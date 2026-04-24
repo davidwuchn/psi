@@ -1,16 +1,22 @@
 # Extension install manifests
 
-Psi supports a canonical extension install manifest model based on
-`extensions.edn` files that stay close to ordinary `deps.edn`.
+Psi now treats launcher-owned startup basis construction as the canonical way to
+make extension dependencies available at startup.
 
-Current behavior:
-- manifest-backed `:local/root`, git, and mvn extensions are startup-activatable when their dependencies and `:psi/init` vars are realizable in the runtime
-- explicit reload/apply uses the same manifest-aware activation layer as startup
-- local-root installs activate from resolved source file paths
-- non-file-backed git/mvn installs activate by resolving and calling `:psi/init`
-- non-file-backed manifest installs register in the live extension registry under stable identities of the form `manifest:{lib}`
-- reload/apply still reports `:restart-required` when dependency realization cannot be completed safely in-process
-- this repo now dogfoods the manifest model for its built-in extensions instead of relying on `.psi/extensions/*.clj` symlinks
+The launcher reads user and project extension manifests **before** `psi.main`
+starts, expands recognized psi-owned defaults, validates the effective manifest,
+and supplies the resulting dependency basis at launch time.
+
+Runtime introspection and reload/apply still exist, but they are no longer the
+primary startup dependency mechanism.
+
+## Canonical startup relationship
+
+- launcher owns startup dependency availability
+- runtime owns post-startup extension behavior, introspection, and reload/apply convenience paths
+
+This closes the phase-order problem where manifests discovered after JVM startup
+could not reliably influence the initial classpath.
 
 ## Manifest locations
 
@@ -24,7 +30,17 @@ Merge semantics:
 - user and project manifests are read independently
 - effective entries merge by library symbol key
 - project scope overrides user scope for the same lib key
-- effective state preserves provenance in `:source-manifests` and `:scope`
+
+## Canonical startup flow
+
+1. run `psi ...`
+2. launcher determines effective cwd/worktree
+3. launcher reads user and project manifests
+4. launcher merges them with project-over-user precedence by lib key
+5. launcher expands recognized psi-owned defaults
+6. launcher infers deterministic `:psi/init` for recognized psi-owned libs when omitted
+7. launcher validates the expanded manifest
+8. launcher constructs startup basis and launches psi
 
 ## Manifest shape
 
@@ -58,58 +74,67 @@ Example:
   {:mvn/version "2.5.1"}}}
 ```
 
+## Minimal psi-owned manifest syntax
+
+Recognized psi-owned extension libs can use concise manifest entries.
+
+Canonical minimal form:
+
+```clojure
+{:deps
+ {psi/mementum {}
+  psi/munera {}
+  psi/work-on {}
+  psi/workflow-loader {}}}
+```
+
+For those recognized libs, the launcher supplies missing fields from its
+explicit psi-owned extension catalog, including:
+- source identity
+- version/ref identity
+- `:deps/root`
+- `:psi/init`
+
+Selective override remains valid:
+
+```clojure
+{:deps
+ {psi/mementum {:git/sha "override-sha"}
+  psi/munera   {:psi/init extensions.munera/init}}}
+```
+
+Important rules:
+- minimal `{}` syntax is valid only for recognized psi-owned extension libs in the launcher catalog
+- explicit manifest fields override launcher defaults field-by-field
+- launcher must still validate the final entry as one coherent coordinate family
+- launcher does **not** infer `:psi/init` for arbitrary third-party libraries
+
 ## Supported coordinate forms
 
-Extension entries may use exactly one dependency coordinate family:
+Each expanded dep entry must use exactly one dependency coordinate family:
 - `:local/root`
-- git coordinates, with required `:git/sha`
+- git coordinates
 - `:mvn/version`
 
-Validation rules currently enforced:
+Validation rules currently enforced by launcher expansion:
 - top-level manifest must be a map
 - `:deps` must be a map
-- extension metadata requires `:psi/init`
-- extension entries must declare exactly one coordinate family
-- git extension entries must include `:git/sha`
-- duplicate effective `:psi/init` claims across distinct lib keys are hard errors
+- dependency entry must be a map
+- effective dependency entry must resolve to one coherent coordinate family
+- git dependency entries require `:git/url` and one of `:git/sha` or `:git/tag`
+- minimal psi-owned syntax is allowed only for recognized catalogued psi-owned libs
 
-Project-scope `:local/root` is allowed for development-oriented installs, but is
-surfaced as non-reproducible.
+## Startup vs runtime behavior
 
-## Apply behavior
+Startup:
+- launcher builds the startup basis before psi starts
+- recognized psi-owned extension deps can become concrete launch-time deps without repeated boilerplate
+- third-party deps must remain explicit enough to validate and enter the startup basis
 
-The explicit apply path is the existing extension reload flow.
-
-Current outcomes:
-- `:applied`
-  - manifest state is valid
-  - all enabled manifest-backed extensions that can be realized safely in-process were activated successfully
-- `:restart-required`
-  - manifest state is valid
-  - at least one enabled manifest-backed extension still requires restart-oriented dependency realization in the current runtime
-- no success state
-  - manifest state is invalid, or at least one enabled manifest-backed extension failed to resolve/load
-
-Runtime distinction:
-- startup attempts to realize required non-local manifest deps before activation
-- explicit reload/apply uses the same activation layer, but may conservatively report `:restart-required` when in-process dependency realization is not safe for the current runtime
-
-## Effective per-entry statuses
-
-The canonical effective entry map now uses statuses such as:
-- `:loaded`
-- `:failed`
-- `:disabled`
-- `:restart-required`
-- `:not-applicable`
-- `:configured`
-
-Typical meanings:
-- `:loaded` — enabled manifest-backed extension successfully activated
-- `:failed` — enabled manifest-backed extension could not realize, resolve, or load successfully
-- `:disabled` — extension entry has `:psi/enabled false`
-- `:restart-required` — valid extension entry currently requires restart-oriented realization in the active runtime
-- `:not-applicable` — support dep without `:psi/init`
+Runtime:
+- introspection still reports user/project/effective extension state
+- reload/apply remains useful as a convenience path after startup
+- `:restart-required` remains a runtime convenience/recovery status, not the canonical startup contract
 
 ## Introspection
 
@@ -129,14 +154,6 @@ Example query:
           :psi.extensions/effective
           :psi.extensions/diagnostics
           :psi.extensions/last-apply]"
- :entity "{:psi.agent-session/session-id \"sid\"}"}
-```
-
-Typical targeted inspection:
-
-```clojure
-{:action "query"
- :query "[:psi.extensions/diagnostics :psi.extensions/last-apply]"
  :entity "{:psi.agent-session/session-id \"sid\"}"}
 ```
 
@@ -160,17 +177,21 @@ Examples:
 - `manifest:psi/mementum`
 - `manifest:psi/workflow-loader`
 
-## Recommended current workflow
+## Recommended workflow
+
+### Startup install
+
+1. add entries to `~/.psi/agent/extensions.edn` or `.psi/extensions.edn`
+2. start psi with `psi ...`
+3. inspect extension state via introspection when needed
 
 ### Local development install
 
-1. Add a project or user manifest entry with `:local/root` and `:psi/init`
-2. Run explicit extension reload/apply
-3. Inspect `:psi.extensions/effective`, `:psi.extensions/diagnostics`, and `:psi.extensions/last-apply`
+Use explicit `:local/root` plus `:psi/init` for non-catalog third-party work, or
+minimal `{}` syntax for recognized psi-owned extensions when launcher defaults are desired.
 
 ### Git or mvn install
 
-1. Add a manifest entry with git+sha or mvn coords and `:psi/init`
-2. Startup will attempt activation when dependency realization is possible in the current runtime
-3. Explicit extension reload/apply uses the same activation layer and may either activate successfully or report `:restart-required`, depending on whether dependency realization is safe in-process
-4. Inspect `:psi.extensions/effective`, `:psi.extensions/diagnostics`, and `:psi.extensions/last-apply`
+1. add a manifest entry with explicit git/mvn coordinates and `:psi/init`, or use recognized psi-owned minimal syntax
+2. start psi through the launcher so the basis is built before startup
+3. inspect `:psi.extensions/effective`, `:psi.extensions/diagnostics`, and `:psi.extensions/last-apply` as needed

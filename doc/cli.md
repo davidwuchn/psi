@@ -1,12 +1,48 @@
 # CLI Reference
 
-Command line switches for starting psi (`clojure -M:psi ...`).
+psi now has a launcher-owned canonical CLI surface.
 
-## Basic usage
+## Canonical usage
 
 ```bash
-clojure -M:psi [flags]
+psi [launcher-flags] [psi-runtime-flags]
 ```
+
+The launcher constructs startup basis data before `psi.main` starts.
+That means user/project extension manifests participate in classpath and
+extension availability before the JVM launches.
+
+## Install
+
+Preferred operator path:
+
+```bash
+bbin install io.github.hugoduncan/psi --as psi
+```
+
+Repo-local development path:
+
+```bash
+bb bb/psi.clj -- --tui
+```
+
+Legacy alias-based startup such as `clojure -M:psi ...` is now non-canonical.
+It may still be useful in development or transition periods, but it is no
+longer the primary documented startup contract.
+
+## Launcher-only flags
+
+These are consumed by the launcher and are **not** forwarded to `psi.main`.
+
+- `--cwd <path>`
+  - Override the working directory used for project manifest lookup and the launched psi process.
+- `--launcher-debug`
+  - Print a pre-launch summary of cwd, manifest presence, merged manifest libs,
+    psi-owned defaults, inferred `:psi/init` usage, and basis summary.
+
+## Forwarded psi runtime flags
+
+All other flags are forwarded unchanged to `psi.main`.
 
 ## Mode and session flags
 
@@ -74,37 +110,50 @@ Session/runtime tuning:
 
 ```bash
 # Console
-clojure -M:psi
+psi
 
 # TUI
-clojure -M:psi --tui
+psi --tui
 
 # RPC mode
-clojure -M:psi --rpc-edn
+psi --rpc-edn
 
 # RPC mode with transport trace file
-clojure -M:psi --rpc-edn --rpc-trace-file /tmp/psi-rpc.ndedn
+psi --rpc-edn --rpc-trace-file /tmp/psi-rpc.ndedn
 
 # nREPL on random port
-clojure -M:psi --nrepl
+psi --nrepl
 
 # nREPL on fixed port
-clojure -M:psi --nrepl 7888
+psi --nrepl 7888
 
 # TUI + nREPL
-clojure -M:psi --tui --nrepl
-
-# Runtime nREPL with dev + test classpath available
-clojure -M:run:dev:test-paths --nrepl
+psi --tui --nrepl
 
 # Pick model key
-clojure -M:psi --model sonnet-4.6
+psi --model sonnet-4.6
 
 # Memory retention
-clojure -M:psi --memory-store in-memory \
+psi --memory-store in-memory \
   --memory-retention-snapshots 500 \
   --memory-retention-deltas 2000
 
 # Disable auto fallback to in-memory
-clojure -M:psi --memory-store-fallback off
+psi --memory-store-fallback off
+
+# Launcher debug
+psi --launcher-debug --tui
+
+# Override cwd for manifest lookup and launched process
+psi --cwd /path/to/project --rpc-edn
+```
+
+## Migration note
+
+Old alias-based examples map directly:
+
+```bash
+clojure -M:psi            -> psi
+clojure -M:psi --tui      -> psi --tui
+clojure -M:psi --rpc-edn  -> psi --rpc-edn
 ```

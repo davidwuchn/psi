@@ -14,3 +14,15 @@
 - Added launcher-owned installed defaults for recognized psi-owned extension libs using one explicit git source identity plus one explicit default installed psi version.
 - Implemented pure manifest read, project-over-user merge, coordinate-family validation, psi-owned default expansion, and deterministic init inference.
 - Added focused tests proving minimal recognized psi-owned syntax expands, explicit fields override defaults, unrecognized libs do not receive psi-owned defaults, and incoherent entries fail before basis synthesis.
+
+2026-04-24 — Slice 4 / Slice 5 / Slice 6 / Slice 7 progression
+
+- Extended launcher planning so startup basis construction now materializes through `-Sdeps` using psi self-basis plus expanded manifest deps.
+- Made launcher policy explicit in code shape with separate development vs installed materialization rules.
+- Added launcher debug reporting for cwd, manifest presence, merged lib keys, psi-owned default usage, inferred init usage, and basis summary.
+- Added `.bbin/metadata.edn` to provide a bbin-installable `psi` command surface.
+- Migrated top-level/operator docs to present `psi` as the canonical startup command.
+- Updated Emacs/TUI-facing docs and defaults toward launcher-owned startup usage.
+- Updated runtime-facing usage comments so launcher-owned startup is the primary story and repo-local `clojure -M:run ...` flows are explicitly development/non-canonical.
+- One remaining slice-6 proof remains: direct evidence that an actual bbin-installed command exercises the exact same launcher path end-to-end.
+- One remaining slice-7 doc cleanup remains: align `doc/extensions.md` fully with the psi-owned launcher catalog/defaulting story.

@@ -5,15 +5,18 @@
    RPC transport concerns live in `psi.rpc`.
 
    Usage:
-     clojure -M:run
-     clojure -M:run --model sonnet-4.6
-     clojure -M:run --log-level DEBUG
-     clojure -M:run --tui
-     clojure -M:run --nrepl            # random port
-     clojure -M:run --nrepl 7888       # specific port
-     clojure -M:run --tui --nrepl      # TUI + nREPL
-     clojure -M:run --memory-store in-memory
-     clojure -M:run --memory-store-fallback off --memory-retention-snapshots 500
+     psi
+     psi --model sonnet-4.6
+     psi --log-level DEBUG
+     psi --tui
+     psi --nrepl            # random port
+     psi --nrepl 7888       # specific port
+     psi --tui --nrepl      # TUI + nREPL
+     psi --memory-store in-memory
+     psi --memory-store-fallback off --memory-retention-snapshots 500
+
+   Development/non-canonical alternatives may still use repo-local
+   `clojure -M:run ...` invocation paths.
 
    What it does:
      1. Creates an agent session (statechart + agent-core + extension registry)
