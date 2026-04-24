@@ -59,6 +59,10 @@
                                             :custom-type (:custom-type m)}))
        (support/poll-cmd (:queue state))])
 
+    (support/context-updated? m)
+    [(app-update/handle-context-updated state m)
+     (support/poll-cmd (:queue state))]
+
     (support/agent-result? m)
     (app-update/handle-agent-result state (:result m))
 
@@ -176,6 +180,9 @@
   (cond
     (msg/key-match? m "ctrl+d") (app-update/handle-ctrl-d state)
     (and autocomplete? (msg/key-match? m "escape")) [(autocomplete/clear-autocomplete state) nil]
+    (and (not autocomplete?) (app-update/context-session-tree-actionable? state) (msg/key-match? m "ctrl+j")) [(app-update/move-context-session-tree-selection state 1) nil]
+    (and (not autocomplete?) (app-update/context-session-tree-actionable? state) (msg/key-match? m "ctrl+k")) [(app-update/move-context-session-tree-selection state -1) nil]
+    (and (not autocomplete?) (app-update/context-session-tree-actionable? state) (msg/key-match? m "alt+enter")) (app-update/submit-context-session-tree-selection state)
     (and (not (support/has-active-dialog? state)) (msg/key-match? m "escape")) (app-update/handle-idle-escape state)
     (msg/key-match? m "ctrl+o") (toggle-tools-expanded state)
     (msg/key-match? m "alt+backspace") (delete-prev-word-update state)
