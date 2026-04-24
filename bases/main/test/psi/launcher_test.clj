@@ -55,13 +55,9 @@
                nrepl/nrepl {:mvn/version "1.5.1"}}
              (:deps (with-redefs [launcher/repo-basis-config (constantly repo-config)]
                       (launcher/psi-self-basis "/repo/psi" :development))))))
-    (testing "installed policy rewrites local roots to git deps/root entries"
-      (is (= '{psi/main {:git/url "https://github.com/hugoduncan/psi.git"
-                         :git/tag "main"
-                         :deps/root "bases/main"}
-               psi/app-runtime {:git/url "https://github.com/hugoduncan/psi.git"
-                                :git/tag "main"
-                                :deps/root "components/app-runtime"}
+    (testing "installed policy keeps repo component roots coherent via absolute local roots"
+      (is (= '{psi/main {:local/root "/repo/psi/bases/main"}
+               psi/app-runtime {:local/root "/repo/psi/components/app-runtime"}
                org.clojure/clojure {:mvn/version "1.12.4"}
                nrepl/nrepl {:mvn/version "1.5.1"}}
              (:deps (with-redefs [launcher/repo-basis-config (constantly repo-config)]
@@ -78,8 +74,8 @@
 
 (deftest manifest-state-test
   (testing "manifest state reports defaulted and inferred libs from expansion results"
-    (let [user-manifest {:deps {'psi/mementum {:git/tag "release-tag"}}}
-          project-manifest {:deps {'psi/mementum {:git/sha "override-sha"}
+    (let [user-manifest {:deps {'psi/mementum {:local/root "user-root"}}}
+          project-manifest {:deps {'psi/mementum {}
                                    'third-party/ext {:mvn/version "1.0.0"}}}]
       (with-redefs [launcher/user-manifest-path (constantly "/tmp/user.edn")
                     launcher/project-manifest-path (constantly "/tmp/project.edn")
@@ -88,9 +84,31 @@
                                                       "/tmp/user.edn" user-manifest
                                                       "/tmp/project.edn" project-manifest))]
         (is (= ['psi/mementum]
-               (:defaulted-libs (launcher/manifest-state "/repo/project" :installed))))
+               (:defaulted-libs (launcher/manifest-state "/repo/psi" "/repo/project" :installed))))
         (is (= ['psi/mementum]
-               (:inferred-init-libs (launcher/manifest-state "/repo/project" :installed))))))))
+               (:inferred-init-libs (launcher/manifest-state "/repo/psi" "/repo/project" :installed))))))))
+
+(deftest startup-basis-expands-recognized-psi-owned-minimal-manifest-entry-into-basis-deps
+  (let [repo-config {:deps {'psi/main {:local/root "bases/main"}
+                            'org.clojure/clojure {:mvn/version "1.12.4"}}}
+        manifest-info {:user-path "/tmp/user.edn"
+                       :project-path "/tmp/project/.psi/extensions.edn"
+                       :user-present? false
+                       :project-present? true
+                       :user-manifest {:deps {}}
+                       :project-manifest {:deps {'psi/workflow-loader {}}}
+                       :merged-manifest {:deps {'psi/workflow-loader {}}}
+                       :expanded-manifest {:deps {'psi/workflow-loader {:local/root "/repo/psi/extensions/workflow-loader"
+                                                                        :psi/init 'extensions.workflow-loader/init}}}
+                       :defaulted-libs ['psi/workflow-loader]
+                       :inferred-init-libs ['psi/workflow-loader]}
+        result (with-redefs [launcher/repo-basis-config (constantly repo-config)
+                             launcher/manifest-state (fn [_ _ _] manifest-info)]
+                 (launcher/startup-basis "/repo/psi" "/repo/project" :installed))]
+    (is (= {:local/root "/repo/psi/extensions/workflow-loader"}
+           (get-in result [:basis :deps 'psi/workflow-loader])))
+    (is (= 'extensions.workflow-loader/init
+           (get-in result [:manifest-info :expanded-manifest :deps 'psi/workflow-loader :psi/init])))))
 
 (deftest launch-plan-test
   (let [basis-state {:basis {:deps {'foo/bar {:mvn/version "1.0.0"}}}

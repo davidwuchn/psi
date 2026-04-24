@@ -6,7 +6,7 @@
 
 (def default-installed-psi-version
   "Explicit launcher-owned default psi version identity for installed mode."
-  "main")
+  "11f9c9f582dbe3a9fb1689ffcfd9f00c52bf2f6a")
 
 (def default-psi-git-url
   "Explicit launcher-owned psi source identity for installed mode."
@@ -14,84 +14,64 @@
 
 (def psi-owned-extension-catalog
   {'psi/auto-session-name
-   {:psi/init 'extensions.auto_session_name/init
+   {:psi/init 'extensions.auto-session-name/init
     :source-policies
     {:development {:local/root "extensions/auto-session-name"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/auto-session-name"}}}
+     :installed   {:local/root "extensions/auto-session-name"}}}
 
    'psi/commit-checks
-   {:psi/init 'extensions.commit_checks/init
+   {:psi/init 'extensions.commit-checks/init
     :source-policies
     {:development {:local/root "extensions/commit-checks"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/commit-checks"}}}
+     :installed   {:local/root "extensions/commit-checks"}}}
 
    'psi/hello-ext
-   {:psi/init 'extensions.hello_ext/init
+   {:psi/init 'extensions.hello-ext/init
     :source-policies
     {:development {:local/root "extensions/hello-ext"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/hello-ext"}}}
+     :installed   {:local/root "extensions/hello-ext"}}}
 
    'psi/lsp
    {:psi/init 'extensions.lsp/init
     :source-policies
     {:development {:local/root "extensions/lsp"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/lsp"}}}
+     :installed   {:local/root "extensions/lsp"}}}
 
    'psi/mcp-tasks-run
-   {:psi/init 'extensions.mcp_tasks_run/init
+   {:psi/init 'extensions.mcp-tasks-run/init
     :source-policies
     {:development {:local/root "extensions/mcp-tasks-run"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/mcp-tasks-run"}}}
+     :installed   {:local/root "extensions/mcp-tasks-run"}}}
 
    'psi/mementum
    {:psi/init 'extensions.mementum/init
     :source-policies
     {:development {:local/root "extensions/mementum"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/mementum"}}}
+     :installed   {:local/root "extensions/mementum"}}}
 
    'psi/munera
    {:psi/init 'extensions.munera/init
     :source-policies
     {:development {:local/root "extensions/munera"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/munera"}}}
+     :installed   {:local/root "extensions/munera"}}}
 
    'psi/plan-state-learning
-   {:psi/init 'extensions.plan_state_learning/init
+   {:psi/init 'extensions.plan-state-learning/init
     :source-policies
     {:development {:local/root "extensions/plan-state-learning"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/plan-state-learning"}}}
+     :installed   {:local/root "extensions/plan-state-learning"}}}
 
    'psi/work-on
-   {:psi/init 'extensions.work_on/init
+   {:psi/init 'extensions.work-on/init
     :source-policies
     {:development {:local/root "extensions/work-on"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/work-on"}}}
+     :installed   {:local/root "extensions/work-on"}}}
 
    'psi/workflow-loader
-   {:psi/init 'extensions.workflow_loader/init
+   {:psi/init 'extensions.workflow-loader/init
     :source-policies
     {:development {:local/root "extensions/workflow-loader"}
-     :installed   {:git/url default-psi-git-url
-                   :git/tag default-installed-psi-version
-                   :deps/root "extensions/workflow-loader"}}}})
+     :installed   {:local/root "extensions/workflow-loader"}}}})
 
 (defn coordinate-family
   [dep]
@@ -209,7 +189,7 @@
            merged          (cond-> dep
                              (or (nil? explicit-family)
                                  (= explicit-family default-family))
-                             (merge defaults)
+                             (#(merge defaults %))
                              true
                              (assoc :psi/init (or (:psi/init dep) (:psi/init entry))))]
        (validate-coordinate-family! lib merged))
