@@ -105,9 +105,14 @@ jobs:
           sudo apt-get install -y tmux
           tmux -V
 
-      - name: Install psi launcher for integration tests
+      - name: Install psi launcher shim for integration tests
         run: |
-          bbin install . --as psi
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/psi" <<'EOF'
+          #!/usr/bin/env bash
+          exec bb bb/psi.clj -- "$@"
+          EOF
+          chmod +x "$HOME/.local/bin/psi"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/psi" --launcher-debug --help >/dev/null || true
 
