@@ -68,6 +68,7 @@
   - [x] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
   - [x] Confirm local frictionless install without explicit `--main-opts`
   - [ ] Confirm frictionless install for the final canonical remote package path
+    - current blocker: remote installs resolve to published commit `2ce48fb08fc9263552ce769a4ee750acecfb0450`, which predates launcher packaging work
 
 - [x] Slice 7 — Documentation migration
   - [x] Update `README.md` quick start to use `bbin` installation and the `psi` command

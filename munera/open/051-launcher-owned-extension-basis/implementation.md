@@ -29,3 +29,7 @@
 - During that proof, fixed launcher handling for a leading `--` argument separator, fixed `bb/psi.clj` launcher-root derivation, fixed absolute-cwd resolution, and stripped runtime-only manifest metadata (`:psi/init`, `:psi/enabled`) from launch-time basis deps before `-Sdeps` handoff.
 - Local frictionless `bbin install . --as psi-launcher-auto` now succeeds using repo metadata, and the resulting installed command was exercised successfully against the launcher path with `--cwd`, `--launcher-debug`, and `--rpc-edn`.
 - Remaining packaging gap is now specifically about the final remote/canonical install path (`bbin install io.github.hugoduncan/psi --as psi`), not local metadata-driven installation behavior.
+- Remote install proof was attempted against `io.github.hugoduncan/psi`, `https://github.com/hugoduncan/psi.git`, and `git@github.com:hugoduncan/psi.git`.
+- All three remote installs resolved to published commit `2ce48fb08fc9263552ce769a4ee750acecfb0450`, not the current launcher branch work.
+- The generated remote wrapper used stale main opts (`["-m" "hugoduncan.psi"]` / similarly incorrect inferred values for raw URL forms), and execution failed because that published commit does not yet contain the launcher entrypoint/package metadata.
+- Conclusion: remote canonical install is blocked on publication/merge of the launcher work to the remotely installed ref, not on additional local launcher behavior fixes.
