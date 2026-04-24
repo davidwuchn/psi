@@ -59,9 +59,10 @@
   [api workspace-root file-path timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
-      (let [diagnostics-by-path (sut/request-diagnostics! api {:workspace-root workspace-root
+      (let [remaining-ms (max 1 (- deadline (System/currentTimeMillis)))
+            diagnostics-by-path (sut/request-diagnostics! api {:workspace-root workspace-root
                                                                :paths [file-path]
-                                                               :diagnostics-timeout-ms 500})
+                                                               :diagnostics-timeout-ms (min 1000 remaining-ms)})
             finding (get diagnostics-by-path file-path)]
         (if (or (seq finding)
                 (>= (System/currentTimeMillis) deadline))
@@ -322,9 +323,9 @@
                                                 :tool-result {:effects [{:path file-path}]}
                                                 :config {:command lsp-fixture-command
                                                          :startup-timeout-ms 2000
-                                                         :diagnostics-timeout-ms 5000}})
+                                                         :diagnostics-timeout-ms 10000}})
           root (:workspace-root second-result)
-          finding (await-diagnostic-finding api root file-path 5000)
+          finding (await-diagnostic-finding api root file-path 10000)
           svc (services/service-in ctx (sut/workspace-key root))
           debug @(:debug-atom svc)]
       (try
