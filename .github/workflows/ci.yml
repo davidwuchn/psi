@@ -108,9 +108,12 @@ jobs:
       - name: Install psi launcher shim for integration tests
         run: |
           mkdir -p "$HOME/.local/bin"
-          cat > "$HOME/.local/bin/psi" <<'EOF'
+          BB_BIN="$(command -v bb)"
+          export BB="$BB_BIN"
+          echo "BB=$BB_BIN" >> "$GITHUB_ENV"
+          cat > "$HOME/.local/bin/psi" <<EOF
           #!/usr/bin/env bash
-          exec bb bb/psi.clj -- "$@"
+          exec "$BB_BIN" bb/psi.clj -- "\$@"
           EOF
           chmod +x "$HOME/.local/bin/psi"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
