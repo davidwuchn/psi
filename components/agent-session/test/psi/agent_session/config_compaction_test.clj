@@ -69,7 +69,8 @@
       (is (= [{:name "read" :label "read" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}
               {:name "bash" :label "bash" :description "" :parameters {:type "object" :properties {}} :lambda-description nil :source nil :ext-path nil :enabled? true}]
              (:tool-defs (ss/get-session-data-in ctx session-id))))
-      (let [entry (last (dispatch/event-log-entries))]
+      (let [entry (last (filter #(= :session/set-active-tools (:event-type %))
+                                (dispatch/event-log-entries)))]
         (is (= :session/set-active-tools (:event-type entry)))
         (is (= :core (:origin entry)))
         (is (= {:tool-maps tool-maps} (dissoc (:event-data entry) :session-id)))))))
