@@ -1,11 +1,11 @@
-- [ ] Slice 1 — Establish launcher skeleton and CLI contract
-  - [ ] Add a babashka launcher entrypoint suitable for `bbin` installation
-  - [ ] Implement launcher-only arg parsing for `--cwd <path>`
-  - [ ] Implement launcher-only arg parsing for `--launcher-debug`
-  - [ ] Ensure launcher-only flags are consumed locally and not forwarded to `psi.main`
-  - [ ] Ensure ordinary psi runtime flags are forwarded unchanged and in order
-  - [ ] Implement the exec handoff shape to Clojure CLI / `psi.main`
-  - [ ] Add focused tests for arg separation, cwd selection, and pass-through behavior
+- [x] Slice 1 — Establish launcher skeleton and CLI contract
+  - [x] Add a babashka launcher entrypoint suitable for `bbin` installation
+  - [x] Implement launcher-only arg parsing for `--cwd <path>`
+  - [x] Implement launcher-only arg parsing for `--launcher-debug`
+  - [x] Ensure launcher-only flags are consumed locally and not forwarded to `psi.main`
+  - [x] Ensure ordinary psi runtime flags are forwarded unchanged and in order
+  - [x] Implement the exec handoff shape to Clojure CLI / `psi.main`
+  - [x] Add focused tests for arg separation, cwd selection, and pass-through behavior
 
 - [ ] Slice 2 — Implement manifest read/merge and expanded-entry model in the launcher
   - [ ] Read user manifest from `~/.psi/agent/extensions.edn`
