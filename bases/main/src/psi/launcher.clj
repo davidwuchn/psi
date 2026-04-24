@@ -137,6 +137,15 @@
      :defaulted-libs     (:defaulted-libs expansion-report)
      :inferred-init-libs (:inferred-init-libs expansion-report)}))
 
+(defn- absolutize-local-root-dep
+  [base-dir dep]
+  (if-let [local-root (:local/root dep)]
+    (let [f (io/file local-root)]
+      (if (.isAbsolute f)
+        dep
+        (assoc dep :local/root (.getAbsolutePath (io/file base-dir local-root)))))
+    dep))
+
 (defn- basis-deps
   [dep-map]
   (into {}
@@ -146,13 +155,15 @@
 
 (defn startup-basis
   [launcher-root cwd policy]
-  (let [self-basis    (update (psi-self-basis launcher-root policy) :deps basis-deps)
-        manifest-info (update (manifest-state cwd policy)
-                              :expanded-manifest
-                              update
-                              :deps
-                              basis-deps)]
-    {:basis (update self-basis :deps merge (get-in manifest-info [:expanded-manifest :deps]))
+  (let [self-basis       (update (psi-self-basis launcher-root policy) :deps basis-deps)
+        manifest-info0   (manifest-state cwd policy)
+        expanded-deps    (->> (get-in manifest-info0 [:expanded-manifest :deps])
+                              (map (fn [[lib dep]]
+                                     [lib (-> (absolutize-local-root-dep cwd dep)
+                                              (dissoc :psi/init :psi/enabled))]))
+                              (into {}))
+        manifest-info    (assoc-in manifest-info0 [:expanded-manifest :deps] expanded-deps)]
+    {:basis (update self-basis :deps merge expanded-deps)
      :manifest-info manifest-info
      :policy policy}))
 
