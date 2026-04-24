@@ -4,7 +4,7 @@
    [psi.tui.test-harness.tmux :as tmux]))
 
 (deftest ^:integration tui-tmux-harness-basic-scenario-test
-  (testing "tmux harness launches TUI, runs /help, and exits with /quit"
+  (testing "tmux harness launches TUI, runs /help, and exits with /quit using canonical or repo-local launcher resolution"
     (let [result (tmux/run-basic-help-quit-scenario! {})]
       (case (:status result)
         :skipped

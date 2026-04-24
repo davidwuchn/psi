@@ -11,7 +11,9 @@ Reusable harness helpers live at:
 - `components/tui/test/psi/tui/test_harness/tmux.clj`
 
 What it validates:
-1. start psi TUI in detached tmux (`exec psi --tui`)
+1. start psi TUI in detached tmux using the resolved launcher command
+   - prefers canonical installed command: `exec psi --tui`
+   - falls back to repo-local launcher when `psi` is not on `PATH`: `exec bb bb/psi.clj -- --tui`
 2. wait until prompt is ready (`刀:` / `Type a message`)
 3. send `/help` and assert help output marker appears
 4. send `/quit` and assert pane process exits the Java TUI process
