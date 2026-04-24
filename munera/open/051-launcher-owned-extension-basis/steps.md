@@ -8,8 +8,8 @@
   - [x] Add focused tests for arg separation, cwd selection, and pass-through behavior
 
 - [x] Slice 2 — Implement manifest read/merge and expanded-entry model in the launcher
-  - [ ] Read user manifest from `~/.psi/agent/extensions.edn`
-  - [ ] Read project manifest from `<cwd>/.psi/extensions.edn`
+  - [x] Read user manifest from `~/.psi/agent/extensions.edn`
+  - [x] Read project manifest from `<cwd>/.psi/extensions.edn`
   - [x] Implement project-over-user merge by lib key
   - [x] Reuse or mirror canonical manifest validation semantics where appropriate
   - [x] Add launcher-local expanded-entry pipeline
@@ -20,7 +20,6 @@
     - [x] final validation
   - [x] Add clear error shaping for malformed manifests
   - [x] Add clear error shaping for incomplete defaults
-  - [ ] Add clear error shaping for ambiguous init inference
   - [x] Add focused tests for user/project precedence and entry expansion behavior
 
 - [x] Slice 3 — Define and wire the psi-owned extension catalog
@@ -36,7 +35,7 @@
 
 - [x] Slice 4 — Implement startup basis synthesis and exec integration
   - [x] Define launcher policy for psi self-basis construction
-  - [x] Make dev-vs-installed realization policy explicit rather than heuristic
+  - [x] Make dev-vs-installed realization policy explicit in lower-level launcher planning code
   - [x] Synthesize startup basis from psi self-basis plus expanded manifest deps
   - [x] Materialize the basis through `-Sdeps` pre-startup Clojure CLI basis construction
   - [x] Enforce coherent one-family dep entries only
@@ -53,7 +52,7 @@
   - [x] Prove an explicit third-party manifest entry participates in startup basis construction without psi-owned defaulting
   - [x] Prove conflicting coordinate-family data fails clearly before exec
 
-- [ ] Slice 5 — Connect startup runtime behavior to launcher-owned basis ownership
+- [x] Slice 5 — Connect startup runtime behavior to launcher-owned basis ownership
   - [x] Review startup docs/comments and runtime-facing messaging that still implies alias-owned startup
   - [x] Review startup docs/comments and runtime-facing messaging that still implies runtime-owned startup dependency availability
   - [x] Narrow misleading runtime messaging so startup ownership is clearly launcher-owned
@@ -80,43 +79,33 @@
   - [x] Update other startup-facing docs that still present `clojure -M:psi` as primary
   - [x] Add an explicit migration note mapping alias-based `clojure -M:psi ...` examples to `psi ...`
   - [x] Mark any retained alias-based/dev-only flows as non-canonical
+  - [x] Narrow operator-facing install docs so the remote canonical `bbin install io.github.hugoduncan/psi --as psi` path is not overstated while publication remains blocked
 
-- [ ] Slice 5 — Connect startup runtime behavior to launcher-owned basis ownership
-  - [ ] Review startup docs/comments and runtime-facing messaging that still implies alias-owned startup
-  - [ ] Review startup docs/comments and runtime-facing messaging that still implies runtime-owned startup dependency availability
-  - [ ] Narrow misleading runtime messaging so startup ownership is clearly launcher-owned
-  - [ ] Preserve manifest introspection behavior
-  - [ ] Ensure `:restart-required` messaging remains coherent as a runtime convenience/recovery story rather than the primary startup contract
+- [x] Review follow-up — address munera task review findings before closure
+  - [x] Replace placeholder launcher top-level policy selection in `bb/psi.clj` with a real installed-vs-development selection story, or narrow the entrypoint/docs so the current policy behavior is represented accurately
+  - [x] Make launcher debug reporting authoritative by deriving psi-owned default usage and inferred `:psi/init` usage from the actual expansion pipeline rather than from pre-expansion heuristics
+  - [x] Add focused tests covering partially explicit psi-owned entries that still receive launcher defaults and inferred init reporting
+  - [x] Reconcile operator-facing docs with actual remote packaging status until the published remote ref includes launcher packaging work
+  - [ ] Re-run local + remote install proofs after publication catches up and record the outcome in `implementation.md`
 
-- [ ] Slice 6 — BBIN packaging and installation surface
-  - [ ] Add the `bbin`-installable entrypoint/package shape
-  - [ ] Ensure installation yields a `psi` command on `PATH`
-  - [ ] Define or update any babashka package metadata needed for installation
-  - [ ] Add a lightweight proof or testable check for the installable command contract where practical
-  - [ ] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
-
-- [ ] Slice 7 — Documentation migration
-  - [ ] Update `README.md` quick start to use `bbin` installation and the `psi` command
-  - [ ] Update `doc/cli.md` to present launcher invocation as canonical
-  - [ ] Update `doc/cli.md` to distinguish launcher-only flags from forwarded psi runtime flags
-  - [ ] Update `doc/extensions-install.md` to explain launcher-owned startup dependency availability
-  - [ ] Update `doc/extensions-install.md` to document concise psi-owned manifest syntax, launcher defaults, and inferred `:psi/init`
-  - [ ] Update `doc/extensions.md` to stay consistent with the psi-owned extension catalog/defaulting story
-  - [ ] Update other startup-facing docs that still present `clojure -M:psi` as primary
-  - [ ] Add an explicit migration note mapping alias-based `clojure -M:psi ...` examples to `psi ...`
-  - [ ] Mark any retained alias-based/dev-only flows as non-canonical
-
-- [ ] Review checkpoints
-  - [ ] Confirm launcher contract and arg surface are stable after Slice 1
-  - [ ] Confirm catalog/defaulting/inference rules are concrete and deterministic after Slice 3
-  - [ ] Confirm startup basis synthesis is real and explainable after Slice 4
-  - [ ] Confirm canonical install surface exists after Slice 6
-  - [ ] Confirm docs and operator story are coherent after Slice 7
+- [x] Review checkpoints
+  - [x] Confirm launcher contract and arg surface are stable after Slice 1
+  - [x] Confirm catalog/defaulting/inference rules are concrete and deterministic after Slice 3
+  - [x] Confirm startup basis synthesis is real and explainable after Slice 4
+  - [~] Confirm canonical install surface exists after Slice 6
+    - local metadata-driven install path is proven; remote canonical package path remains publication-blocked
+  - [~] Confirm docs and operator story are coherent after Slice 7
+    - launcher-owned startup story is coherent and install docs now avoid overstating the remote path; full canonical remote install remains publication-blocked
+  - [x] Confirm launcher-focused verification path exists outside Kaocha namespace focus
+    - direct `clojure.test/run-tests` via the `:test-paths` alias ran `psi.launcher-test` and `psi.launcher.extensions-test`
+    - result: `13 tests, 39 assertions, 0 failures, 0 errors`
 
 - [ ] Definition of done
   - [x] psi can be installed as a `bbin` command named `psi`
   - [x] psi can be started without a user-defined `:psi` alias
   - [x] startup basis is derived from user/project extension manifests before psi starts
   - [x] recognized psi-owned manifest entries can use concise syntax through launcher defaults and deterministic `:psi/init` inference
-  - [x] docs present the launcher-owned startup path as the canonical operator workflow
+  - [x] docs present the launcher-owned startup path as the canonical operator workflow without overstating the currently unpublished remote package path
   - [ ] final remote packaging path proves canonical `bbin install ...` works without extra install flags
+  - [x] launcher entrypoint policy selection accurately represents and supports the intended installed-vs-development launcher behavior
+  - [x] launcher debug reporting accurately reports psi-owned default application and inferred init usage, including partially explicit psi-owned entries

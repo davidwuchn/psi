@@ -6,12 +6,16 @@
    [clojure.string :as str]
    [psi.launcher :as launcher]))
 
-(defn- default-policy
+(defn- explicit-policy
   []
-  (if (= (.getAbsolutePath (java.io.File. "."))
-         (.getAbsolutePath (java.io.File. (System/getProperty "user.dir"))))
-    :development
-    :development))
+  (case (System/getenv "PSI_LAUNCHER_POLICY")
+    "development" :development
+    "installed" :installed
+    nil :installed
+    (throw (ex-info "Invalid PSI_LAUNCHER_POLICY"
+                    {:env "PSI_LAUNCHER_POLICY"
+                     :value (System/getenv "PSI_LAUNCHER_POLICY")
+                     :expected #{"development" "installed"}}))))
 
 (defn- launcher-root
   []
@@ -40,7 +44,7 @@
   (let [plan (launcher/launch-plan args
                                    (System/getProperty "user.dir")
                                    (launcher-root)
-                                   (default-policy))]
+                                   (explicit-policy))]
     (when (:launcher-debug? plan)
       (print-debug-summary! plan))
     @(process/process (:command plan)

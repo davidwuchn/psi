@@ -15,11 +15,20 @@ EQL-queryable, extensible. Inspired by
 
 ## Quick Start
 
-Install the canonical launcher:
+Install the launcher:
+
+```bash
+# Current proven local/repo path
+bbin install . --as psi
+```
+
+The intended canonical remote path is:
 
 ```bash
 bbin install io.github.hugoduncan/psi --as psi
 ```
+
+but remote publication is currently catching up to the launcher packaging work, so the repo-local install path above is the currently proven workflow.
 
 Then run psi directly:
 
@@ -48,7 +57,7 @@ clojure -M:psi --rpc-edn -> psi --rpc-edn
 ```
 
 Development contributors may still use repo-local invocation paths during transition,
-but the launcher-owned `psi` command is the primary operator-facing startup surface.
+and may set `PSI_LAUNCHER_POLICY=development` when they want launcher basis construction to use repo-local roots. The launcher-owned `psi` command remains the primary operator-facing startup surface.
 
 ### Emacs UI usage
 

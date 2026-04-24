@@ -128,6 +128,8 @@
             edn/read-string
             (assert-manifest-shape! (.getAbsolutePath ^java.io.File file))
             (update :deps #(or % {})))
+        (catch clojure.lang.ExceptionInfo e
+          (throw e))
         (catch Exception e
           (throw (ex-info "Failed to read extension manifest"
                           {:stage :manifest-read
@@ -213,11 +215,55 @@
        (validate-coordinate-family! lib merged))
      (validate-coordinate-family! lib dep))))
 
+(defn expand-entry-report
+  ([lib dep]
+   (expand-entry-report lib dep {:policy :installed}))
+  ([lib dep {:keys [policy] :or {policy :installed}}]
+   (let [expanded (expand-entry lib dep {:policy policy})]
+     (if-let [_entry (catalog-entry lib)]
+       (let [defaults           (selected-policy-defaults! lib policy)
+             defaulted-fields   (->> defaults
+                                     (keep (fn [[k v]]
+                                             (when (and (not= k :psi/init)
+                                                        (not (contains? dep k))
+                                                        (= v (get expanded k)))
+                                               k)))
+                                     vec)
+             inferred-init?     (and (not (contains? dep :psi/init))
+                                     (contains? expanded :psi/init))]
+         {:expanded expanded
+          :defaulted-fields defaulted-fields
+          :defaulted? (boolean (seq defaulted-fields))
+          :inferred-init? inferred-init?})
+       {:expanded expanded
+        :defaulted-fields []
+        :defaulted? false
+        :inferred-init? false}))))
+
+(defn manifest-expansion-report
+  ([manifest]
+   (manifest-expansion-report manifest {:policy :installed}))
+  ([manifest {:keys [policy] :or {policy :installed}}]
+   (let [reports (into {}
+                       (map (fn [[lib dep]]
+                              [lib (expand-entry-report lib dep {:policy policy})]))
+                       (:deps manifest))]
+     {:expanded-manifest {:deps (into {}
+                                      (map (fn [[lib {:keys [expanded]}]]
+                                             [lib expanded]))
+                                      reports)}
+      :defaulted-libs (->> reports
+                           (keep (fn [[lib {:keys [defaulted?]}]]
+                                   (when defaulted? lib)))
+                           vec)
+      :inferred-init-libs (->> reports
+                               (keep (fn [[lib {:keys [inferred-init?]}]]
+                                       (when inferred-init? lib)))
+                               vec)
+      :reports reports})))
+
 (defn expand-manifest
   ([manifest]
    (expand-manifest manifest {:policy :installed}))
   ([manifest {:keys [policy] :or {policy :installed}}]
-   {:deps (into {}
-                (map (fn [[lib dep]]
-                       [lib (expand-entry lib dep {:policy policy})]))
-                (:deps manifest))}))
+   (:expanded-manifest (manifest-expansion-report manifest {:policy policy}))))

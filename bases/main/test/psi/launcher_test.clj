@@ -1,7 +1,8 @@
 (ns psi.launcher-test
   (:require
    [clojure.test :refer [deftest is testing]]
-   [psi.launcher :as launcher]))
+   [psi.launcher :as launcher]
+   [psi.launcher.extensions :as extensions]))
 
 (deftest parse-launcher-args-test
   (testing "consumes launcher-owned flags and preserves psi arg order"
@@ -67,9 +68,29 @@
                       (launcher/psi-self-basis "/repo/psi" :installed))))))))
 
 (deftest build-clojure-command-test
-  (is (= ["clojure" "-Sdeps" "{:deps {foo/bar {:mvn/version \"1.0.0\"}}}" "-M" "-m" "psi.main" "--tui" "--model" "gpt-5"]
-         (launcher/build-clojure-command {:basis {:deps {'foo/bar {:mvn/version "1.0.0"}}}
-                                          :psi-args ["--tui" "--model" "gpt-5"]}))))
+  (let [command (launcher/build-clojure-command {:basis {:deps {'foo/bar {:mvn/version "1.0.0"}}}
+                                                 :psi-args ["--tui" "--model" "gpt-5"]})]
+    (is (= ["clojure" "-Sdeps"] (subvec command 0 2)))
+    (is (= '{:deps {foo/bar {:mvn/version "1.0.0"}}}
+           (read-string (nth command 2))))
+    (is (= ["-M" "-m" "psi.main" "--tui" "--model" "gpt-5"]
+           (subvec command 3)))))
+
+(deftest manifest-state-test
+  (testing "manifest state reports defaulted and inferred libs from expansion results"
+    (let [user-manifest {:deps {'psi/mementum {:git/tag "release-tag"}}}
+          project-manifest {:deps {'psi/mementum {:git/sha "override-sha"}
+                                   'third-party/ext {:mvn/version "1.0.0"}}}]
+      (with-redefs [launcher/user-manifest-path (constantly "/tmp/user.edn")
+                    launcher/project-manifest-path (constantly "/tmp/project.edn")
+                    extensions/read-manifest-file (fn [path]
+                                                    (case path
+                                                      "/tmp/user.edn" user-manifest
+                                                      "/tmp/project.edn" project-manifest))]
+        (is (= ['psi/mementum]
+               (:defaulted-libs (launcher/manifest-state "/repo/project" :installed))))
+        (is (= ['psi/mementum]
+               (:inferred-init-libs (launcher/manifest-state "/repo/project" :installed))))))))
 
 (deftest launch-plan-test
   (let [basis-state {:basis {:deps {'foo/bar {:mvn/version "1.0.0"}}}
@@ -77,7 +98,12 @@
                                      :project-present? true
                                      :merged-manifest {:deps {'foo/bar {:mvn/version "1.0.0"}}}
                                      :defaulted-libs []
-                                     :inferred-init-libs []}}]
+                                     :inferred-init-libs []}}
+        plan (with-redefs [launcher/startup-basis (fn [_ _ _] basis-state)]
+               (launcher/launch-plan ["--launcher-debug" "--rpc-edn"]
+                                     "/repo/project"
+                                     "/repo/psi"
+                                     :development))]
     (is (= {:cwd "/repo/project"
             :launcher-root "/repo/psi"
             :launcher-debug? true
@@ -88,10 +114,10 @@
                             :project-present? true
                             :merged-manifest {:deps {'foo/bar {:mvn/version "1.0.0"}}}
                             :defaulted-libs []
-                            :inferred-init-libs []}
-            :command ["clojure" "-Sdeps" "{:deps {foo/bar {:mvn/version \"1.0.0\"}}}" "-M" "-m" "psi.main" "--rpc-edn"]}
-           (with-redefs [launcher/startup-basis (fn [_ _ _] basis-state)]
-             (launcher/launch-plan ["--launcher-debug" "--rpc-edn"]
-                                   "/repo/project"
-                                   "/repo/psi"
-                                   :development))))))
+                            :inferred-init-libs []}}
+           (dissoc plan :command)))
+    (is (= ["clojure" "-Sdeps"] (subvec (:command plan) 0 2)))
+    (is (= '{:deps {foo/bar {:mvn/version "1.0.0"}}}
+           (read-string (nth (:command plan) 2))))
+    (is (= ["-M" "-m" "psi.main" "--rpc-edn"]
+           (subvec (:command plan) 3)))))

@@ -12,15 +12,25 @@ The launcher constructs startup basis data before `psi.main` starts.
 That means user/project extension manifests participate in classpath and
 extension availability before the JVM launches.
 
+Launcher realization policy is explicit:
+- default launcher policy is `installed`
+- set `PSI_LAUNCHER_POLICY=development` when running contributor/repo-local launcher flows that should materialize psi and psi-owned extensions from local roots instead of installed git coordinates
+
 ## Install
 
-Preferred operator path:
+Current proven install path from the repo/worktree you are using:
+
+```bash
+bbin install . --as psi
+```
+
+Intended canonical remote install path after publication catches up:
 
 ```bash
 bbin install io.github.hugoduncan/psi --as psi
 ```
 
-Repo-local development path:
+Repo-local development path without installation:
 
 ```bash
 bb bb/psi.clj -- --tui

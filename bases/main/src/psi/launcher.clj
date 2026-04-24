@@ -118,14 +118,14 @@
 
 (defn manifest-state
   [cwd policy]
-  (let [home              (System/getProperty "user.home")
-        user-path         (user-manifest-path home)
-        project-path      (project-manifest-path cwd)
-        user-manifest     (extensions/read-manifest-file user-path)
-        project-manifest  (extensions/read-manifest-file project-path)
-        merged-manifest   (extensions/merge-manifests user-manifest project-manifest)
-        expanded-manifest (extensions/expand-manifest merged-manifest {:policy policy})
-        merged-deps       (:deps merged-manifest)]
+  (let [home               (System/getProperty "user.home")
+        user-path          (user-manifest-path home)
+        project-path       (project-manifest-path cwd)
+        user-manifest      (extensions/read-manifest-file user-path)
+        project-manifest   (extensions/read-manifest-file project-path)
+        merged-manifest    (extensions/merge-manifests user-manifest project-manifest)
+        expansion-report   (extensions/manifest-expansion-report merged-manifest {:policy policy})
+        expanded-manifest  (:expanded-manifest expansion-report)]
     {:user-path          user-path
      :project-path       project-path
      :user-present?      (.exists (io/file user-path))
@@ -134,18 +134,8 @@
      :project-manifest   project-manifest
      :merged-manifest    merged-manifest
      :expanded-manifest  expanded-manifest
-     :defaulted-libs     (->> merged-deps
-                              (keep (fn [[lib dep]]
-                                      (when (and (extensions/recognized-psi-owned-lib? lib)
-                                                 (nil? (extensions/coordinate-family dep)))
-                                        lib)))
-                              vec)
-     :inferred-init-libs (->> merged-deps
-                              (keep (fn [[lib dep]]
-                                      (when (and (extensions/recognized-psi-owned-lib? lib)
-                                                 (not (contains? dep :psi/init)))
-                                        lib)))
-                              vec)}))
+     :defaulted-libs     (:defaulted-libs expansion-report)
+     :inferred-init-libs (:inferred-init-libs expansion-report)}))
 
 (defn- basis-deps
   [dep-map]
