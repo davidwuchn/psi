@@ -24,5 +24,7 @@
 - Migrated top-level/operator docs to present `psi` as the canonical startup command.
 - Updated Emacs/TUI-facing docs and defaults toward launcher-owned startup usage.
 - Updated runtime-facing usage comments so launcher-owned startup is the primary story and repo-local `clojure -M:run ...` flows are explicitly development/non-canonical.
-- One remaining slice-6 proof remains: direct evidence that an actual bbin-installed command exercises the exact same launcher path end-to-end.
-- One remaining slice-7 doc cleanup remains: align `doc/extensions.md` fully with the psi-owned launcher catalog/defaulting story.
+- Added `doc/extensions.md` alignment so extension docs now describe launcher-owned startup basis construction and psi-owned defaulting consistently.
+- Proved a local `bbin`-installed launcher command can execute the launcher path and emit the canonical debug summary when invoked from a cwd without project manifests.
+- During that proof, fixed launcher handling for a leading `--` argument separator, fixed `bb/psi.clj` launcher-root derivation, fixed absolute-cwd resolution, and stripped runtime-only manifest metadata (`:psi/init`, `:psi/enabled`) from launch-time basis deps before `-Sdeps` handoff.
+- Remaining bbin proof gap is now narrower: installation currently required explicit `--main-opts '["bb/psi.clj"]'` even with repo metadata present, so fully frictionless `bbin install io.github.hugoduncan/psi --as psi` still needs follow-up packaging confirmation.

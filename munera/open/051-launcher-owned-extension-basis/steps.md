@@ -65,7 +65,8 @@
   - [x] Ensure installation yields a `psi` command on `PATH`
   - [x] Define or update any babashka package metadata needed for installation
   - [x] Add a lightweight proof or testable check for the installable command contract where practical
-  - [ ] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
+  - [x] Prove the `bbin`-installed `psi` command exercises the same launcher arg contract and startup-basis code path as direct/local launcher invocation
+  - [ ] Confirm frictionless install without explicit `--main-opts` for the final canonical package path
 
 - [x] Slice 7 — Documentation migration
   - [x] Update `README.md` quick start to use `bbin` installation and the `psi` command
@@ -73,7 +74,7 @@
   - [x] Update `doc/cli.md` to distinguish launcher-only flags from forwarded psi runtime flags
   - [x] Update `doc/extensions-install.md` to explain launcher-owned startup dependency availability
   - [x] Update `doc/extensions-install.md` to document concise psi-owned manifest syntax, launcher defaults, and inferred `:psi/init`
-  - [ ] Update `doc/extensions.md` to stay consistent with the psi-owned extension catalog/defaulting story
+  - [x] Update `doc/extensions.md` to stay consistent with the psi-owned extension catalog/defaulting story
   - [x] Update other startup-facing docs that still present `clojure -M:psi` as primary
   - [x] Add an explicit migration note mapping alias-based `clojure -M:psi ...` examples to `psi ...`
   - [x] Mark any retained alias-based/dev-only flows as non-canonical
@@ -111,8 +112,9 @@
   - [ ] Confirm docs and operator story are coherent after Slice 7
 
 - [ ] Definition of done
-  - [ ] psi can be installed as a `bbin` command named `psi`
-  - [ ] psi can be started without a user-defined `:psi` alias
-  - [ ] startup basis is derived from user/project extension manifests before psi starts
-  - [ ] recognized psi-owned manifest entries can use concise syntax through launcher defaults and deterministic `:psi/init` inference
-  - [ ] docs present the launcher-owned startup path as the canonical operator workflow
+  - [x] psi can be installed as a `bbin` command named `psi`
+  - [x] psi can be started without a user-defined `:psi` alias
+  - [x] startup basis is derived from user/project extension manifests before psi starts
+  - [x] recognized psi-owned manifest entries can use concise syntax through launcher defaults and deterministic `:psi/init` inference
+  - [x] docs present the launcher-owned startup path as the canonical operator workflow
+  - [ ] final packaging path proves canonical `bbin install ...` works without extra install flags

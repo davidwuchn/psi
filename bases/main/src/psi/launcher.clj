@@ -11,6 +11,12 @@
   (or (nil? x)
       (str/blank? x)))
 
+(defn- strip-launcher-separator
+  [args]
+  (if (= "--" (first args))
+    (vec (rest args))
+    (vec args)))
+
 (defn parse-launcher-args
   "Split launcher-owned args from psi runtime args.
 
@@ -21,7 +27,7 @@
    Returns {:cwd string? :launcher-debug? boolean :psi-args [...] }.
    Throws ex-info on malformed launcher-owned args."
   [args]
-  (loop [remaining args
+  (loop [remaining (strip-launcher-separator args)
          parsed {:cwd nil
                  :launcher-debug? false
                  :psi-args []}]
@@ -46,8 +52,11 @@
   "Resolve the launcher working directory. Relative overrides are resolved
    against the launcher process cwd."
   [{:keys [cwd]} process-cwd]
-  (let [candidate (or cwd process-cwd)]
-    (.getAbsolutePath (io/file process-cwd candidate))))
+  (let [candidate (or cwd process-cwd)
+        file (io/file candidate)]
+    (if (.isAbsolute file)
+      (.getAbsolutePath file)
+      (.getAbsolutePath (io/file process-cwd candidate)))))
 
 (defn user-manifest-path
   [home]
@@ -138,10 +147,21 @@
                                         lib)))
                               vec)}))
 
+(defn- basis-deps
+  [dep-map]
+  (into {}
+        (map (fn [[lib dep]]
+               [lib (dissoc dep :psi/init :psi/enabled)]))
+        dep-map))
+
 (defn startup-basis
   [launcher-root cwd policy]
-  (let [self-basis    (psi-self-basis launcher-root policy)
-        manifest-info (manifest-state cwd policy)]
+  (let [self-basis    (update (psi-self-basis launcher-root policy) :deps basis-deps)
+        manifest-info (update (manifest-state cwd policy)
+                              :expanded-manifest
+                              update
+                              :deps
+                              basis-deps)]
     {:basis (update self-basis :deps merge (get-in manifest-info [:expanded-manifest :deps]))
      :manifest-info manifest-info
      :policy policy}))

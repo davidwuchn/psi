@@ -15,7 +15,10 @@
 
 (defn- launcher-root
   []
-  (.getAbsolutePath (java.io.File. (System/getProperty "babashka.file") ".." "..")))
+  (-> (java.io.File. (System/getProperty "babashka.file"))
+      .getParentFile
+      .getParentFile
+      .getAbsolutePath))
 
 (defn- print-debug-summary!
   [{:keys [cwd psi-args command basis manifest-info policy]}]
