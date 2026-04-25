@@ -328,6 +328,45 @@
                 (str prefix text))))
           chunks))))))
 
+(def ^:private autocomplete-max-visible 5)
+
+(defn- autocomplete-window
+  [candidates selected-index]
+  (let [candidates     (vec candidates)
+        total          (count candidates)
+        selected-index (-> (or selected-index 0)
+                           (max 0)
+                           (min (max 0 (dec total))))
+        max-start      (max 0 (- total autocomplete-max-visible))
+        start          (max 0 (min selected-index max-start))
+        end            (min total (+ start autocomplete-max-visible))]
+    {:selected-index selected-index
+     :start start
+     :visible (subvec candidates start end)}))
+
+(defn render-prompt-autocomplete
+  [state width]
+  (let [{:keys [candidates] raw-selected-index :selected-index} (get-in state [:prompt-input-state :autocomplete])]
+    (when (seq candidates)
+      (let [{:keys [start visible selected-index]} (autocomplete-window candidates raw-selected-index)
+            effective-width  (max 1 (or width 1))
+            selected-offset  (- selected-index start)]
+        (str "\n"
+             (charm/render shared/dim-style "Suggestions")
+             "\n"
+             (str/join
+              "\n"
+              (map-indexed
+               (fn [offset {:keys [label value description]}]
+                 (let [selected? (= offset selected-offset)
+                       line      (-> (cond-> (str (if selected? "▸ " "  ") (or label value ""))
+                                       (seq description) (str " — " description))
+                                     (ansi/truncate-to-width effective-width "..."))]
+                   (if selected?
+                     (charm/render shared/user-style line)
+                     line)))
+               visible)))))))
+
 (defn render-stream-thinking
   [text]
   (when (and text (not (str/blank? text)))
@@ -440,6 +479,7 @@
             (if dialog-active?
               (render-dialog (support/active-dialog state) (:dialog-selected-index state) (:dialog-input-text state))
               (str (wrap-text-input-view input term-width)
+                   (render-prompt-autocomplete state term-width)
                    (when (= :streaming phase)
                      (str "\n"
                           (charm/render shared/dim-style

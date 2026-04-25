@@ -1,0 +1,12 @@
+- [x] Confirm the narrow render seam for showing prompt autocomplete in the TUI view
+- [x] Implement visible autocomplete menu rendering from existing prompt autocomplete state
+- [x] Limit visible suggestions to the canonical maximum of 5
+- [x] Make the selected suggestion visibly distinct in stripped output
+- [x] Add focused TUI-facing rendering tests for open/closed slash autocomplete state
+- [x] Add focused test proving selection movement changes the rendered highlighted row
+- [x] Run relevant focused TUI tests and record results
+- [x] Add `send-text!` and `send-key!` helpers to the tmux harness (no-Enter key delivery)
+- [x] Add `run-slash-autocomplete-scenario!` to the tmux harness (type `/` → suggestions visible → `▸ ` visible → Down → `▸ ` still visible → Escape → `/quit` → clean exit)
+- [x] Add `^:integration` test `tui-tmux-slash-autocomplete-scenario-test` in `tmux_integration_harness_test.clj`
+- [x] Refactor existing basic-scenario test to use shared `assert-scenario-result` helper
+- [x] Run `bb clojure:test:integration` (with tmux available) and record results
