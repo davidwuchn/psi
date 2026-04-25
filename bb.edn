@@ -1,10 +1,11 @@
-{:paths ["bb" ".bbum/lib" "bases/main/src"]
+{:paths ["bb" ".bbum/lib" "bases/main/src" "bases/main/resources"]
  :bbin/bin {psi {:main-opts ["-m" "psi.launcher-main"]}}
  :tasks
  {:requires ([babashka.tasks :refer [shell]]
              [clojure.string :as str])
   :init (do
           (load-file "bb/dispatch_architecture_check.clj")
+          (load-file "bb/release.clj")
           (def chiasmus-home
             (str (System/getProperty "user.home") "/src/chiasmus"))
 
@@ -198,6 +199,10 @@
   {:doc  "Run Clojure integration tests (slow, requires tmux etc)."
    :task (shell "clojure -M:test --focus integration")}
 
+  smoke:test
+  {:doc  "Smoke-test the live runtime: RPC handshake subprocess test + TUI tmux startup scenario."
+   :task (shell "clojure -M:test --focus integration")}
+
   clojure:test
   {:doc     "Run both Clojure unit and extension test suites."
    :depends [clojure:test:unit clojure:test:extensions]}
@@ -360,6 +365,30 @@
                                 "}"
                                 "console.log('Chiasmus check passed');"))]
              (System/exit (:exit result))))}
+  build:lib
+  {:doc  "Build target/psi-VERSION.jar (library jar for Clojars) via tools.build."
+   :task (shell "clojure -T:build lib")}
+
+  build:jar
+  {:doc  "Build target/psi.jar and target/psi wrapper script via tools.build."
+   :task (shell "clojure -T:build uber")}
+
+  deploy
+  {:doc  "Deploy library jar to Clojars. Requires CLOJARS_USERNAME and CLOJARS_PASSWORD."
+   :task (shell "clojure -T:deploy deploy")}
+
+  changelog:check
+  {:doc  "Fail if CHANGELOG.md has no entries in the [Unreleased] section."
+   :task (bb.release/check-changelog! *command-line-args*)}
+
+  release
+  {:doc  "Cut a release and push: stamp changelog, commit, tag, reset, then push master + tags to origin."
+   :task (bb.release/release-and-push! *command-line-args*)}
+
+  release:tag
+  {:doc  "Cut a release (tag only, no push): stamp changelog, bake version, commit, tag vMAJOR.MINOR.PATCH, reset to unreleased."
+   :task (bb.release/release! *command-line-args*)}
+
   ref-report
   {:doc
    "Report public fns used only by tests and fns that could be private",

@@ -3,18 +3,24 @@
    [babashka.process :as process]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.launcher :as launcher]))
+   [psi.launcher :as launcher]
+   [psi.version :as version]))
 
 (defn- explicit-policy
+  "Resolve launcher policy from PSI_LAUNCHER_POLICY env var.
+   Defaults to :jar when running a stamped release, :installed otherwise."
   []
   (case (System/getenv "PSI_LAUNCHER_POLICY")
     "development" :development
-    "installed" :installed
-    nil :installed
+    "installed"   :installed
+    "jar"         :jar
+    nil           (if (not= "unreleased" (version/version-string))
+                    :jar
+                    :installed)
     (throw (ex-info "Invalid PSI_LAUNCHER_POLICY"
                     {:env "PSI_LAUNCHER_POLICY"
                      :value (System/getenv "PSI_LAUNCHER_POLICY")
-                     :expected #{"development" "installed"}}))))
+                     :expected #{"development" "installed" "jar"}}))))
 
 (defn- resource-root
   []
@@ -40,7 +46,7 @@
   (binding [*out* *err*]
     (println "psi launcher")
     (println (str "  cwd: " cwd))
-    (println (str "  policy: " (name policy)))
+    (println (str "  policy: " (name policy) (when (= :jar policy) " (Clojars mvn)")))
     (println (str "  user manifest present: " (:user-present? manifest-info)))
     (println (str "  project manifest present: " (:project-present? manifest-info)))
     (println (str "  merged manifest libs: " (pr-str (sort (keys (get-in manifest-info [:merged-manifest :deps]))))))
@@ -56,6 +62,9 @@
                                    (System/getProperty "user.dir")
                                    (launcher-root)
                                    (explicit-policy))]
+    (when (:version? plan)
+      (println (str "psi " (version/version-string)))
+      (System/exit 0))
     (when (:launcher-debug? plan)
       (print-debug-summary! plan))
     @(process/process (:command plan)
