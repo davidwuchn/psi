@@ -622,25 +622,29 @@
      :message "[New session started]"
      :rehydrate rehydrate}))
 
+(def ^:private exact-command-handlers
+  {"/quit" :quit
+   "/exit" :quit
+   "/new" :new
+   "/resume" :resume
+   "/status" :status
+   "/history" :history
+   "/help" :help
+   "/?" :help
+   "/prompts" :prompts
+   "/skills" :skills
+   "/worktree" :worktree
+   "/logout" :logout
+   "/reload-models" :reload-models
+   "/reload-extension-installs" :reload-extension-installs
+   "/project-repl" :project-repl})
+
+(def ^:private prefixed-command-prefixes
+  ["/tree" "/jobs" "/job" "/cancel-job" "/remember" "/model" "/thinking" "/login" "/project-repl"])
+
 (defn- exact-command-handler
   [trimmed]
-  (case trimmed
-    "/quit" :quit
-    "/exit" :quit
-    "/new" :new
-    "/resume" :resume
-    "/status" :status
-    "/history" :history
-    "/help" :help
-    "/?" :help
-    "/prompts" :prompts
-    "/skills" :skills
-    "/worktree" :worktree
-    "/logout" :logout
-    "/reload-models" :reload-models
-    "/reload-extension-installs" :reload-extension-installs
-    "/project-repl" :project-repl
-    nil))
+  (get exact-command-handlers trimmed))
 
 (defn- prefixed-command
   [trimmed]
@@ -648,7 +652,7 @@
           (when (or (= trimmed prefix)
                     (str/starts-with? trimmed (str prefix " ")))
             prefix))
-        ["/tree" "/jobs" "/job" "/cancel-job" "/remember" "/model" "/thinking" "/login" "/project-repl"]))
+        prefixed-command-prefixes))
 
 (defn- dispatch-prefixed-command
   [ctx session-id trimmed {:keys [oauth-ctx ai-model supports-session-tree?]}]
@@ -663,6 +667,54 @@
     "/login" (dispatch-login-command ctx session-id oauth-ctx ai-model trimmed)
     "/project-repl" (project-nrepl-commands/dispatch-project-nrepl-command ctx session-id trimmed)
     nil))
+
+(declare dispatch*)
+
+(def ^:private builtin-command-names
+  (->> (concat (keys exact-command-handlers) prefixed-command-prefixes)
+       (map #(str/replace % #"^/" ""))
+       set))
+
+(defn loaded-command-names-in
+  "Return the authoritative slash-command name set for `session-id`.
+
+   Names are returned without the leading slash and include built-in plus
+   currently registered extension command names. Prompt templates are
+   intentionally excluded so command precedence can be checked explicitly."
+  [ctx session-id]
+  (let [ext-names (:psi.extension/command-names
+                   (session/query-in ctx session-id [:psi.extension/command-names]))]
+    (into builtin-command-names (remove str/blank? ext-names))))
+
+(defn slash-resolution-in
+  "Resolve slash-prefixed `text` against the shared backend surfaces for
+   `session-id`.
+
+   Resolution order is:
+   1. built-in command
+   2. extension command
+   3. loaded prompt template
+   4. unknown slash input
+
+   Returns one of:
+   - {:kind :command :result command-result}
+   - {:kind :template :template-match template-result}
+   - {:kind :unknown}
+   - nil for non-slash input"
+  ([ctx session-id text]
+   (slash-resolution-in ctx session-id text nil))
+  ([ctx session-id text opts]
+   (let [trimmed (str/trim text)]
+     (when (str/starts-with? trimmed "/")
+       (if-let [result (dispatch* ctx session-id trimmed opts)]
+         {:kind :command :result result}
+         (let [sd             (ss/get-session-data-in ctx session-id)
+               template-match (pt/invoke-template (:prompt-templates sd)
+                                                  (loaded-command-names-in ctx session-id)
+                                                  trimmed)]
+           (if template-match
+             {:kind :template :template-match template-match}
+             {:kind :unknown})))))))
 
 (defn- dispatch*
   "Single command dispatch pipeline.
@@ -695,7 +747,7 @@
 (defn dispatch-in
   "Explicit session-targeted command dispatch over the shared pipeline."
   [ctx session-id text opts]
-  (let [result (dispatch* ctx session-id text opts)]
+  (let [result (:result (slash-resolution-in ctx session-id text opts))]
     (when-let [f (:post-command-fn opts)]
       (f ctx session-id result))
     result))

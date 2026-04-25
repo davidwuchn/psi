@@ -69,6 +69,82 @@
       (should (member "/delegate" cands))
       (should (member "/delegate-reload" cands)))))
 
+(ert-deftest psi-capf-slash-includes-prompt-templates-from-state ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state
+                (make-psi-emacs-state
+                 :prompt-templates '((( :name . "gh-issue-work-on")
+                                      (:description . "Work on a GitHub issue")))))
+    (insert "/gh")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (table (nth 2 capf))
+           (cands (all-completions "/gh" table)))
+      (should capf)
+      (should (member "/gh-issue-work-on" cands)))))
+
+(ert-deftest psi-capf-slash-dedupes-command-template-collision-by-command-name ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state
+                (make-psi-emacs-state
+                 :prompt-templates '((( :name . "resume")
+                                      (:description . "Shadow resume template")))))
+    (insert "/re")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (table (nth 2 capf))
+           (cands (all-completions "/re" table)))
+      (should capf)
+      (should (= 1 (length (seq-filter (lambda (cand) (equal cand "/resume")) cands)))))))
+
+(ert-deftest psi-session-updated-applies-inline-slash-completion-state-when-changed ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (make-psi-emacs-state :session-id "s1" :prompt-templates nil :extension-command-names nil :slash-completion-token nil))
+    (psi-emacs--handle-session-updated-event
+     '((:session-id . "s1")
+       (:phase . "idle")
+       (:is-streaming . nil)
+       (:is-compacting . nil)
+       (:pending-message-count . 0)
+       (:retry-attempt . 0)
+       (:interrupt-pending . nil)
+       (:extension-command-names . ["delegate"])
+       (:prompt-templates . [((:name . "gh-issue-work-on")
+                              (:description . "Work on a GitHub issue"))])))
+    (should (equal '("delegate")
+                   (psi-emacs-state-extension-command-names psi-emacs--state)))
+    (should (equal "gh-issue-work-on"
+                   (alist-get :name (car (psi-emacs-state-prompt-templates psi-emacs--state)) nil nil #'equal)))
+    (should (equal '(:commands ("delegate")
+                     :templates (("gh-issue-work-on" "Work on a GitHub issue")))
+                   (psi-emacs-state-slash-completion-token psi-emacs--state)))))
+
+(ert-deftest psi-session-updated-does-not-touch-slash-completion-state-when-unrelated ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state
+                (make-psi-emacs-state
+                 :session-id "s1"
+                 :extension-command-names '("delegate")
+                 :prompt-templates '((( :name . "gh-issue-work-on")
+                                      (:description . "Work on a GitHub issue")))
+                 :slash-completion-token '(:commands ("delegate")
+                                           :templates (("gh-issue-work-on" "Work on a GitHub issue")))))
+    (let ((before-token (psi-emacs-state-slash-completion-token psi-emacs--state)))
+      (psi-emacs--handle-session-updated-event
+       '((:session-id . "s1")
+         (:phase . "idle")
+         (:is-streaming . nil)
+         (:is-compacting . nil)
+         (:pending-message-count . 1)
+         (:retry-attempt . 0)
+         (:interrupt-pending . nil)))
+      (should (equal before-token
+                     (psi-emacs-state-slash-completion-token psi-emacs--state)))
+      (should (equal '("delegate")
+                     (psi-emacs-state-extension-command-names psi-emacs--state))))))
+
 (ert-deftest psi-capf-at-reference-context-returns-file-candidates-and-category ()
   (let* ((tmp (make-temp-file "psi-capf-ref-" t))
          (default-directory (file-name-as-directory tmp)))

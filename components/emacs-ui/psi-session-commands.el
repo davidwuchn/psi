@@ -252,11 +252,15 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
            (when (eq state psi-emacs--state)
              (psi-emacs--handle-model-selector-response frame))))))))
 
-(defun psi-emacs--request-extension-command-names (callback)
-  "Fetch extension command names via `query_eql` and invoke CALLBACK."
+(defun psi-emacs--prompt-template-query ()
+  "Return canonical EQL query string for slash completion data."
+  "[:psi.extension/command-names :psi.agent-session/prompt-templates]")
+
+(defun psi-emacs--request-slash-completion-data (callback)
+  "Fetch slash completion data via `query_eql` and invoke CALLBACK."
   (psi-emacs--dispatch-request
    "query_eql"
-   '((:query . "[:psi.extension/command-names]"))
+   `((:query . ,(psi-emacs--prompt-template-query)))
    callback))
 
 (defun psi-emacs--extension-command-names-from-query-frame (frame)
@@ -269,21 +273,68 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
      ((listp names) names)
      (t nil))))
 
-(defun psi-emacs--refresh-extension-command-names ()
-  "Refresh cached extension command names for slash completion."
+(defun psi-emacs--prompt-templates-from-query-frame (frame)
+  "Extract prompt templates vector/list from `query_eql` FRAME."
+  (let* ((result (psi-emacs--query-result-from-frame frame))
+         (templates (and (listp result)
+                         (alist-get :psi.agent-session/prompt-templates result nil nil #'equal))))
+    (cond
+     ((vectorp templates) (append templates nil))
+     ((listp templates) templates)
+     (t nil))))
+
+(defun psi-emacs--normalize-slash-completion-names (names)
+  "Return canonical normalized command name list from NAMES."
+  (mapcar (lambda (name)
+            (string-trim (format "%s" (or name ""))))
+          (or names [])))
+
+(defun psi-emacs--slash-completion-token (names templates)
+  "Return deterministic token representing slash completion source state."
+  (list :commands (psi-emacs--normalize-slash-completion-names names)
+        :templates (mapcar (lambda (tpl)
+                             (list (psi-emacs--trim-optional-input
+                                    (psi-emacs--alist-get-any tpl '(:name name)))
+                                   (psi-emacs--trim-optional-input
+                                    (psi-emacs--alist-get-any tpl '(:description description)))))
+                           (or templates []))))
+
+(defun psi-emacs--apply-slash-completion-data (names templates)
+  "Store slash completion NAMES and TEMPLATES on frontend state."
+  (let ((normalized-names (psi-emacs--normalize-slash-completion-names names)))
+    (setf (psi-emacs-state-extension-command-names psi-emacs--state)
+          normalized-names)
+    (setf (psi-emacs-state-prompt-templates psi-emacs--state)
+          (or templates []))
+    (setf (psi-emacs-state-slash-completion-token psi-emacs--state)
+          (psi-emacs--slash-completion-token normalized-names templates))))
+
+(defun psi-emacs--refresh-slash-completion-data ()
+  "Refresh cached extension command names and prompt templates for slash completion."
   (let ((buffer (current-buffer))
         (state psi-emacs--state))
-    (psi-emacs--request-extension-command-names
+    (psi-emacs--request-slash-completion-data
      (lambda (frame)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
            (when (eq state psi-emacs--state)
-             (let ((names (psi-emacs--extension-command-names-from-query-frame frame)))
-               (when names
-                 (setf (psi-emacs-state-extension-command-names psi-emacs--state)
-                       (mapcar (lambda (name)
-                                 (string-trim (format "%s" (or name ""))))
-                               names)))))))))))
+             (let ((names (psi-emacs--extension-command-names-from-query-frame frame))
+                   (templates (psi-emacs--prompt-templates-from-query-frame frame)))
+               (psi-emacs--apply-slash-completion-data names templates)))))))))
+
+(defun psi-emacs--state-prompt-template-specs ()
+  "Return prompt-template slash specs sourced from frontend state."
+  (let ((templates (and psi-emacs--state
+                        (psi-emacs-state-prompt-templates psi-emacs--state))))
+    (mapcar (lambda (tpl)
+              (let* ((name (psi-emacs--trim-optional-input
+                            (psi-emacs--alist-get-any tpl '(:name name))))
+                     (description (psi-emacs--trim-optional-input
+                                   (psi-emacs--alist-get-any tpl '(:description description)))))
+                (when name
+                  (cons (concat "/" name)
+                        (or description "Prompt template")))))
+            (or templates []))))
 
 (defun psi-emacs--slash-help-text ()
   "Return deterministic help text for supported slash commands."

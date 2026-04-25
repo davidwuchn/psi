@@ -96,6 +96,8 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   header-model-label
   status-session-line
   extension-command-names
+  prompt-templates
+  slash-completion-token
   transcript-hydrated?
   context-snapshot
   pending-frontend-action)

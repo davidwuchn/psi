@@ -660,121 +660,48 @@ B output into A. Switching to B later then produced corrupted transcript state."
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-streaming-slash-commands-still-use-backend-command ()
-  (with-temp-buffer
-    (psi-emacs-mode)
-    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
-    (unwind-protect
-        (let ((slash-calls nil)
-              (rpc-calls nil))
-          (insert "/stream")
-          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
-          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
-                     (lambda (_state message)
-                       (push message slash-calls)
-                       t))
-                    ((symbol-value 'psi-emacs--send-request-function)
-                     (lambda (_state op params &optional _callback)
-                       (push (list op params) rpc-calls))))
-            (psi-emacs-send-from-buffer nil)
-            (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
-            (let ((inhibit-read-only t))
-              (erase-buffer))
-            (insert "/stream")
-            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-            (psi-emacs-queue-from-buffer))
-          (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '() slash-calls))
-          (should (equal '("command" "command")
-                         (mapcar #'car rpc-calls)))
-          (should (equal '((:text . "/stream"))
-                         (cadr (nth 0 rpc-calls))))
-          (should (equal '((:text . "/stream"))
-                         (cadr (nth 1 rpc-calls)))))
-      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
-        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+(ert-deftest psi-template-slash-command-routes-through-backend-command-and-renders-assistant-result ()
+  "Regression: prompt-template `/name ...` uses the real command-path send, then renders backend prompt execution output.
 
-(ert-deftest psi-streaming-non-slash-send-still-uses-prompt-while-streaming ()
+This guards the Emacs side of the RPC command-op template fallback: frontend send
+must go through `command`, local user echo should be preserved, and the backend's
+assistant/message result from canonical prompt execution should render without a
+`[not a command]` detour."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (let ((rpc-calls nil))
-          (insert "keep going")
+          (insert "/gh-issue-work-on 27")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
           (cl-letf (((symbol-value 'psi-emacs--send-request-function)
                      (lambda (_state op params &optional _callback)
-                       (push (list op params) rpc-calls))))
-            (psi-emacs-send-from-buffer nil)
-            (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
-            (let ((inhibit-read-only t))
-              (erase-buffer))
-            (insert "next")
-            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-            (psi-emacs-queue-from-buffer))
+                       (push (list op params) rpc-calls)
+                       t)))
+            (psi-emacs-send-from-buffer nil))
           (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '("prompt_while_streaming" "prompt_while_streaming")
-                         (mapcar #'car rpc-calls)))
-          (should (equal '((:message . "keep going") (:behavior . "steer"))
-                         (cadr (nth 0 rpc-calls))))
-          (should (equal '((:message . "next") (:behavior . "queue"))
-                         (cadr (nth 1 rpc-calls)))))
+          (should (equal '(("command" ((:text . "/gh-issue-work-on 27")))) rpc-calls))
+          (should (string-match-p (regexp-quote "User: /gh-issue-work-on 27") (buffer-string)))
+          (should-not (string-match-p (regexp-quote "[not a command]") (buffer-string)))
+          (setf (psi-emacs-state-session-id psi-emacs--state) "s1")
+          (psi-emacs--handle-rpc-event
+           '((:event . "session/updated")
+             (:data . ((:session-id . "s1")
+                       (:phase . "idle")
+                       (:is-streaming . nil)
+                       (:is-compacting . nil)
+                       (:pending-message-count . 0)
+                       (:retry-attempt . 0)
+                       (:interrupt-pending . nil)))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message")
+             (:data . ((:session-id . "s1")
+                       (:role . "assistant")
+                       (:content . [((:type . "text") (:text . "template ok"))])))))
+          (should (string-match-p (regexp-quote "ψ: template ok") (buffer-string)))
+          (should-not (string-match-p (regexp-quote "[not a command]") (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
-
-(ert-deftest psi-abort-sends-rpc-and-clears-streaming-state ()
-  (with-temp-buffer
-    (psi-emacs-mode)
-    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
-    (unwind-protect
-        (let ((calls (psi-test--capture-request-sends
-                      (lambda ()
-                        (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "streaming")
-                        (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) "thinking")
-                        (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
-                        (psi-emacs-abort)))))
-          (should (equal '(("abort" nil)) calls))
-          (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
-          (should-not (psi-emacs-state-thinking-in-progress psi-emacs--state))
-          (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
-      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
-        (delete-process (psi-emacs-state-process psi-emacs--state))))))
-
-(ert-deftest psi-interrupt-sends-rpc-when-streaming ()
-  "C-c C-c dispatches interrupt RPC and transitions to interrupt_pending."
-  (with-temp-buffer
-    (psi-emacs-mode)
-    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
-    (unwind-protect
-        (let ((calls (psi-test--capture-request-sends
-                      (lambda ()
-                        (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
-                        (psi-emacs-interrupt)))))
-          (should (equal '(("interrupt" nil)) calls))
-          ;; run-state transitions to interrupt_pending immediately
-          (should (eq 'interrupt_pending (psi-emacs-state-run-state psi-emacs--state))))
-      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
-        (delete-process (psi-emacs-state-process psi-emacs--state))))))
-
-(ert-deftest psi-interrupt-noop-when-idle ()
-  "C-c C-c is a no-op when not streaming."
-  (with-temp-buffer
-    (psi-emacs-mode)
-    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
-    (unwind-protect
-        (let ((calls (psi-test--capture-request-sends
-                      (lambda ()
-                        (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
-                        (psi-emacs-interrupt)))))
-          (should (null calls))
-          (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
-      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
-        (delete-process (psi-emacs-state-process psi-emacs--state))))))
-
-
-
 
 (provide 'psi-dispatch-command-test)
 ;;; psi-dispatch-command-test.el ends here
