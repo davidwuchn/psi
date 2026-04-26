@@ -6,6 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+## [0.1.1987] - 2026-04-26
+
 ### Added
 
 ### Changed
@@ -13,4 +15,4 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 ### Fixed
 
 <!-- Comparison links -->
-[Unreleased]: https://github.com/hugoduncan/psi/compare/master...HEAD
+[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.1987...HEAD
