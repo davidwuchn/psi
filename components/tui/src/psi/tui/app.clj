@@ -1,7 +1,8 @@
 (ns psi.tui.app
   (:require
-   [charm.core :as charm]
+   [charm.components.text-input :as text-input]
    [charm.message :as msg]
+   [charm.program :as charm-program]
    [clojure.string :as str]
    [psi.tui.app.autocomplete :as autocomplete]
    [psi.tui.app.frontend-actions :as frontend-actions]
@@ -38,6 +39,16 @@
             :height (:height m)
             :force-clear? true)
      nil]))
+
+(defn- handle-focus-message
+  "On focus-in, increment :repaint-generation so render-view embeds a new
+   hidden marker at line 0. JLine's Display sees line 0 differ and repaints
+   the full screen — necessary because the terminal content may have been
+   redrawn by the host environment (e.g. Emacs switching buffers) while
+   JLine's internal previous-lines state was stale."
+  [state m]
+  (when (msg/focus? m)
+    [(update state :repaint-generation (fnil inc 0)) nil]))
 
 (defn- external-message-text
   [m]
@@ -87,9 +98,19 @@
 
     :else nil))
 
+(defn- toggle-tools-expanded
+  [state]
+  (let [new-expanded? (not (:tools-expanded? state))]
+    (support/dispatch-ui-event! state :session/ui-set-tools-expanded {:expanded? new-expanded?})
+    [(assoc state :tools-expanded? new-expanded?) nil]))
+
 (defn- handle-streaming-input
   [state m]
   (cond
+    (and (= :streaming (:phase state))
+         (msg/key-match? m "ctrl+o"))
+    (toggle-tools-expanded state)
+
     (and (= :streaming (:phase state))
          (msg/key-match? m "escape"))
     (app-update/handle-streaming-escape state)
@@ -100,17 +121,17 @@
 
     (and (= :streaming (:phase state))
          (msg/key-match? m "backspace"))
-    (let [[new-input cmd] (charm/text-input-update (:input state) m)]
+    (let [[new-input cmd] (text-input/text-input-update (:input state) m)]
       [(shared/set-input-model state new-input) cmd])
 
     (and (= :streaming (:phase state))
          (msg/key-match? m "space"))
-    (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
+    (let [[new-input cmd] (text-input/text-input-update (:input state) (msg/key-press " "))]
       [(shared/set-input-model state new-input) cmd])
 
     (and (= :streaming (:phase state))
          (msg/key-press? m))
-    (let [[new-input cmd] (charm/text-input-update (:input state) m)]
+    (let [[new-input cmd] (text-input/text-input-update (:input state) m)]
       [(shared/set-input-model state new-input) cmd])
 
     :else nil))
@@ -121,19 +142,13 @@
        (or (:shift m)
            (:alt m)
            (and (:ctrl m) (:alt m))
-           (str/ends-with? (charm/text-input-value (:input state)) "\\"))))
-
-(defn- toggle-tools-expanded
-  [state]
-  (let [new-expanded? (not (:tools-expanded? state))]
-    (support/dispatch-ui-event! state :session/ui-set-tools-expanded {:expanded? new-expanded?})
-    [(assoc state :tools-expanded? new-expanded?) nil]))
+           (str/ends-with? (text-input/value (:input state)) "\\"))))
 
 (defn- delete-prev-word-update
   [state]
-  (let [before    (charm/text-input-value (:input state))
+  (let [before    (text-input/value (:input state))
         new-state (update state :input app-update/delete-prev-word)
-        after     (charm/text-input-value (:input new-state))]
+        after     (text-input/value (:input new-state))]
     (when (support/key-debug-enabled?)
       (println (str "[key-debug] branch=alt+backspace before=" (pr-str before)
                     " after=" (pr-str after)
@@ -142,7 +157,7 @@
 
 (defn- idle-edit-update
   [state update-message next-state-fn]
-  (let [[new-input cmd] (charm/text-input-update (:input state) update-message)]
+  (let [[new-input cmd] (text-input/text-input-update (:input state) update-message)]
     [(next-state-fn (shared/set-input-model state new-input)) cmd]))
 
 (defn- idle-next-state-after-edit
@@ -226,6 +241,7 @@
       (or (when (msg/key-match? m "ctrl+c")
             (app-update/handle-ctrl-c state))
           (handle-window-size-message state m)
+          (handle-focus-message state m)
           (when (and (support/has-active-dialog? state)
                      (or (msg/key-press? m)
                          (msg/key-match? m "escape")
@@ -251,9 +267,10 @@
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
-   (charm/run {:init       (make-init model-name (:query-fn opts) (:ui-read-fn opts) (:ui-dispatch-fn opts) opts)
-               :update     (make-update run-agent-fn!)
-               :view       view
-               :alt-screen (if (contains? opts :alt-screen)
-                             (boolean (:alt-screen opts))
-                             true)})))
+   (charm-program/run {:init       (make-init model-name (:query-fn opts) (:ui-read-fn opts) (:ui-dispatch-fn opts) opts)
+                       :update          (make-update run-agent-fn!)
+                       :view            view
+                       :focus-reporting true
+                       :alt-screen      (if (contains? opts :alt-screen)
+                                          (boolean (:alt-screen opts))
+                                          true)})))

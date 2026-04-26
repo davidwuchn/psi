@@ -7,6 +7,7 @@
    [psi.app-runtime.projections :as projections]
    [psi.tui.app :as app]
    [psi.tui.ansi :as ansi]
+   [psi.tui.app.render :as render]
    [psi.ui.state :as ui-state])
   (:import
    [java.util.concurrent LinkedBlockingQueue]))
@@ -97,8 +98,8 @@
       (is (str/includes? (app/view state) "hello"))
       (is (str/includes? (app/view state) "world")))))
 
-(deftest view-clears-to-end-of-screen-test
-  (testing "view appends clear-to-end sequence after /new to avoid stale lines below footer"
+(deftest view-renders-new-session-message-test
+  (testing "view renders new-session message after /new"
     (let [update-fn (app/make-update (stub-agent-fn ""))
           state     (assoc (init-state)
                            :messages [{:role :assistant :text "line 1"}
@@ -108,7 +109,8 @@
           [s1 _]    (update-fn typed (msg/key-press :enter))
           out       (app/view s1)]
       (is (str/includes? out "[New session started]"))
-      (is (str/ends-with? out "\u001b[J")))))
+      ;; ESC[J (clear-to-end) is no longer emitted — JLine Display handles diffing
+      (is (not (str/includes? out "\u001b[J"))))))
 
 (deftest view-renders-default-footer-from-query-test
   (testing "footer renders path, stats, provider/model, and statuses from footer-model-fn"
@@ -238,7 +240,8 @@
           [s1 _]    (update-fn state {:type :agent-event :event-kind :thinking-delta :text "Plan"})
           [s2 _]    (update-fn s1 {:type :agent-event :event-kind :thinking-delta :text "Plan step"})
           out       (app/view s2)]
-      (is (= "Plan step" (:stream-thinking s2)))
+      ;; latest text is stored in active-turn-items, not :stream-thinking (removed)
+      (is (= "Plan step" (get-in s2 [:active-turn-items "thinking/0" :text])))
       (is (= ["thinking/0"] (:active-turn-order s2)))
       (is (str/includes? out "Plan step")))))
 
@@ -268,7 +271,293 @@
           tool-pos   (.indexOf out "a.clj")
           b-pos      (.indexOf out "Plan B")]
       (is (= ["thinking/0" "tool/call-1" "thinking/2"] (:active-turn-order s3)))
-      (is (= [:thinking :tool :thinking] (mapv :item-kind (:active-turn-events s3))))
+      (is (= [:thinking :tool :thinking]
+             (mapv #(get-in s3 [:active-turn-items % :item-kind]) (:active-turn-order s3))))
       (is (< a-pos tool-pos))
       (is (< tool-pos b-pos)))))
 
+;; ── New tests for 054 ──────────────────────────────────────────────────────────
+
+(deftest thinking-dedup-renders-single-line-test
+  (testing "N thinking deltas for the same content-index render as exactly one line"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          ;; send 5 deltas — each carries the full cumulative text so far
+          [s _]     (reduce (fn [[st _] txt]
+                              (update-fn st {:type :agent-event :event-kind :thinking-delta
+                                             :content-index 0 :text txt}))
+                            [state nil]
+                            ["P" "Pl" "Pla" "Plan" "Plan step"])
+          out       (ansi/strip-ansi (app/view s))]
+      ;; only one occurrence of the bullet prefix
+      (is (= 1 (count (re-seq #"· " out))))
+      ;; shows the latest text
+      (is (str/includes? out "Plan step"))
+      ;; does not show earlier partial texts as separate lines
+      (is (not (str/includes? out "· P\n"))))))
+
+(deftest tool-lifecycle-dedup-renders-single-row-test
+  (testing "tool going through all lifecycle stages renders as exactly one row"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          events    [{:type :agent-event :event-kind :tool-call-assembly :phase :start
+                      :content-index 0 :tool-id "t1" :tool-name "read" :arguments "{}"}
+                     {:type :agent-event :event-kind :tool-call-assembly :phase :end
+                      :content-index 0 :tool-id "t1" :tool-name "read" :arguments "{}"}
+                     {:type :agent-event :event-kind :tool-start :tool-id "t1" :tool-name "read"}
+                     {:type :agent-event :event-kind :tool-executing :tool-id "t1" :tool-name "read"
+                      :parsed-args {:path "foo.clj"}}
+                     {:type :agent-event :event-kind :tool-result :tool-id "t1" :tool-name "read"
+                      :content [{:type :text :text "file content"}] :is-error false}]
+          [s _]     (reduce (fn [[st _] ev] (update-fn st ev)) [state nil] events)]
+      ;; single entry in active-turn-order for this tool
+      (is (= ["tool/t1"] (:active-turn-order s)))
+      ;; tool status is :success after :tool-result
+      (is (= :success (get-in s [:tool-calls "tool/t1" :status]))))))
+
+(deftest archive-on-done-thinking-visible-in-messages-test
+  (testing "thinking blocks from result content are archived into messages before assistant reply"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          result    {:role "assistant"
+                     :content [{:type :thinking :text "Let me reason about this."}
+                               {:type :text :text "The answer is 42."}]}
+          [s _]     (update-fn state {:type :agent-result :result result})
+          msgs      (:messages s)]
+      (is (= :idle (:phase s)))
+      ;; thinking message appears before assistant reply
+      (is (some #(= {:role :thinking :text "Let me reason about this."} %) msgs))
+      (is (some #(= {:role :assistant :text "The answer is 42."} %) msgs))
+      (let [thinking-idx (.indexOf msgs {:role :thinking :text "Let me reason about this."})
+            assistant-idx (.indexOf msgs {:role :assistant :text "The answer is 42."})]
+        (is (< thinking-idx assistant-idx))))))
+
+(deftest archive-on-done-no-thinking-unchanged-test
+  (testing "result with no thinking blocks produces only the assistant message"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          result    {:role "assistant"
+                     :content [{:type :text :text "Plain answer."}]}
+          [s _]     (update-fn state {:type :agent-result :result result})
+          msgs      (:messages s)]
+      (is (= [{:role :assistant :text "Plain answer."}] msgs)))))
+
+(deftest render-message-thinking-role-test
+  (testing "render-message with :thinking role uses · prefix and thinking style"
+    (let [rendered (ansi/strip-ansi
+                    (render/render-message {:role :thinking :text "some thought"} 80))]
+      (is (str/includes? rendered "· some thought")))))
+
+(deftest archive-on-done-thinking-visible-in-view-test
+  (testing "archived thinking messages render with · prefix in the view"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          result    {:role "assistant"
+                     :content [{:type :thinking :text "My reasoning here."}
+                               {:type :text :text "Done."}]}
+          [s _]     (update-fn state {:type :agent-result :result result})
+          out       (ansi/strip-ansi (app/view s))]
+      (is (str/includes? out "· My reasoning here."))
+      (is (str/includes? out "Done.")))))
+
+(deftest archive-on-done-preserves-streaming-arrival-order-tool-then-thinking-test
+  (testing "when tool arrives before thinking during streaming, post-turn messages preserve that order"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          ;; Tool arrives first (content-index 0), then thinking at content-index 2
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0
+                                      :tool-id "t1" :tool-name "read"
+                                      :arguments "{\"path\":\"foo.clj\"}"})
+          [s2 _]    (update-fn s1 {:type :agent-event :event-kind :tool-result
+                                   :tool-id "t1" :tool-name "read"
+                                   :content [{:type :text :text "file content"}]
+                                   :is-error false})
+          [s3 _]    (update-fn s2 {:type :agent-event :event-kind :thinking-delta
+                                   :content-index 2 :text "Post-tool thinking."})
+          ;; Result content has thinking first (build-final-content sorts it that way),
+          ;; but active-turn-order must override that and keep tool before thinking.
+          result    {:role "assistant"
+                     :content [{:type :thinking :text "Post-tool thinking."}
+                               {:type :tool-call :id "t1" :name "read"
+                                :arguments "{\"path\":\"foo.clj\"}"}
+                               {:type :text :text "Done."}]}
+          [s4 _]    (update-fn s3 {:type :agent-result :result result})
+          msgs      (:messages s4)
+          tool-idx  (.indexOf msgs {:role :tool :tool-id "tool/t1"})
+          think-idx (.indexOf msgs {:role :thinking :text "Post-tool thinking."})
+          asst-idx  (.indexOf msgs {:role :assistant :text "Done."})]
+      (is (= :idle (:phase s4)))
+      ;; streaming arrival order: tool before thinking
+      (is (= ["tool/t1" "thinking/2"] (:active-turn-order s3)))
+      ;; post-turn messages must preserve that order
+      (is (< tool-idx think-idx))
+      (is (< think-idx asst-idx)))))
+
+(deftest archive-on-done-view-preserves-streaming-arrival-order-tool-then-thinking-test
+  (testing "rendered view after turn completes shows tool row before thinking line when tool arrived first"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0
+                                      :tool-id "t1" :tool-name "read"
+                                      :arguments "{\"path\":\"foo.clj\"}"})
+          [s2 _]    (update-fn s1 {:type :agent-event :event-kind :tool-result
+                                   :tool-id "t1" :tool-name "read"
+                                   :content [{:type :text :text "file content"}]
+                                   :is-error false})
+          [s3 _]    (update-fn s2 {:type :agent-event :event-kind :thinking-delta
+                                   :content-index 2 :text "Post-tool thinking."})
+          result    {:role "assistant"
+                     :content [{:type :thinking :text "Post-tool thinking."}
+                               {:type :tool-call :id "t1" :name "read"
+                                :arguments "{\"path\":\"foo.clj\"}"}
+                               {:type :text :text "Done."}]}
+          [s4 _]    (update-fn s3 {:type :agent-result :result result})
+          out       (ansi/strip-ansi (app/view s4))
+          tool-pos  (.indexOf out "foo.clj")
+          think-pos (.indexOf out "· Post-tool thinking.")
+          asst-pos  (.indexOf out "Done.")]
+      (is (str/includes? out "foo.clj"))
+      (is (str/includes? out "· Post-tool thinking."))
+      (is (str/includes? out "Done."))
+      ;; tool row before thinking, thinking before assistant text
+      (is (< tool-pos think-pos))
+      (is (< think-pos asst-pos)))))
+
+;; ── Tool rendering post-turn and ctrl+o toggle ────────────────────────────────
+
+(deftest tool-rows-visible-after-turn-completes-test
+  (testing "tool rows remain visible in idle phase after turn completes, before assistant text"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0
+                                      :tool-id "t1" :tool-name "read"
+                                      :arguments "{\"path\":\"foo.clj\"}"})
+          [s2 _]    (update-fn s1 {:type :agent-event :event-kind :tool-result
+                                   :tool-id "t1" :tool-name "read"
+                                   :content [{:type :text :text "file content"}]
+                                   :is-error false})
+          ;; result includes the tool-call block so handle-agent-result emits a :tool message
+          result    {:role "assistant"
+                     :content [{:type :tool-call :id "t1" :name "read"
+                                :arguments "{\"path\":\"foo.clj\"}"}
+                               {:type :text :text "Done."}]}
+          [s3 _]    (update-fn s2 {:type :agent-result :result result})
+          out       (ansi/strip-ansi (app/view s3))]
+      (is (= :idle (:phase s3)))
+      ;; header visible: tool name + path, no content in collapsed mode
+      (is (str/includes? out "read"))
+      (is (str/includes? out "foo.clj"))
+      (is (not (str/includes? out "file content")))
+      ;; tool row appears before assistant text
+      (is (< (.indexOf out "foo.clj") (.indexOf out "Done."))))))
+
+(deftest ctrl-o-toggles-tools-expanded-during-streaming-test
+  (testing "ctrl+o expands tool output during a streaming turn; collapsed shows no content"
+    (let [update-fn  (app/make-update (stub-agent-fn ""))
+          state      (assoc (init-state) :phase :streaming :tools-expanded? false)
+          [s1 _]     (update-fn state {:type :agent-event :event-kind :tool-result
+                                       :tool-id "t1" :tool-name "bash"
+                                       :content [{:type :text :text (str/join "\n" (repeat 20 "output-line"))}]
+                                       :is-error false})
+          out-before (ansi/strip-ansi (app/view s1))
+          [s2 _]     (update-fn s1 (msg/key-press "o" :ctrl true))
+          out-after  (ansi/strip-ansi (app/view s2))]
+      (is (false? (:tools-expanded? s1)))
+      (is (true?  (:tools-expanded? s2)))
+      ;; collapsed: no content lines
+      (is (not (str/includes? out-before "output-line")))
+      ;; expanded: content lines visible
+      (is (str/includes? out-after "output-line")))))
+
+(deftest ctrl-o-toggles-tools-expanded-in-idle-test
+  (testing "ctrl+o expands tool output in idle phase; collapsed shows no content"
+    (let [update-fn  (app/make-update (stub-agent-fn ""))
+          ;; Seed state with a :tool message + matching tool-calls entry
+          state      (assoc (init-state)
+                            :phase :idle
+                            :tools-expanded? false
+                            :messages [{:role :tool :tool-id "t1"}]
+                            :tool-order ["t1"]
+                            :tool-calls {"t1" {:name "bash"
+                                               :args "{}"
+                                               :status :success
+                                               :result (str/join "\n" (repeat 20 "output-line"))
+                                               :is-error false}})
+          out-before (ansi/strip-ansi (app/view state))
+          [s2 _]     (update-fn state (msg/key-press "o" :ctrl true))
+          out-after  (ansi/strip-ansi (app/view s2))]
+      (is (true? (:tools-expanded? s2)))
+      (is (not (str/includes? out-before "output-line")))
+      (is (str/includes? out-after "output-line")))))
+
+;; ── Tool header format ────────────────────────────────────────────────────────
+
+(deftest tool-header-read-with-line-range-test
+  (testing "read tool header shows path:offset:end derived from offset+limit args"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0 :tool-id "t1" :tool-name "read"
+                                      :arguments "{\"path\":\"src/foo.clj\",\"offset\":10,\"limit\":20}"})
+          out       (ansi/strip-ansi (app/view s1))]
+      (is (str/includes? out "read src/foo.clj:10:29")))))
+
+(deftest tool-header-read-offset-only-test
+  (testing "read tool header shows :offset suffix when limit absent"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0 :tool-id "t1" :tool-name "read"
+                                      :arguments "{\"path\":\"src/foo.clj\",\"offset\":5}"})
+          out       (ansi/strip-ansi (app/view s1))]
+      (is (str/includes? out "read src/foo.clj:5")))))
+
+(deftest tool-header-read-no-range-test
+  (testing "read tool header shows path only when no offset/limit"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0 :tool-id "t1" :tool-name "read"
+                                      :arguments "{\"path\":\"README.md\"}"})
+          out       (ansi/strip-ansi (app/view s1))]
+      (is (str/includes? out "read README.md"))
+      (is (not (str/includes? out "read README.md:"))))))
+
+(deftest tool-header-edit-with-line-range-test
+  (testing "edit tool header shows path:firstChangedLine:end from details + oldText span"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0 :tool-id "t1" :tool-name "edit"
+                                      :arguments "{\"path\":\"src/bar.clj\",\"oldText\":\"a\nb\nc\"}"})
+          [s2 _]    (update-fn s1 {:type :agent-event :event-kind :tool-result
+                                   :tool-id "t1" :tool-name "edit"
+                                   :content [{:type :text :text "ok"}]
+                                   :details {:firstChangedLine 20}
+                                   :is-error false})
+          out       (ansi/strip-ansi (app/view s2))]
+      (is (str/includes? out "edit src/bar.clj:20:22")))))
+
+(deftest tool-header-bash-test
+  (testing "bash tool header uses $ prefix and shows command"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-call-assembly
+                                      :phase :end :content-index 0 :tool-id "t1" :tool-name "bash"
+                                      :arguments "{\"command\":\"git status\"}"})
+          out       (ansi/strip-ansi (app/view s1))]
+      (is (str/includes? out "$ git status")))))
+
+(deftest tool-collapsed-no-content-test
+  (testing "collapsed mode shows no content body regardless of result size"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event :event-kind :tool-result
+                                      :tool-id "t1" :tool-name "read"
+                                      :content [{:type :text :text (str/join "\n" (repeat 50 "content-line"))}]
+                                      :is-error false})
+          out       (ansi/strip-ansi (app/view s1))]
+      (is (not (str/includes? out "content-line"))))))

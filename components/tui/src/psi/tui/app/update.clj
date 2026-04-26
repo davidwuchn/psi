@@ -1,7 +1,8 @@
 (ns psi.tui.app.update
   (:require
-   [charm.core :as charm]
+   [charm.components.text-input :as text-input]
    [charm.message :as msg]
+   [charm.program :as charm-program]
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
    [psi.agent-session.message-text :as message-text]
@@ -29,7 +30,7 @@
                  :session-selector sel
                  :session-selector-mode mode)
           clear-context-session-tree-selection
-          (shared/set-input-model (charm/text-input-reset (:input state))))
+          (shared/set-input-model (text-input/reset (:input state))))
       nil])))
 
 (defn restored-session-payload
@@ -74,7 +75,7 @@
 
 (defn reset-input-model
   [state]
-  (shared/set-input-model state (charm/text-input-reset (:input state))))
+  (shared/set-input-model state (text-input/reset (:input state))))
 
 (defn append-assistant-message
   [state text]
@@ -85,7 +86,6 @@
   (-> state
       (assoc :messages messages
              :stream-text nil
-             :stream-thinking nil
              :tool-calls tool-calls
              :tool-order tool-order
              :force-clear? true)
@@ -210,13 +210,11 @@
          "\n\nWaiting for browser callback…"
          "\n\nPaste the authorization code below ↓")))
 
-(declare handle-dispatch-result)
-
 (defn handle-dispatch-result
   [state result]
   (when result
     (case (:type result)
-      :quit [state charm/quit-cmd]
+      :quit [state charm-program/quit-cmd]
       :resume (open-session-selector state :resume)
       :tree-open (open-session-selector state :tree)
       :tree-switch (handle-tree-switch-result state result)
@@ -325,7 +323,7 @@
         (frontend-actions/cancel-frontend-action state (:frontend-action/ui-action state) handle-dispatch-result)
         (close-session-selector state))
 
-      (msg/key-match? m "ctrl+c") [state charm/quit-cmd]
+      (msg/key-match? m "ctrl+c") [state charm-program/quit-cmd]
       (and (msg/key-match? m "tab")
            (not= :tree (:session-selector-mode state)))
       [(assoc state :session-selector (toggle-selector-scope sel)) nil]
@@ -347,12 +345,12 @@
                 :error         nil
                 :spinner-frame 0)
          clear-live-turn
-         (shared/set-input-model (charm/text-input-reset (:input state))))
+         (shared/set-input-model (text-input/reset (:input state))))
      (support/poll-cmd queue)]))
 
 (defn submit-input
   [state run-agent-fn!]
-  (let [text (str/trim (charm/text-input-value (:input state)))]
+  (let [text (str/trim (text-input/value (:input state)))]
     (cond
       (str/blank? text)
       [state nil]
@@ -367,17 +365,17 @@
 
 (defn continue-input-line
   [state]
-  (let [value       (charm/text-input-value (:input state))
+  (let [value       (text-input/value (:input state))
         backslash?  (str/ends-with? value "\\")
         value'      (if backslash?
                       (subs value 0 (dec (count value)))
                       value)
-        next-input  (charm/text-input-set-value (:input state) (str value' "\n"))]
+        next-input  (text-input/set-value (:input state) (str value' "\n"))]
     [(shared/set-input-model state next-input) nil]))
 
 (defn delete-prev-word
   [input]
-  (let [s   (charm/text-input-value input)
+  (let [s   (text-input/value input)
         pos (long (or (:pos input) (count s)))]
     (if (<= pos 0)
       input
@@ -410,20 +408,10 @@
   [state]
   (assoc state
          :stream-text nil
-         :stream-thinking nil
          :active-turn-order []
          :active-turn-items {}
-         :active-turn-events []
-         :active-turn-next-seq 0
          :tool-ui-id-by-tool-id {}
          :tool-ui-id-by-content-index {}))
-
-(defn append-active-turn-event
-  [state event]
-  (let [seq-no (:active-turn-next-seq state 0)]
-    (-> state
-        (update :active-turn-events conj (assoc event :seq seq-no))
-        (update :active-turn-next-seq (fnil inc 0)))))
 
 (defn tool-event-snapshot
   [tool-name arguments status parsed-args content details result-text is-error]
@@ -455,33 +443,23 @@
 
 (defn upsert-thinking-item
   [state content-index text]
-  (-> state
-      (append-active-turn-event {:item-kind     :thinking
-                                 :content-index (or content-index 0)
-                                 :text          (or text "")})
-      ((fn [state*]
-         (first
-          (ensure-active-turn-item
-           state*
-           (thinking-item-id content-index)
-           {:item-kind     :thinking
-            :content-index (or content-index 0)
-            :text          (or text "")}))))))
+  (first
+   (ensure-active-turn-item
+    state
+    (thinking-item-id content-index)
+    {:item-kind     :thinking
+     :content-index (or content-index 0)
+     :text          (or text "")})))
 
 (defn upsert-text-item
   [state content-index text]
-  (-> state
-      (append-active-turn-event {:item-kind     :text
-                                 :content-index (or content-index 0)
-                                 :text          (or text "")})
-      ((fn [state*]
-         (first
-          (ensure-active-turn-item
-           state*
-           (text-item-id content-index)
-           {:item-kind     :text
-            :content-index (or content-index 0)
-            :text          (or text "")}))))))
+  (first
+   (ensure-active-turn-item
+    state
+    (text-item-id content-index)
+    {:item-kind     :text
+     :content-index (or content-index 0)
+     :text          (or text "")})))
 
 (defn ensure-tool-row
   [state {:keys [tool-id content-index tool-name arguments]}]
@@ -517,31 +495,18 @@
   (let [kind (:event-kind event)]
     (case kind
       :text-delta
-      [(let [state' (assoc state :stream-text (:text event))]
-         (upsert-text-item state' (:content-index event) (:text event)))
+      [(upsert-text-item state (:content-index event) (:text event))
        nil]
 
       :thinking-delta
-      [(let [state' (assoc state :stream-thinking (or (:text event) ""))]
-         (upsert-thinking-item state' (:content-index event) (:text event)))
+      [(upsert-thinking-item state (:content-index event) (:text event))
        nil]
 
       :tool-call-assembly
-      (let [state0         (append-active-turn-event state {:item-kind     :tool
-                                                            :content-index (:content-index event)
-                                                            :tool-id       (:tool-id event)
-                                                            :tool-name     (:tool-name event)
-                                                            :arguments     (:arguments event)
-                                                            :phase         (:phase event)
-                                                            :snapshot      (tool-event-snapshot
-                                                                            (:tool-name event)
-                                                                            (:arguments event)
-                                                                            (if (= :end (:phase event)) :pending :assembling)
-                                                                            nil nil nil nil false)})
-            [state' ui-id] (ensure-tool-row state0 {:tool-id (:tool-id event)
-                                                    :content-index (:content-index event)
-                                                    :tool-name (:tool-name event)
-                                                    :arguments (:arguments event)})]
+      (let [[state' ui-id] (ensure-tool-row state {:tool-id (:tool-id event)
+                                                   :content-index (:content-index event)
+                                                   :tool-name (:tool-name event)
+                                                   :arguments (:arguments event)})]
         [(-> state'
              (assoc-in [:tool-calls ui-id :name] (:tool-name event))
              (assoc-in [:tool-calls ui-id :args] (or (:arguments event) ""))
@@ -554,17 +519,8 @@
          nil])
 
       :tool-start
-      (let [state0         (append-active-turn-event state {:item-kind :tool-lifecycle
-                                                            :tool-id   (:tool-id event)
-                                                            :tool-name (:tool-name event)
-                                                            :status    :pending
-                                                            :snapshot  (tool-event-snapshot
-                                                                        (:tool-name event)
-                                                                        nil
-                                                                        :pending
-                                                                        nil nil nil nil false)})
-            [state' ui-id] (ensure-tool-row state0 {:tool-id (:tool-id event)
-                                                    :tool-name (:tool-name event)})]
+      (let [[state' ui-id] (ensure-tool-row state {:tool-id (:tool-id event)
+                                                   :tool-name (:tool-name event)})]
         [(-> state'
              (assoc-in [:tool-calls ui-id :status] :pending)
              (assoc-in [:active-turn-items ui-id :item-kind] :tool)
@@ -580,19 +536,8 @@
          nil])
 
       :tool-executing
-      (let [state0         (append-active-turn-event state {:item-kind   :tool-lifecycle
-                                                            :tool-id     (:tool-id event)
-                                                            :tool-name   (:tool-name event)
-                                                            :status      :running
-                                                            :parsed-args (:parsed-args event)
-                                                            :snapshot    (tool-event-snapshot
-                                                                          (:tool-name event)
-                                                                          nil
-                                                                          :running
-                                                                          (:parsed-args event)
-                                                                          nil nil nil false)})
-            [state' ui-id] (ensure-tool-row state0 {:tool-id (:tool-id event)
-                                                    :tool-name (:tool-name event)})]
+      (let [[state' ui-id] (ensure-tool-row state {:tool-id (:tool-id event)
+                                                   :tool-name (:tool-name event)})]
         [(-> state'
              (assoc-in [:tool-calls ui-id :status] :running)
              (assoc-in [:tool-calls ui-id :parsed-args]
@@ -604,25 +549,8 @@
 
       :tool-execution-update
       (let [result-text    (tool-result-text event)
-            state0         (append-active-turn-event state {:item-kind   :tool-lifecycle
-                                                            :tool-id     (:tool-id event)
-                                                            :tool-name   (:tool-name event)
-                                                            :status      :running
-                                                            :content     (:content event)
-                                                            :result-text result-text
-                                                            :details     (:details event)
-                                                            :is-error    (boolean (:is-error event))
-                                                            :snapshot    (tool-event-snapshot
-                                                                          (:tool-name event)
-                                                                          nil
-                                                                          :running
-                                                                          nil
-                                                                          (:content event)
-                                                                          (:details event)
-                                                                          result-text
-                                                                          (boolean (:is-error event)))})
-            [state' ui-id] (ensure-tool-row state0 {:tool-id (:tool-id event)
-                                                    :tool-name (:tool-name event)})]
+            [state' ui-id] (ensure-tool-row state {:tool-id (:tool-id event)
+                                                   :tool-name (:tool-name event)})]
         [(-> state'
              (assoc-in [:tool-calls ui-id :status] :running)
              (assoc-in [:tool-calls ui-id :content] (:content event))
@@ -637,25 +565,8 @@
       :tool-result
       (let [result-text    (tool-result-text event)
             status         (if (:is-error event) :error :success)
-            state0         (append-active-turn-event state {:item-kind   :tool-lifecycle
-                                                            :tool-id     (:tool-id event)
-                                                            :tool-name   (:tool-name event)
-                                                            :status      status
-                                                            :content     (:content event)
-                                                            :result-text result-text
-                                                            :details     (:details event)
-                                                            :is-error    (boolean (:is-error event))
-                                                            :snapshot    (tool-event-snapshot
-                                                                          (:tool-name event)
-                                                                          nil
-                                                                          status
-                                                                          nil
-                                                                          (:content event)
-                                                                          (:details event)
-                                                                          result-text
-                                                                          (boolean (:is-error event)))})
-            [state' ui-id] (ensure-tool-row state0 {:tool-id (:tool-id event)
-                                                    :tool-name (:tool-name event)})]
+            [state' ui-id] (ensure-tool-row state {:tool-id (:tool-id event)
+                                                   :tool-name (:tool-name event)})]
         [(-> state'
              (assoc-in [:tool-calls ui-id :status] status)
              (assoc-in [:tool-calls ui-id :content] (:content event))
@@ -669,14 +580,63 @@
 
       [state nil])))
 
+(defn- block-type-kw
+  [block]
+  (let [t (or (:type block) (:kind block))]
+    (if (keyword? t) t (some-> t keyword))))
+
+(defn- thinking-block?
+  [block]
+  (= :thinking (block-type-kw block)))
+
+(defn- content-blocks-seq
+  "Normalize result content to a flat sequence of block maps."
+  [content]
+  (cond
+    (sequential? content) (filter map? content)
+    (and (map? content) (= :structured (block-type-kw (:kind content))))
+    (content-blocks-seq (:blocks content))
+    :else []))
+
 (defn handle-agent-result
   [state result]
-  (let [content (:content result)
-        text    (message-text/content-text content)
-        errors  (message-text/content-error-parts content)
-        error   (first errors)
-        display (if (seq (or text "")) text "(no response)")]
+  (let [content  (:content result)
+        text     (message-text/content-text content)
+        errors   (message-text/content-error-parts content)
+        error    (first errors)
+        display  (if (seq (or text "")) text "(no response)")
+        ;; Use active-turn-order as the authoritative source for post-turn message
+        ;; ordering when streaming events were received. It was built in real-time
+        ;; and has the exact interleaved order of thinking blocks and tool calls.
+        ;; build-final-content in turn_accumulator puts all thinking first then
+        ;; tool-calls, so we cannot use result content blocks for ordering when
+        ;; active-turn-order is available.
+        ;; When active-turn-order is empty (no streaming events observed, e.g.
+        ;; in tests or edge cases), fall back to scanning result content blocks
+        ;; for thinking entries so they are not silently dropped.
+        order    (:active-turn-order state)
+        items    (:active-turn-items state)
+        ordered-msgs (if (seq order)
+                       (keep (fn [item-id]
+                               (let [item (get items item-id)]
+                                 (case (:item-kind item)
+                                   :thinking
+                                   (when-let [t (not-empty (:text item))]
+                                     {:role :thinking :text t})
+                                   :tool
+                                   {:role :tool :tool-id (:tool-id item)}
+                                   ;; :text items become the assistant message — skip here
+                                   nil)))
+                             order)
+                       ;; Fallback: extract thinking blocks from result content in order.
+                       ;; Tool entries are already in tool-calls/tool-order from streaming.
+                       (keep (fn [block]
+                               (when (thinking-block? block)
+                                 (when-let [t (not-empty (:text block))]
+                                   {:role :thinking :text t})))
+                             (content-blocks-seq content)))]
     [(-> state
+         (update :messages into ordered-msgs)
          (update :messages conj {:role :assistant :text display})
          (assoc :phase :idle
                 :error error)
@@ -732,7 +692,7 @@
 
       within?
       (case (:double-escape-action state :none)
-        :quit [state charm/quit-cmd]
+        :quit [state charm-program/quit-cmd]
         [(-> state
              (assoc-in [:prompt-input-state :timing :last-escape-ms] now-ms)
              (append-assistant-message (str "Double-Escape action " (pr-str (:double-escape-action state :none)) " not available in this runtime.")))
@@ -750,7 +710,7 @@
         empty-input? (str/blank? (shared/input-value state))]
     (cond
       within?
-      [state charm/quit-cmd]
+      [state charm-program/quit-cmd]
 
       empty-input?
       [(assoc-in state [:prompt-input-state :timing :last-ctrl-c-ms] now-ms) nil]
@@ -764,5 +724,5 @@
 (defn handle-ctrl-d
   [state]
   (if (str/blank? (shared/input-value state))
-    [state charm/quit-cmd]
+    [state charm-program/quit-cmd]
     [state nil]))
