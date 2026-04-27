@@ -20,6 +20,20 @@
   [(or (System/getenv "BB") "bb")
    (str (.getCanonicalPath (java.io.File. "extensions/lsp/test/extensions/lsp_fixture_bb.clj")))])
 
+;; Timeout constants
+;; startup-ms       — time for a fresh LSP server to initialize (post-restart needs more headroom in CI)
+;; diagnostics-ms   — time to receive diagnostics from an initialized server
+;; sync-ms          — time for document sync round-trip
+;; await-ms         — outer polling deadline for await-diagnostic-finding fallback
+(def ^:private startup-ms 2000)
+(def ^:private startup-ms-cold 5000)   ; after restart: server boots from scratch
+(def ^:private diagnostics-ms 2000)
+(def ^:private diagnostics-ms-slow 10000)
+(def ^:private sync-ms 2000)
+(def ^:private sync-ms-cold 5000)     ; after restart: allow extra time
+(def ^:private await-ms 10000)
+(def ^:private await-ms-cold 30000)   ; after restart: generous outer bound
+
 (defn- create-temp-worktree []
   (let [dir (io/file (test-support/temp-cwd))
         git (io/file dir ".git")]
@@ -106,14 +120,14 @@
              {:name "lsp-diagnostics"
               :ext-path "/ext/lsp.clj"
               :match {:tools #{"write"}}
-              :timeout-ms 2000
+              :timeout-ms sync-ms
               :handler (fn [input]
                          ((sut/make-post-tool-handler api)
                           (assoc input
                                  :config {:command lsp-fixture-command
-                                          :startup-timeout-ms 2000
-                                          :diagnostics-timeout-ms 2000
-                                          :sync-timeout-ms 2000})))})
+                                          :startup-timeout-ms startup-ms
+                                          :diagnostics-timeout-ms diagnostics-ms
+                                          :sync-timeout-ms sync-ms})))})
           _ (post-tool/run-post-tool-processing-in!
              ctx
              {:session-id session-id
@@ -122,9 +136,9 @@
               :tool-result {:effects [{:path file-path}]}
               :worktree-path worktree
               :config {:command lsp-fixture-command
-                       :startup-timeout-ms 2000
-                       :diagnostics-timeout-ms 2000
-                       :sync-timeout-ms 2000}})
+                       :startup-timeout-ms startup-ms
+                       :diagnostics-timeout-ms diagnostics-ms
+                       :sync-timeout-ms sync-ms}})
           entries (dispatch/dispatch-trace-entries)
           received (some #(when (and (= :dispatch/received (:trace/kind %))
                                      (= :session/post-tool-run (:event-type %)))
@@ -210,9 +224,9 @@
                                         {:worktree-path worktree
                                          :tool-result {:effects [{:path file-path}]}
                                          :config {:command lsp-fixture-command
-                                                  :startup-timeout-ms 2000
-                                                  :diagnostics-timeout-ms 2000
-                                                  :sync-timeout-ms 2000}})
+                                                  :startup-timeout-ms startup-ms
+                                                  :diagnostics-timeout-ms diagnostics-ms
+                                                  :sync-timeout-ms sync-ms}})
           root (:workspace-root result)
           svc (services/service-in ctx (sut/workspace-key root))
           debug @(:debug-atom svc)
@@ -260,14 +274,14 @@
              {:name "lsp-diagnostics"
               :ext-path "/ext/lsp.clj"
               :match {:tools #{"write"}}
-              :timeout-ms 2000
+              :timeout-ms sync-ms
               :handler (fn [input]
                          ((sut/make-post-tool-handler api)
                           (assoc input
                                  :config {:command lsp-fixture-command
-                                          :startup-timeout-ms 2000
-                                          :diagnostics-timeout-ms 2000
-                                          :sync-timeout-ms 2000})))})
+                                          :startup-timeout-ms startup-ms
+                                          :diagnostics-timeout-ms diagnostics-ms
+                                          :sync-timeout-ms sync-ms})))})
           recorded (atom nil)
           tc {:id "call-live-lsp" :name "write" :arguments "{}"}]
       (try
@@ -315,17 +329,17 @@
                                               {:worktree-path worktree
                                                :tool-result {:effects [{:path file-path}]}
                                                :config {:command lsp-fixture-command
-                                                        :startup-timeout-ms 2000
-                                                        :diagnostics-timeout-ms 5000}})
+                                                        :startup-timeout-ms startup-ms
+                                                        :diagnostics-timeout-ms diagnostics-ms-slow}})
           _ (write-file! file-path "(ns demo) ;; warn\n")
           second-result (sut/sync-tool-result! api
                                                {:worktree-path worktree
                                                 :tool-result {:effects [{:path file-path}]}
                                                 :config {:command lsp-fixture-command
-                                                         :startup-timeout-ms 2000
-                                                         :diagnostics-timeout-ms 10000}})
+                                                         :startup-timeout-ms startup-ms
+                                                         :diagnostics-timeout-ms diagnostics-ms-slow}})
           root (:workspace-root second-result)
-          finding (await-diagnostic-finding api root file-path 10000)
+          finding (await-diagnostic-finding api root file-path await-ms)
           svc (services/service-in ctx (sut/workspace-key root))
           debug @(:debug-atom svc)]
       (try
@@ -358,8 +372,8 @@
                                               {:worktree-path worktree
                                                :tool-result {:effects [{:path file-path}]}
                                                :config {:command lsp-fixture-command
-                                                        :startup-timeout-ms 2000
-                                                        :diagnostics-timeout-ms 5000}})
+                                                        :startup-timeout-ms startup-ms
+                                                        :diagnostics-timeout-ms diagnostics-ms-slow}})
           root worktree
           svc-before (services/service-in ctx (sut/workspace-key root))
           restarted-root (sut/restart-workspace! api {:worktree-path worktree
@@ -372,11 +386,11 @@
                                                {:worktree-path worktree
                                                 :tool-result {:effects [{:path file-path}]}
                                                 :config {:command lsp-fixture-command
-                                                         :startup-timeout-ms 5000
-                                                         :diagnostics-timeout-ms 10000
-                                                         :sync-timeout-ms 5000}})
+                                                         :startup-timeout-ms startup-ms-cold
+                                                         :diagnostics-timeout-ms diagnostics-ms-slow
+                                                         :sync-timeout-ms sync-ms-cold}})
           finding (or (get (:diagnostics-by-path second-result) file-path)
-                      (await-diagnostic-finding api root file-path 30000))
+                      (await-diagnostic-finding api root file-path await-ms-cold))
           svc-after (services/service-in ctx (sut/workspace-key root))
           entries (dispatch/dispatch-trace-entries)]
       (try
@@ -419,8 +433,8 @@
                                    {:worktree-path worktree
                                     :tool-result {:effects [{:path file-path}]}
                                     :config {:command lsp-fixture-command
-                                             :startup-timeout-ms 2000
-                                             :diagnostics-timeout-ms 2000}})
+                                             :startup-timeout-ms startup-ms
+                                             :diagnostics-timeout-ms diagnostics-ms}})
           lines (sut/workspace-status-lines api {:worktree-path worktree})]
       (try
         (is (= (str "LSP workspace: " worktree) (first lines)))
