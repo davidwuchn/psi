@@ -6,6 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+## [0.1.2026] - 2026-04-27
+
 ### Fixed
 - `psi` installed via `bbin` from Clojars no longer fails with "Could not find artifact psi:workflow-loader" — psi-owned extensions are bundled in the main jar and no longer requested as separate Maven artifacts.
 
@@ -29,7 +31,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 ### Fixed
 
 <!-- Comparison links -->
-[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2021...HEAD
+[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2026...HEAD
+[0.1.2026]: https://github.com/hugoduncan/psi/compare/v0.1.2021...v0.1.2026
 [0.1.2021]: https://github.com/hugoduncan/psi/compare/v0.1.2017...v0.1.2021
 [0.1.2017]: https://github.com/hugoduncan/psi/compare/v0.1.2013...v0.1.2017
 [0.1.2013]: https://github.com/hugoduncan/psi/compare/v0.1.2008...v0.1.2013
