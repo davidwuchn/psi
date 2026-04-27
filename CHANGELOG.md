@@ -6,6 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+## [0.1.2017] - 2026-04-27
+
 ### Fixed
 - `bbin install org.hugoduncan/psi` now correctly resolves the `psi` entry point — added `hugoduncan.psi` shim namespace so bbin's Maven installer can locate the entry point it derives from the artifact coordinates.
 
@@ -19,7 +21,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 ### Fixed
 
 <!-- Comparison links -->
-[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2013...HEAD
+[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2017...HEAD
+[0.1.2017]: https://github.com/hugoduncan/psi/compare/v0.1.2013...v0.1.2017
 [0.1.2013]: https://github.com/hugoduncan/psi/compare/v0.1.2008...v0.1.2013
 [0.1.2008]: https://github.com/hugoduncan/psi/compare/v0.1.2002...v0.1.2008
 [0.1.2002]: https://github.com/hugoduncan/psi/compare/v0.1.1998...v0.1.2002
