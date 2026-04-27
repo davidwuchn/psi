@@ -25,13 +25,13 @@ EQL-queryable, extensible. Inspired by
 Install the latest release:
 
 ```bash
-bbin install io.github.hugoduncan/psi --as psi
+bbin install org.hugoduncan/psi --as psi
 ```
 
 Install a specific release by tag (recommended for reproducible environments):
 
 ```bash
-bbin install io.github.hugoduncan/psi --as psi --git/tag v0.1.1987
+bbin install org.hugoduncan/psi --as psi --git/tag v0.1.1987
 ```
 
 Check the installed version:
@@ -45,7 +45,7 @@ Upgrade to the latest release:
 
 ```bash
 bbin uninstall psi
-bbin install io.github.hugoduncan/psi --as psi
+bbin install org.hugoduncan/psi --as psi
 ```
 
 Repo-local / development alternative:
@@ -58,8 +58,8 @@ Releases are tagged `vMAJOR.MINOR.PATCH` on the
 [releases page](https://github.com/hugoduncan/psi/releases).
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
-Each release is also published to [Clojars](https://clojars.org/io.github.hugoduncan/psi)
-as `io.github.hugoduncan/psi`. The launcher auto-detects released versions and
+Each release is also published to [Clojars](https://clojars.org/org.hugoduncan/psi)
+as `org.hugoduncan/psi`. The launcher auto-detects released versions and
 resolves psi from the Maven cache instead of re-fetching from git — no action
 required. Force a specific resolution strategy with `PSI_LAUNCHER_POLICY`
 (`jar` | `installed` | `development`); see [`doc/cli.md`](doc/cli.md).

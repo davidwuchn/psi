@@ -17,7 +17,7 @@ resolved at startup. Three policies exist:
 
 | Policy | When used | How psi is resolved |
 |--------|-----------|---------------------|
-| `jar` | Default for released versions | Single `io.github.hugoduncan/psi` Maven coordinate from Clojars — fast, cached |
+| `jar` | Default for released versions | Single `org.hugoduncan/psi` Maven coordinate from Clojars — fast, cached |
 | `installed` | Default for unreleased/git installs | Local paths relative to the launcher root (git checkout) |
 | `development` | Contributor/repo-local flows | Local paths relative to the launcher root (source tree) |
 
@@ -46,7 +46,7 @@ PSI_LAUNCHER_POLICY=development psi  # force source-tree paths (contributors)
 Canonical install path:
 
 ```bash
-bbin install io.github.hugoduncan/psi --as psi
+bbin install org.hugoduncan/psi --as psi
 ```
 
 Repo-local / development install alternative:

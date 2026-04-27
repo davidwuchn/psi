@@ -173,7 +173,7 @@ This single command:
 
 Pushing the tag triggers `.github/workflows/release.yml`, which:
 - Re-runs fmt/lint/tests.
-- Builds and deploys the library jar to Clojars (`io.github.hugoduncan/psi`).
+- Builds and deploys the library jar to Clojars (`org.hugoduncan/psi`).
 - Smoke-tests the `:jar` launcher policy against the deployed Clojars artifact
   (retries up to 8×30s for propagation).
 - Builds the uberjar.
@@ -202,11 +202,11 @@ After the workflow completes:
 
 ```bash
 # Verify Clojars artifact
-clojure -Sdeps '{:deps {io.github.hugoduncan/psi {:mvn/version "X.Y.Z"}}}' \
+clojure -Sdeps '{:deps {org.hugoduncan/psi {:mvn/version "X.Y.Z"}}}' \
   -M -m psi.main --version
 
 # Verify bbin install
-bbin install io.github.hugoduncan/psi --as psi --git/tag vX.Y.Z
+bbin install org.hugoduncan/psi --as psi --git/tag vX.Y.Z
 psi --version
 ```
 

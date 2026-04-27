@@ -14,7 +14,7 @@
 
 (def psi-mvn-lib
   "Maven group/artifact for the psi library jar published to Clojars."
-  'io.github.hugoduncan/psi)
+  'org.hugoduncan/psi)
 
 (def psi-owned-extension-catalog
   {'psi/auto-session-name

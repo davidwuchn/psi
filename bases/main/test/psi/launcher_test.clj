@@ -65,7 +65,7 @@
              (:deps (with-redefs [launcher/repo-basis-config (constantly repo-config)]
                       (launcher/psi-self-basis "/repo/psi" :installed))))))
     (testing "jar policy emits single mvn coord for the release version"
-      (is (= '{io.github.hugoduncan/psi {:mvn/version "0.1.42"}
+      (is (= '{org.hugoduncan/psi {:mvn/version "0.1.42"}
                nrepl/nrepl {:mvn/version "1.5.1"}}
              (:deps (with-redefs [launcher/release-version (constantly "0.1.42")]
                       (launcher/psi-self-basis "/repo/psi" :jar))))))
@@ -121,7 +121,7 @@
                    (launcher/startup-basis "/repo/psi" "/repo/project" :jar))]
       ;; psi self-dep is the single mvn coord
       (is (= {:mvn/version "0.1.42"}
-             (get-in result [:basis :deps 'io.github.hugoduncan/psi])))
+             (get-in result [:basis :deps 'org.hugoduncan/psi])))
       ;; extension placeholder resolved to the release version
       (is (= {:mvn/version "0.1.42"}
              (get-in result [:basis :deps 'psi/mementum])))))

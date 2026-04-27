@@ -16,7 +16,7 @@
 ;; Config
 ;; ---------------------------------------------------------------------------
 
-(def psi-lib   'io.github.hugoduncan/psi)
+(def psi-lib   'org.hugoduncan/psi)
 (def class-dir "target/classes")
 (def jar-file  "target/psi.jar")
 (def wrapper   "target/psi")

@@ -288,7 +288,7 @@ jobs:
           # just-deployed Clojars coord.  This avoids the launcher's version
           # resource (which is "unreleased" post-tag-reset) and tests that
           # the Maven artifact resolves and psi.main boots correctly.
-          DEPS="{:deps {io.github.hugoduncan/psi {:mvn/version \"$VERSION\"}}}"
+          DEPS="{:deps {org.hugoduncan/psi {:mvn/version \"$VERSION\"}}}"
           EXPECTED="psi $VERSION"
           MAX_ATTEMPTS=8
           SLEEP_SEC=30
