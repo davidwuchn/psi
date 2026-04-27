@@ -110,6 +110,11 @@
     (b/copy-dir {:src-dirs   src-dirs
                  :target-dir class-dir})
 
+    ;; 3b. Copy bb.edn so bbin can read :bbin/bin at install time
+    (println "  Copying bb.edn ...")
+    (b/copy-file {:src    "bb.edn"
+                  :target (str class-dir "/bb.edn")})
+
     ;; 4. Build thin jar (no AOT)
     (println "  Assembling library jar ...")
     (b/jar {:class-dir class-dir
