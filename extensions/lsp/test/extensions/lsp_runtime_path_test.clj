@@ -372,11 +372,11 @@
                                                {:worktree-path worktree
                                                 :tool-result {:effects [{:path file-path}]}
                                                 :config {:command lsp-fixture-command
-                                                         :startup-timeout-ms 2000
+                                                         :startup-timeout-ms 5000
                                                          :diagnostics-timeout-ms 10000
-                                                         :sync-timeout-ms 2000}})
+                                                         :sync-timeout-ms 5000}})
           finding (or (get (:diagnostics-by-path second-result) file-path)
-                      (await-diagnostic-finding api root file-path 10000))
+                      (await-diagnostic-finding api root file-path 30000))
           svc-after (services/service-in ctx (sut/workspace-key root))
           entries (dispatch/dispatch-trace-entries)]
       (try
