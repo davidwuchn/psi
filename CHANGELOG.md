@@ -6,8 +6,6 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
-## [0.1.1990] - 2026-04-26
-
 ### Added
 - Initial Version
 
