@@ -25,13 +25,13 @@ EQL-queryable, extensible. Inspired by
 Install the latest release:
 
 ```bash
-bbin install org.hugoduncan/psi --as psi
+bbin install org.hugoduncan/psi --as psi --mvn/version LATEST
 ```
 
-Install a specific release by tag (recommended for reproducible environments):
+Install a specific release (recommended for reproducible environments):
 
 ```bash
-bbin install org.hugoduncan/psi --as psi --git/tag v0.1.1987
+bbin install org.hugoduncan/psi --as psi --mvn/version 0.1.1987
 ```
 
 Check the installed version:
@@ -45,7 +45,7 @@ Upgrade to the latest release:
 
 ```bash
 bbin uninstall psi
-bbin install org.hugoduncan/psi --as psi
+bbin install org.hugoduncan/psi --as psi --mvn/version LATEST
 ```
 
 Repo-local / development alternative:

@@ -206,7 +206,7 @@ clojure -Sdeps '{:deps {org.hugoduncan/psi {:mvn/version "X.Y.Z"}}}' \
   -M -m psi.main --version
 
 # Verify bbin install
-bbin install org.hugoduncan/psi --as psi --git/tag vX.Y.Z
+bbin install org.hugoduncan/psi --as psi --mvn/version X.Y.Z
 psi --version
 ```
 

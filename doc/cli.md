@@ -46,7 +46,7 @@ PSI_LAUNCHER_POLICY=development psi  # force source-tree paths (contributors)
 Canonical install path:
 
 ```bash
-bbin install org.hugoduncan/psi --as psi
+bbin install org.hugoduncan/psi --as psi --mvn/version LATEST
 ```
 
 Repo-local / development install alternative:
