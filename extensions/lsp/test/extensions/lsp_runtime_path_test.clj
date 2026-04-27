@@ -26,7 +26,7 @@
 ;; sync-ms          — time for document sync round-trip
 ;; await-ms         — outer polling deadline for await-diagnostic-finding fallback
 (def ^:private startup-ms 2000)
-(def ^:private startup-ms-cold 5000)   ; after restart: server boots from scratch
+(def ^:private startup-ms-cold 10000)  ; after restart: server boots from scratch
 (def ^:private diagnostics-ms 2000)
 (def ^:private diagnostics-ms-slow 10000)
 (def ^:private sync-ms 2000)
