@@ -89,7 +89,13 @@ jobs:
         run: bb lint
 
       - name: Changelog check
-        run: bb changelog:check
+        run: |
+          msg=$(git log -1 --format=%s)
+          if [[ "$msg" == release:* ]]; then
+            echo "Skipping changelog check on release commit."
+          else
+            bb changelog:check
+          fi
 
   # ── Clojure tests ─────────────────────────────────────────────────────────
   clojure-test:
