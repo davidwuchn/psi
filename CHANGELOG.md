@@ -6,6 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+## [0.1.2021] - 2026-04-27
+
 ### Fixed
 - `psi` no longer crashes on startup when installed via `bbin` from Clojars — the launcher now correctly skips `jar:` URLs when locating the repo root.
 
@@ -24,7 +26,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 ### Fixed
 
 <!-- Comparison links -->
-[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2017...HEAD
+[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2021...HEAD
+[0.1.2021]: https://github.com/hugoduncan/psi/compare/v0.1.2017...v0.1.2021
 [0.1.2017]: https://github.com/hugoduncan/psi/compare/v0.1.2013...v0.1.2017
 [0.1.2013]: https://github.com/hugoduncan/psi/compare/v0.1.2008...v0.1.2013
 [0.1.2008]: https://github.com/hugoduncan/psi/compare/v0.1.2002...v0.1.2008
