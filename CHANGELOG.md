@@ -6,6 +6,9 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+### Fixed
+- `psi` no longer crashes on startup when installed via `bbin` from Clojars — the launcher now correctly skips `jar:` URLs when locating the repo root.
+
 ## [0.1.2017] - 2026-04-27
 
 ### Fixed
