@@ -6,10 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
-## [0.1.2013] - 2026-04-27
-
 ### Fixed
-- `bbin install org.hugoduncan/psi` now correctly resolves the `psi` entry point — `bb.edn` is included in the published jar so bbin can read `:bbin/bin` instead of falling back to a non-existent namespace.
+- `bbin install org.hugoduncan/psi` now correctly resolves the `psi` entry point — added `hugoduncan.psi` shim namespace so bbin's Maven installer can locate the entry point it derives from the artifact coordinates.
 
 ## [0.1.2008] - 2026-04-27
 
