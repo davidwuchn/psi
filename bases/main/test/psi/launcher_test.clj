@@ -103,28 +103,48 @@
         (is (= ['psi/mementum]
                (:inferred-init-libs (launcher/manifest-state "/repo/psi" "/repo/project" :installed))))))))
 
-(deftest startup-basis-jar-policy-resolves-release-version-placeholder
-  (testing "jar policy resolves :psi/release-version placeholder in manifest deps"
+(deftest startup-basis-jar-policy-omits-psi-owned-extensions
+  (testing "jar policy drops psi-owned extensions from basis — already bundled in org.hugoduncan/psi"
     (let [manifest-info {:user-path "/tmp/user.edn"
                          :project-path "/tmp/project/.psi/extensions.edn"
                          :user-present? false
                          :project-present? true
                          :user-manifest {:deps {}}
-                         :project-manifest {:deps {'psi/mementum {}}}
-                         :merged-manifest {:deps {'psi/mementum {}}}
+                         :project-manifest {:deps {'psi/mementum {}
+                                                   'psi/workflow-loader {}}}
+                         :merged-manifest {:deps {'psi/mementum {}
+                                                  'psi/workflow-loader {}}}
                          :expanded-manifest {:deps {'psi/mementum {:mvn/version :psi/release-version
-                                                                   :psi/init 'extensions.mementum/init}}}
-                         :defaulted-libs ['psi/mementum]
-                         :inferred-init-libs ['psi/mementum]}
+                                                                   :psi/init 'extensions.mementum/init}
+                                                    'psi/workflow-loader {:mvn/version :psi/release-version
+                                                                          :psi/init 'extensions.workflow-loader/init}}}
+                         :defaulted-libs ['psi/mementum 'psi/workflow-loader]
+                         :inferred-init-libs ['psi/mementum 'psi/workflow-loader]}
           result (with-redefs [launcher/release-version (constantly "0.1.42")
                                launcher/manifest-state (fn [_ _ _] manifest-info)]
                    (launcher/startup-basis "/repo/psi" "/repo/project" :jar))]
       ;; psi self-dep is the single mvn coord
       (is (= {:mvn/version "0.1.42"}
              (get-in result [:basis :deps 'org.hugoduncan/psi])))
-      ;; extension placeholder resolved to the release version
-      (is (= {:mvn/version "0.1.42"}
-             (get-in result [:basis :deps 'psi/mementum])))))
+      ;; psi-owned extensions are NOT added as separate Maven artifacts
+      (is (nil? (get-in result [:basis :deps 'psi/mementum])))
+      (is (nil? (get-in result [:basis :deps 'psi/workflow-loader])))))
+  (testing "jar policy retains third-party manifest deps in basis"
+    (let [manifest-info {:user-path "/tmp/user.edn"
+                         :project-path "/tmp/project/.psi/extensions.edn"
+                         :user-present? false
+                         :project-present? true
+                         :user-manifest {:deps {}}
+                         :project-manifest {:deps {'third-party/ext {:mvn/version "2.0.0"}}}
+                         :merged-manifest {:deps {'third-party/ext {:mvn/version "2.0.0"}}}
+                         :expanded-manifest {:deps {'third-party/ext {:mvn/version "2.0.0"}}}
+                         :defaulted-libs []
+                         :inferred-init-libs []}
+          result (with-redefs [launcher/release-version (constantly "0.1.42")
+                               launcher/manifest-state (fn [_ _ _] manifest-info)]
+                   (launcher/startup-basis "/repo/psi" "/repo/project" :jar))]
+      (is (= {:mvn/version "2.0.0"}
+             (get-in result [:basis :deps 'third-party/ext])))))
   (testing "jar policy throws when version resource is unreleased"
     (let [manifest-info {:user-path "/tmp/user.edn"
                          :project-path "/tmp/project/.psi/extensions.edn"
