@@ -23,10 +23,11 @@
                      :expected #{"development" "installed" "jar"}}))))
 
 (defn- resource-root
+  "Returns the repo root when running from source (file: URL), nil from a jar."
   []
   (when-let [url (io/resource "psi/launcher_main.clj")]
-    (let [path (.getPath (io/file url))]
-      (some-> path
+    (when (= "file" (.getProtocol url))
+      (some-> (.getPath url)
               (str/replace #"/bases/main/src/psi/launcher_main\.clj$" "")
               not-empty))))
 
