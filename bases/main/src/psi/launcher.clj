@@ -211,6 +211,13 @@
   (let [self-basis       (update (psi-self-basis launcher-root policy) :deps basis-deps)
         manifest-info0   (manifest-state launcher-root cwd policy)
         expanded-deps    (->> (get-in manifest-info0 [:expanded-manifest :deps])
+                              (remove (fn [[lib _dep]]
+                                        ;; Under :jar policy, psi-owned extensions are already
+                                        ;; bundled in org.hugoduncan/psi — omit them from the
+                                        ;; basis so tools.deps never tries to resolve e.g.
+                                        ;; psi:workflow-loader as a standalone Maven artifact.
+                                        (and (= policy :jar)
+                                             (extensions/recognized-psi-owned-lib? lib))))
                               (map (fn [[lib dep]]
                                      [lib (-> (materialize-manifest-dep cwd policy dep)
                                               (dissoc :psi/init :psi/enabled))]))
