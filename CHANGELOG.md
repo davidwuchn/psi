@@ -6,6 +6,9 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+### Added
+- `M-r` searches prompt input history via completing-read (see [Emacs UI](doc/emacs-ui.md)).
+
 ## [0.1.2026] - 2026-04-27
 
 ### Added

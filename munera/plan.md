@@ -2,6 +2,8 @@
 
 Open tasks in suggested execution order:
 
+Queue:
+
 Backlog:
 
 `munera/open/021-emacs-session-tree-buffer-with-magit-sections/`

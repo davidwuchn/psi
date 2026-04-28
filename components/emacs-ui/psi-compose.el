@@ -20,6 +20,7 @@
 (declare-function psi-emacs--clear-assistant-render-state "psi-assistant-render")
 (declare-function psi-emacs--clear-thinking-line "psi-assistant-render")
 (declare-function psi-emacs--disarm-stream-watchdog "psi-run-state" (state))
+(declare-function psi-emacs--ordered-completing-read "psi-events" (prompt candidates &optional default))
 
 (defvar psi-emacs--allow-protected-input-edit nil
   "Non-nil while psi performs internal rewrites of the editable input area.")
@@ -373,6 +374,34 @@ legacy draft end behavior."
         (psi-emacs--clear-read-only-props-in-input-range start (+ start (length text*)))))
     (goto-char (+ start (length text*)))
     (psi-emacs--set-draft-anchor-to-end)))
+
+(defun psi-emacs-search-input-history ()
+  "Search input history via completing-read and populate the input area.
+
+Opens a minibuffer completion over all entries in the current buffer's input
+history.  Selecting an entry stashes the current draft (as `M-p' does),
+replaces the input area with the selected text, and resets the navigation
+index to nil so subsequent `M-p'/`M-n' steps from the top of history.
+
+`C-g' or empty-string submission cancels without modifying the input area or
+navigation state."
+  (interactive)
+  (unless psi-emacs--state
+    (user-error "psi buffer is not initialized"))
+  (let ((history (or (psi-emacs-state-input-history psi-emacs--state) '())))
+    (unless (consp history)
+      (user-error "No previous inputs"))
+    ;; Use ordered-completing-read to preserve recency order; bare completing-read
+    ;; allows UIs such as vertico/ivy to re-sort alphabetically.
+    (let ((chosen (psi-emacs--ordered-completing-read "Previous input: " history)))
+      ;; REQUIRE-MATCH is t inside ordered-completing-read, so chosen is always a
+      ;; member of history.  The empty-string guard defends against completion
+      ;; frameworks that return "" on cancel despite REQUIRE-MATCH.
+      (when (and chosen (not (string-empty-p chosen)))
+        (setf (psi-emacs-state-input-history-stash psi-emacs--state)
+              (psi-emacs--tail-draft-text))
+        (setf (psi-emacs-state-input-history-index psi-emacs--state) nil)
+        (psi-emacs--replace-input-text chosen)))))
 
 (defun psi-emacs-previous-input ()
   "Navigate to older input history entry in dedicated input area."
