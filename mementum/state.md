@@ -14,6 +14,26 @@ Bootstrapped on 2026-04-02.
 - `AGENTS.md` — bootstrap/system instructions
 
 ## Current work state
+- Task 057 optional shaping follow-on is now green:
+  - added `workflow_progression_recording.clj` as the canonical Phase A record/update substrate
+  - split compatibility compiler concerns into `workflow_statechart_compat.clj`
+  - added `workflow_statechart_canonical.md` documenting authoritative workflow surfaces
+  - focused progression/statechart checks green (`26 tests, 112 assertions, 0 failures` and `28 tests, 87 assertions, 0 failures`)
+  - isolated workflow suite green (`51 tests, 177 assertions, 0 failures`)
+  - full unit suite green (`1420 tests, 10632 assertions, 0 failures`)
+- Task 057 post-review cleanup is now green:
+  - added shared `workflow_step_prep.clj` and removed duplicated step preparation logic from `workflow_execution.clj` and `workflow_statechart_runtime.clj`
+  - clarified `compile-definition` as a compatibility Phase B compiler while keeping `compile-hierarchical-chart` as the Phase A canonical execution compiler
+  - removed residual `next-step-id-fn` dependence from `workflow_progression.clj`
+  - removed no-op chart hooks `:step/exit` and `:judge/exit`
+  - aligned terminal hook naming to `:terminal/record`
+  - focused workflow/statechart regression set green (`36 tests, 137 assertions, 0 failures`)
+  - isolated workflow suite green (`51 tests, 177 assertions, 0 failures`)
+  - full unit suite green (`1420 tests, 10632 assertions, 0 failures`)
+- Task 057 Slice 8 repository-wide reintegration is now green:
+  - isolated workflow suite remains green via `clojure -M:test -c tests-workflow-isolated.edn` (`51 tests, 177 assertions, 0 failures`)
+  - full unit suite is green again via `bb clojure:test:unit` (`1420 tests, 10554 assertions, 0 failures`)
+  - follow-on fix was test hardening in `query_graph_test.clj`: RPC trace mutation assertions no longer assume the global dispatch event log's last entry belongs to the mutation under test; they now clear the log, snapshot pre-count, and inspect newly appended `:session/set-rpc-trace` events only
 - Compatibility scaffold removal has advanced materially.
 - Session directory semantics were tightened into an explicit invariant:
   - runtime sessions now require `:worktree-path`
@@ -157,17 +177,49 @@ Bootstrapped on 2026-04-02.
   - attempted `psi-tool` exposure for execution controls hit a namespace load cycle (`psi_tool -> workflow_execution -> prompt_control/core -> context/... -> psi_tool`)
   - next 026 slice should avoid forcing execution controls through the current `psi_tool` load graph without first breaking that cycle
 
+## Task 056 — workflow loop, judge, and routing (Phase B complete)
+- All 8 Phase B slices are landed and green:
+  - Slice 1: model schemas (projection, judge, routing directive, routing table)
+  - Slice 2: projection extraction (`project-messages` with `:none`, `:full`, `{:type :tail}` + tool stripping)
+  - Slice 3: routing evaluation (`match-signal`, `resolve-goto-target`, `check-iteration-limit`, `evaluate-routing`)
+  - Slice 4: judge session execution (`execute-judge!` with retry — max 2 retries, feedback injection)
+  - Slice 5: progression (`increment-iteration-count`, `record-actor-result`, `submit-judged-result` with verdict history)
+  - Slice 6: execution wiring (judge branch in `execute-current-step!`, loop test proving plan→build→review→REVISE→build→review→APPROVED)
+  - Slice 7: compiler (threads `:judge`/`:on` from file format, resolves goto workflow names to step-ids, `validate-judge-routing`)
+  - Slice 8: full suite green (1397 unit tests / 10499 assertions, 142 extension tests / 563 assertions)
+- Key implementation decision: iteration count incremented only in `execute-current-step!` (on step entry), not in `submit-judged-result` (on goto routing), to avoid double-counting
+- New namespace: `workflow_judge.clj` (projection, routing, judge execution)
+- Phase A (statechart-driven execution) remains as follow-on work
+- Task 056 can be closed once Phase B is accepted; Phase A would be a new task
+
+- Modular GitHub bug-triage workflow exploration has now landed in `.psi/workflows/`:
+  - added reusable workflow slices `gh-bug-discover-and-read`, `gh-issue-create-worktree`, `gh-bug-reproduce`, `gh-bug-request-more-info`, `gh-bug-fix-and-pr`, and `gh-bug-post-repro`
+  - added `gh-bug-triage-modular` as the orchestrator
+  - real loader verification showed the first non-linear cut compiled cleanly but had incorrect branch-target data flow because multi-step workflow-file compilation still wires later-step input from previous file-order step output
+  - safe workaround landed by making the orchestrator linear and moving the reproduction branch decision into `gh-bug-post-repro`
+  - this established that current `.psi/workflows` authoring is more expressive for control flow than for data/context flow
+- New workflow-authoring initiative is now organized as an umbrella plus child tasks:
+  - `059-workflow-step-session-construction-and-context-projection` is now the umbrella/orchestration task for the session-first workflow authoring model
+  - its design settled several key early decisions: use `:session` as the primary authoring surface from the first cut, restrict first-cut step references to prior steps only, keep first-cut projections to `:text`/`:full`/`:path [...]`, treat prompt bindings as convenience rather than the primary abstraction, and make default step-session construction/override semantics explicit
+  - implementation is now split into:
+    - `060` explicit source selection
+    - `061` minimal projections
+    - `062` step-level session shaping overrides
+    - `063` reference message/transcript projection
+    - `064` workflow authoring convergence and examples
+  - default step-session construction is now explicitly documented as: delegated workflow/default profile shape, prompt composition, inherited tools/skills/model/thinking plus runtime extension/workflow environment, existing default data-flow bindings, and no extra reference preload unless explicitly requested
+
 ## Suggested next step
 - Active munera tasks are now:
-  1. `munera/open/047-tui-feature-parity-with-emacs-ui/` (parent umbrella for TUI parity)
-  2. `munera/open/021-emacs-session-tree-buffer-with-magit-sections/`
-  3. `munera/open/001-post-wave-b-gordian-follow-on/`
-  4. `munera/open/002-compatibility-scaffold-removal/`
-  5. `munera/open/003-prompt-lifecycle-architectural-convergence/`
-  6. `munera/open/004-lsp-integration-managed-services-post-tool-processing/`
-  7. `munera/open/005-canonical-dispatch-pipeline-trace-observability/`
-  8. `munera/open/006-agent-tool-skill-prelude-follow-on/`
-  (054 TUI thinking/tool streaming parity is now closed)
+  1. `munera/open/021-emacs-session-tree-buffer-with-magit-sections/`
+  2. `munera/open/001-post-wave-b-gordian-follow-on/`
+  3. `munera/open/002-compatibility-scaffold-removal/`
+  4. `munera/open/003-prompt-lifecycle-architectural-convergence/`
+  5. `munera/open/004-lsp-integration-managed-services-post-tool-processing/`
+  6. `munera/open/005-canonical-dispatch-pipeline-trace-observability/`
+  7. `munera/open/006-agent-tool-skill-prelude-follow-on/`
+- TUI parity umbrella `047` and discoverable navigation slice `049` are now closed.
+- Workflow-authoring umbrella `059` and convergence task `064` are now closed.
 - Highest-value next threads remain:
   1. **026 deterministic workflows**: break or route around the `psi-tool` execution-control load cycle cleanly
   2. **Prompt lifecycle / skill prelude**: refine cache-breakpoint shaping and decide whether prelude/source metadata should surface in introspection

@@ -72,6 +72,34 @@
      [:blocked :map]
      [:diagnostics {:optional true} [:maybe :map]]]]])
 
+;;; Judge, projection, and routing schemas
+
+(def projection-schema
+  "Projection spec controlling what the judge sees from the actor session."
+  [:or
+   [:enum :none :full]
+   [:map
+    [:type [:= :tail]]
+    [:turns pos-int?]
+    [:tool-output {:optional true} [:maybe :boolean]]]])
+
+(def judge-schema
+  "Judge definition: a separate agent that classifies actor output."
+  [:map
+   [:prompt :string]
+   [:system-prompt {:optional true} [:maybe :string]]
+   [:projection {:optional true} [:maybe projection-schema]]])
+
+(def routing-directive-schema
+  "A single routing directive mapping a judge signal to a target."
+  [:map
+   [:goto [:or [:enum :next :previous :done] :string]]
+   [:max-iterations {:optional true} [:maybe pos-int?]]])
+
+(def routing-table-schema
+  "Maps judge signal strings to routing directives."
+  [:map-of :string routing-directive-schema])
+
 (def workflow-step-definition-schema
   [:map
    [:label {:optional true} [:maybe :string]]
@@ -81,7 +109,27 @@
    [:input-bindings {:optional true} [:map-of :keyword workflow-binding-ref-schema]]
    [:result-schema :any]
    [:retry-policy workflow-retry-policy-schema]
-   [:capability-policy {:optional true} workflow-capability-policy-schema]])
+   [:capability-policy {:optional true} workflow-capability-policy-schema]
+   [:judge {:optional true} [:maybe judge-schema]]
+   [:on {:optional true} [:maybe routing-table-schema]]
+   [:session-preload {:optional true}
+    [:vector
+     [:or
+      [:map
+       [:kind [:= :value]]
+       [:role :string]
+       [:binding workflow-binding-ref-schema]]
+      [:map
+       [:kind [:= :session-transcript]]
+       [:step-id workflow-step-id-schema]
+       [:projection {:optional true} [:maybe projection-schema]]]]]]
+   [:session-overrides {:optional true}
+    [:map
+     [:system-prompt {:optional true} :string]
+     [:tools {:optional true} [:vector :string]]
+     [:skills {:optional true} [:vector :string]]
+     [:model {:optional true} [:or :string :map]]
+     [:thinking-level {:optional true} [:enum :off :minimal :low :medium :high :xhigh]]]]])
 
 (def workflow-definition-schema
   [:map
@@ -106,6 +154,9 @@
    [:validation-outcome {:optional true} [:maybe workflow-validation-outcome-schema]]
    [:execution-error {:optional true} [:maybe :map]]
    [:blocked {:optional true} [:maybe :map]]
+   [:judge-session-id {:optional true} [:maybe :string]]
+   [:judge-output {:optional true} [:maybe :string]]
+   [:judge-event {:optional true} [:maybe :string]]
    [:created-at inst?]
    [:updated-at inst?]
    [:finished-at {:optional true} [:maybe inst?]]])
@@ -114,7 +165,8 @@
   [:map
    [:step-id workflow-step-id-schema]
    [:attempts [:vector workflow-step-attempt-schema]]
-   [:accepted-result {:optional true} [:maybe workflow-result-envelope-schema]]])
+   [:accepted-result {:optional true} [:maybe workflow-result-envelope-schema]]
+   [:iteration-count {:optional true} [:maybe :int]]])
 
 (def workflow-history-entry-schema
   [:map
