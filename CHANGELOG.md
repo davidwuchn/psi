@@ -6,6 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+## [0.1.2034] - 2026-04-29
+
 ### Added
 - `M-r` searches prompt input history via completing-read (see [Emacs UI](doc/emacs-ui.md)).
 - Session-first workflow authoring now supports explicit step input/reference sources, projections, and preload context (see [Workflow docs](doc/extensions.md)).
@@ -23,5 +25,6 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 ### Fixed
 
 <!-- Comparison links -->
-[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2026...HEAD
+[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2034...HEAD
+[0.1.2034]: https://github.com/hugoduncan/psi/compare/v0.1.2026...v0.1.2034
 [0.1.2026]: https://github.com/hugoduncan/psi/compare/v0.1.2021...v0.1.2026
