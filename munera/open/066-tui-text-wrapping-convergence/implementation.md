@@ -1,0 +1,20 @@
+Implementation notes:
+- Terse code-shaper review: good shape overall and closeable. Width behavior is now explicit, surface-led, and well-proven. Main optional follow-on is banner simplification plus tighter proof traceability, not architectural repair.
+- Slice 1 established `doc/tui-text-width-policy.md` as the canonical width-policy summary artifact.
+- The current surface taxonomy grouped repeated rule shapes into three useful families:
+  - prefixed wrapped line (`刀: `, `ψ: ` paragraph content, `· `)
+  - label+value wrapped summary (startup banner metadata)
+  - compact status/header truncation (tool headers, selector/footer-style rows)
+- Startup banner convergence did not need a new dedicated helper layer outside `app.render`; a small local prefixed wrapping helper was enough once the rule shape was explicit.
+- The first real shared helper candidate is the prefixed wrapped-line rule. Startup-banner label+value wrapping and thinking/user transcript wrapping now share the same structural shape: subtract prefix width, wrap to remaining width, indent continuation to content start.
+- Assistant paragraph transcript already had an explicit width budget via markdown rendering; user and thinking transcript surfaces were the ones still bypassing explicit wrap policy.
+- Tool rendering remains intentionally split by surface:
+  - collapsed header: truncate
+  - expanded plain-text body: wrap within the four-space body indent budget
+  - preformatted/machine-like body: preserve unless an explicit renderer chooses a different presentation
+- Optional shaping follow-on was completed by data-driving `render-banner` and tightening policy proof references without forcing false convergence of assistant markdown rendering onto the simpler prefixed-wrap helper path.
+- Verification status after this slice:
+  - focused width-policy unit proofs are green
+  - full unit suite is green (`1453 tests, 10806 assertions, 0 failures`)
+  - focused tmux integration verification is green for the stable startup-wrap scenario; the experimental real-launcher resume-wrap scenario was de-scoped because it depended on resume-selection semantics rather than the width policy itself
+  - the unrelated integration-suite blocker in `psi.launcher-gordian-integration-test` was removed by replacing machine-local absolute path fixtures with tempdir + local manifest setup

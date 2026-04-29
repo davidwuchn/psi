@@ -3,6 +3,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.tui.test-harness.tmux :as tmux]
    [psi.tui.test-harness.tmux-rehydration :as tmux-rehydration]
+   [psi.tui.test-harness.tmux-startup-wrap :as tmux-startup-wrap]
    [psi.tui.test-harness.tmux-streaming :as tmux-streaming]))
 
 (defn- assert-scenario-result
@@ -42,6 +43,10 @@
 (deftest ^:integration tui-tmux-streaming-display-scenario-test
   (testing "streaming display: thinking prefix visible, tool truncated by default, ctrl+o expands"
     (assert-scenario-result (tmux-streaming/run-streaming-display-scenario! {}))))
+
+(deftest ^:integration tui-tmux-startup-wrap-scenario-test
+  (testing "startup assistant output wraps on a narrow terminal"
+    (assert-scenario-result (tmux-startup-wrap/run-startup-wrap-scenario! {}))))
 
 (deftest ^:integration tui-tmux-resize-scenario-test
   (testing "TUI repaints correctly after terminal resize: banner remains visible after shrink and after restore"
