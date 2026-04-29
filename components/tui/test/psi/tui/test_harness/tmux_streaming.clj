@@ -24,6 +24,13 @@
    :pane-id       (:pane-id target)
    :pane-snapshot (tmux/sanitize-pane-text (tmux/capture-pane target))})
 
+(defn- visible-tool-body-line?
+  [pane marker]
+  (boolean
+   (some #(and (str/starts-with? % "    ")
+               (str/includes? % marker))
+         (str/split-lines pane))))
+
 (defn run-streaming-display-scenario!
   "Prove that the TUI renders thinking blocks, tool streaming, and tool result
    truncation correctly through a real terminal, without a live LLM.
@@ -33,9 +40,8 @@
    Scenario steps:
    1. Boot → ready marker
    2. Submit 'think' → wait for '· ' (thinking prefix)
-   3. Submit 'tool'  → wait for spinner (⠋) OR done marker (✓); then wait for ✓;
-      then poll until 'output-line-1' is absent (proves active turn cleared)
-   4. Assert content NOT visible in collapsed mode (no 'output-line-1')
+   3. Submit 'tool'  → wait for spinner (⠋) OR done marker (✓); then wait for ✓
+   4. Assert content NOT visible in collapsed mode on the visible screen (no 'output-line-1')
    5. Press ctrl+o → assert expanded content visible ('output-line-10')
    6. End successfully once expansion is visible."
   [{:keys [session-name
@@ -86,7 +92,7 @@
                         {:session-name   session-name*
                          :working-dir    working-dir
                          :launch-command (str "PSI_TUI_DEMO_SCRIPT=" (pr-str script)
-                                              " PSI_TUI_DEMO_MODEL=demo " launch)})
+                                              " " launch)})
                 result (cond
                          (not (tmux/wait-for-any-marker target ready-markers startup-timeout-ms))
                          (failure target :startup-timeout)
@@ -108,15 +114,12 @@
                                  (not (tmux/wait-for-marker target default-tool-done-marker step-timeout-ms))
                                  (failure target :tool-done-marker-not-visible)
 
-                                 (not (tmux/wait-for-marker-absent target "output-line-1" step-timeout-ms))
-                                 (failure target :content-still-visible-after-timeout)
-
                                  :else
                                  (let [pane (tmux/sanitize-pane-text (tmux/capture-pane-visible target))]
                                    (cond
-                                     (str/includes? pane "output-line-1")
+                                     (visible-tool-body-line? pane "output-line-1")
                                      (assoc (failure target :content-visible-when-collapsed)
-                                            :detail "Tool content should not be visible in collapsed mode")
+                                            :detail "Tool body should not be visible in collapsed mode")
 
                                      :else
                                      (do

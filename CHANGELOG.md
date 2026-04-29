@@ -6,6 +6,9 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+### Fixed
+- TUI startup banner model line now reflects the canonical current session model.
+
 ## [0.1.2034] - 2026-04-29
 
 ### Added

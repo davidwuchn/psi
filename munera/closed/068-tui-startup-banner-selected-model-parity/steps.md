@@ -1,0 +1,12 @@
+- [x] Confirm current banner model rendering still reads from TUI-local `:model-name`
+- [x] Change banner rendering to use canonical `[:footer/model :text]` from `:footer-model-fn`
+- [x] Remove `:model-name` from TUI state if it is unused after the rendering change
+- [x] Update tests to assert canonical visible behavior rather than local `:model-name` state
+- [x] Add focused proof that the banner displays exactly `[:footer/model :text]`
+- [x] Add focused proof that banner output updates when canonical footer model data changes
+- [x] Verify prompt/skill/extension/control banner lines remain present with current startup-snapshot semantics
+- [x] Run relevant TUI tests
+- [x] Follow-up: remove or explicitly deprecate the now-ignored `model-name` parameter from `make-init` / `start!` / `build-init`
+- [x] Follow-up: add or update tests for the chosen API cleanup/deprecation behavior
+- [x] Follow-up: add explicit argument validation at `make-init` / `start!` boundaries so old-shape misuse fails fast with a clear error
+- [x] Follow-up: update API cleanup tests to assert deliberate contract errors rather than indirect downstream exceptions
