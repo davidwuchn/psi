@@ -1,0 +1,30 @@
+- [x] Inspect provider selection and auth resolution for `:anthropic-messages`
+  - confirmed the canonical prepared-request path resolves auth by selected provider identity via `model-registry/get-auth`
+  - identified drift in `psi.agent-session.runtime/resolve-api-key-in`, which originally consulted OAuth only
+  - identified runtime/RPC call sites that pre-seed `:runtime-opts` from that narrower helper
+- [x] Reproduce the failing decision path with focused tests
+  - added a custom `:anthropic-messages` provider case proving provider-scoped auth reaches prepared request options
+  - added runtime-helper regression proving selected-provider auth reaches `resolve-api-key-in`
+  - added request-boundary regression proving custom `:base-url` and provider identity survive Anthropic-compatible transport execution
+- [x] Implement provider-scoped auth resolution for custom Anthropic-compatible providers
+  - updated `psi.agent-session.runtime/resolve-api-key-in` to fall back from OAuth to model-registry provider auth for the selected provider
+  - preserved OAuth precedence and explicit runtime override semantics
+- [x] Add regression tests for inline custom-provider auth and built-in Anthropic fallback behaviour
+  - covered auth injection for custom `:anthropic-messages` providers
+  - covered custom `:base-url` preservation at the Anthropic request boundary
+  - covered unchanged built-in Anthropic no-registry-auth behavior
+- [x] Verify tests pass
+  - focused verification green: `psi.agent-session.prompt-request-test`, `psi.agent-session.runtime-test`, `psi.ai.providers.anthropic-test`
+  - result: `28 tests, 174 assertions, 0 failures`
+- [x] Address required review feedback before closure
+  - added a focused negative regression for a custom `:anthropic-messages` provider with no configured auth still producing the existing missing-auth failure
+  - reran focused Anthropic/provider-auth tests
+  - updated review status to ready to close
+- [x] Consider optional review follow-ons
+  - extracted shared provider-auth resolution into `psi.agent-session.provider-auth`
+  - updated prompt-request and runtime helper paths to use the shared resolver
+  - reran focused tests after unification (`28 tests, 175 assertions, 0 failures`)
+- [x] Address optional code-shaper feedback
+  - renamed `provider-auth/provider-auth` to `provider-auth-config`
+  - inlined the trivial `resolve-custom-provider-options` seam into `session->request-options`
+  - reran focused provider-auth tests (`28 tests, 175 assertions, 0 failures`)

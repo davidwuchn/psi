@@ -11,8 +11,8 @@
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.provider-auth :as provider-auth]
    [psi.recursion.core :as recursion]
    [taoensso.timbre :as timbre]))
 
@@ -44,11 +44,13 @@
     user-msg))
 
 (defn resolve-api-key-in
-  "Resolve API key for ai-model provider from session oauth context, if any.
-   `session-id` accepted for call-path symmetry; oauth lookup itself is not session-scoped."
+  "Resolve API key for the selected model provider.
+   Shared provider-auth resolution keeps runtime-facing helper paths aligned
+   with canonical request preparation. `session-id` is accepted for call-path
+   symmetry; explicit per-call overrides still belong in runtime-opts passed to
+   prompt preparation."
   [ctx _session-id ai-model]
-  (when-let [oauth-ctx (:oauth-ctx ctx)]
-    (oauth/get-api-key oauth-ctx (:provider ai-model))))
+  (provider-auth/provider-api-key ctx (:provider ai-model)))
 
 (defn- sync->recursion-trigger-type
   [sync]
