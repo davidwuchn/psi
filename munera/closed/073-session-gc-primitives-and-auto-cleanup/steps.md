@@ -1,0 +1,57 @@
+- [x] Add `children-of-in` to `session_state.clj`
+  - pure scan of `get-sessions-map-in`, filter by `:parent-session-id` match
+  - returns vec of session-id strings
+- [x] Add `descendants-of-in` to `session_state.clj`
+  - transitive closure of `children-of-in`
+  - returns vec in bottom-up order (leaves first)
+- [x] Test enumeration primitives
+  - no children returns empty vec
+  - single direct child
+  - multi-level tree (parent → child → grandchild) with correct bottom-up ordering
+  - session with no parent-session-id is not returned as child of anything
+- [x] Make `close-session-in!` idempotent
+  - return `{:closed? false :session-id sid}` when session not found
+  - remove the `throw` on missing session
+- [x] Add statechart cleanup to `close-session-in!`
+  - read `sc-session-id` from session slot before removing state
+  - call `sp/delete-working-memory!` when `sc-session-id` is present
+  - defensive: skip when `sc-session-id` is nil
+- [x] Update `close-session-in!` docstring
+  - document idempotent behavior
+  - document no phase guard (caller's responsibility)
+  - document statechart cleanup
+- [x] Test `close-session-in!` hardening
+  - idempotent: close missing session returns `{:closed? false}`
+  - statechart working memory deleted after close
+  - existing behavior preserved: schedules cancelled, state removed, projection emitted
+- [x] Add `close-session-tree-in!` to `session_close.clj`
+  - call `descendants-of-in` for bottom-up list
+  - call `close-session-in!` on each, then on root
+  - return `{:closed-count N :closed-session-ids [...]}`
+- [x] Test `close-session-tree-in!`
+  - tree with nested children: all closed, correct count
+  - leaf session (no children): behaves like single close
+  - partially-closed tree: idempotency handles already-closed descendants
+- [x] Add `close-session` mutation to `mutations/session.clj`
+  - `psi.extension/close-session`, wraps `core/close-session-in!`
+  - output: `[:psi.agent-session/close-session-closed? :psi.agent-session/close-session-id]`
+- [x] Add `close-session-tree` mutation to `mutations/session.clj`
+  - `psi.extension/close-session-tree`, wraps `core/close-session-tree-in!`
+  - add `close-session-tree-in!` passthrough to `core.clj` and `session_lifecycle.clj`
+  - output: `[:psi.agent-session/close-session-tree-closed-count :psi.agent-session/close-session-tree-closed-ids]`
+- [x] Register both mutations in `all-mutations`
+- [x] Verify neither mutation is added to `session-scoped-extension-mutation-ops` in `runtime_eql.clj`
+  - these mutations target an arbitrary session-id, not the calling session
+  - auto-injection would be incorrect
+- [x] Test mutations callable through extension API surface
+  - call `psi.extension/close-session` via `(:mutate api)` with explicit `:session-id` targeting a different session than the caller
+  - confirm the target session is closed, not the calling session
+- [x] Wire auto-session-name cleanup in `infer-session-title`
+  - after child session agent loop completes (success or failure), close via `(:mutate api) 'psi.extension/close-session {:session-id child-sid}`
+  - only when `child-session-id` is non-nil
+  - remove closed id from `:helper-session-ids` atom
+- [x] Test auto-session-name cleanup
+  - helper session closed after successful rename checkpoint
+  - helper session closed after failed rename checkpoint
+  - early-return checkpoint (no child created) does not attempt close
+  - no helper session accumulation over multiple checkpoints
