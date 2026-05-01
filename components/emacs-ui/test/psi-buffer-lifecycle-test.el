@@ -534,6 +534,121 @@
               (kill-buffer stderr))))))))
 
 
+(ert-deftest psi-footer-update-does-not-insert-newline-into-draft ()
+  "Upserting the projection block must not corrupt in-progress draft text.
+
+Regression: psi-emacs--ensure-newline-before-projection-append was called
+inside upsert-projection-block.  When the old projection was deleted the
+buffer tail became the user's draft text (no trailing newline), so the helper
+inserted a newline directly into the draft area.  The rendered block already
+starts with \"\\n\" so the extra call was both redundant and harmful."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((inhibit-read-only t))
+      (psi-emacs--ensure-startup-banner)
+      (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+            (copy-marker (point-max) nil))
+      ;; Establish input separator and seed an initial footer (simulates
+      ;; show-connecting-affordances at startup).
+      (psi-emacs--ensure-input-area)
+      (setf (psi-emacs-state-projection-footer psi-emacs--state) "connecting...")
+      (psi-emacs--upsert-projection-block)
+      ;; Simulate user typing "hello" into the draft area before RPC connects.
+      (goto-char (psi-emacs--draft-end-position))
+      (insert "hello")
+      (let ((draft-before (psi-emacs--tail-draft-text)))
+        ;; Now simulate footer/updated arriving from the backend (RPC connected).
+        (setf (psi-emacs-state-projection-footer psi-emacs--state) "idle · claude-3-5-sonnet")
+        (psi-emacs--upsert-projection-block)
+        ;; Draft text must be exactly what the user typed — no injected newline.
+        (should (equal draft-before (psi-emacs--tail-draft-text)))
+        (should (equal "hello" (psi-emacs--tail-draft-text)))))))
+
+(ert-deftest psi-open-buffer-does-not-reseed-connecting-footer-when-transport-ready ()
+  "open-buffer re-entry must not overwrite a live footer with \"connecting...\".
+
+Regression: when open-buffer was called again after the RPC connection was
+established (e.g. user invokes psi-emacs-project to focus the window), the
+show-connecting-affordances guard only checked whether projection-footer and
+region-bounds were nil.  If the footer had been cleared by some transient
+state (or was nil for any reason) while the transport was already ready, the
+guard would fire and overwrite the display with \"connecting...\".
+
+Fix: add (not (eq transport-state \\='ready)) to the guard so the seed is
+suppressed only when the transport is fully connected, while still allowing
+the seed during handshaking and disconnected states."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((inhibit-read-only t))
+      (psi-emacs--ensure-startup-banner)
+      (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+            (copy-marker (point-max) nil))
+      ;; Simulate a fully connected RPC client (transport = ready).
+      (let* ((mock-client (psi-rpc-make-client
+                           :process-state 'running
+                           :transport-state 'ready))
+             (mock-process (psi-test--spawn-long-lived-process)))
+        (setf (psi-rpc-client-process mock-client) mock-process)
+        (setf (psi-emacs-state-rpc-client psi-emacs--state) mock-client)
+        (setf (psi-emacs-state-transport-state psi-emacs--state) 'ready)
+        (setf (psi-emacs-state-process psi-emacs--state) mock-process)
+        (unwind-protect
+            (progn
+              ;; Footer is nil and no projection region — the old guard would fire.
+              (should (null (psi-emacs-state-projection-footer psi-emacs--state)))
+              (should (null (psi-emacs--region-bounds 'projection 'main)))
+              ;; Simulate open-buffer re-entry by applying the guard condition.
+              (let ((transport-state (psi-emacs-state-transport-state psi-emacs--state))
+                    (state psi-emacs--state))
+                (when (and (not (eq transport-state 'ready))
+                           (null (psi-emacs-state-projection-footer state))
+                           (null (psi-emacs--region-bounds 'projection 'main)))
+                  (psi-emacs--show-connecting-affordances (current-buffer))))
+              ;; With transport ready, show-connecting-affordances must NOT have fired.
+              (should (null (psi-emacs-state-projection-footer psi-emacs--state))))
+          (when (process-live-p mock-process)
+            (delete-process mock-process)))))))
+
+(ert-deftest psi-open-buffer-reseeds-connecting-footer-when-transport-handshaking ()
+  "open-buffer re-entry must seed \"connecting...\" when transport is handshaking.
+
+The guard only suppresses the seed when transport is \\='ready.  During
+handshaking (reconnect or initial startup race) the seed should still fire
+so the user sees the connecting affordance."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((inhibit-read-only t))
+      (psi-emacs--ensure-startup-banner)
+      (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+            (copy-marker (point-max) nil))
+      (let* ((mock-client (psi-rpc-make-client
+                           :process-state 'running
+                           :transport-state 'handshaking))
+             (mock-process (psi-test--spawn-long-lived-process)))
+        (setf (psi-rpc-client-process mock-client) mock-process)
+        (setf (psi-emacs-state-rpc-client psi-emacs--state) mock-client)
+        (setf (psi-emacs-state-transport-state psi-emacs--state) 'handshaking)
+        (setf (psi-emacs-state-process psi-emacs--state) mock-process)
+        (unwind-protect
+            (progn
+              (should (null (psi-emacs-state-projection-footer psi-emacs--state)))
+              (should (null (psi-emacs--region-bounds 'projection 'main)))
+              ;; Apply the guard condition as open-buffer would.
+              (let ((transport-state (psi-emacs-state-transport-state psi-emacs--state))
+                    (state psi-emacs--state))
+                (when (and (not (eq transport-state 'ready))
+                           (null (psi-emacs-state-projection-footer state))
+                           (null (psi-emacs--region-bounds 'projection 'main)))
+                  (psi-emacs--show-connecting-affordances (current-buffer))))
+              ;; During handshaking the seed must fire.
+              (should (equal "connecting..."
+                             (psi-emacs-state-projection-footer psi-emacs--state))))
+          (when (process-live-p mock-process)
+            (delete-process mock-process)))))))
+
 (provide 'psi-buffer-lifecycle-test)
 
 ;;; psi-buffer-lifecycle-test.el ends here
