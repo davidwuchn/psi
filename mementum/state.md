@@ -137,6 +137,14 @@ Bootstrapped on 2026-04-02.
   - child runtime initialization now preserves those preloaded messages in both runtime message state and the child journal seed
 
 ## Current work update
+- Task 066 (TUI text wrapping convergence) is now closed:
+  - authoritative width-policy summary lives at `doc/tui-text-width-policy.md`
+  - startup banner metadata, transcript user/assistant/thinking surfaces, and tool header/body rendering now have explicit width-policy classifications and proof references
+  - tool rendering policy is now explicit by surface: collapsed headers truncate intentionally, expanded plain-text bodies wrap within indent budget, and preformatted/code-like output preserves width intentionally unless an explicit renderer says otherwise
+  - focused width-policy unit proofs are green
+  - full unit suite green (`1453 tests, 10806 assertions, 0 failures`)
+  - focused tmux integration verification is green for the stable startup-wrap scenario
+
 - Task 054 (TUI thinking and tool streaming parity) is now closed:
   - switched `render-active-turn` from event-log replay to `active-turn-order` + `active-turn-items` item-map
   - one rendered block per item-id: thinking deduplication and tool lifecycle deduplication both fixed
@@ -272,3 +280,20 @@ Bootstrapped on 2026-04-02.
 - Header/status/footer ownership is now split as:
   - backend/app-runtime owns shared semantic fragments
   - adapters own only rendering/layout and transport/process/local-run-state concerns
+- `/delegate` result delivery is now verified end-to-end across live RPC, TUI, and Emacs:
+  - real persistent RPC command-path proof now exists in `components/rpc/test/psi/rpc_real_delegate_command_test.clj`
+  - real TUI tmux delegate scenario now exists in `components/tui/test/psi/tui/test_harness/tmux_delegate.clj`
+  - real Emacs delegate e2e now exists in `components/emacs-ui/test/psi-delegate-e2e-test.el`
+  - canonical verification tasks are now:
+    - `bb tui:delegate:e2e`
+    - `bb emacs:delegate:e2e`
+    - `bb delegate:e2e`
+  - tmux harness now auto-uses `mise exec tmux -- ...` when `mise` is available, so tool-managed tmux environments work without further local patching
+- `/delegate` fix-shape diagnosis:
+  - the bug was not only a missing command-path opt-in; it exposed a broader boundary issue around delegated-result ownership and publication
+  - the strongest signal was that workflow execution and judge paths had been submitting prompts and then rereading child-session journals via `last-assistant-message-in` to recover result text
+  - that was the wrong boundary: bounded workflow callers should consume the canonical prompt execution result directly, not reconstruct it from persisted transcript state
+  - `prompt-execution-result-in!` is the key architectural correction: execution returns the semantic turn result; persistence remains history/audit; UI layers project from canonical results rather than storage rereads
+  - the other exposed seam was delivery/publication drift: delegated results could surface through transcript injection, append-entry fallback, background-job terminal payloads, notifications, and adapter event emission, so visibility semantics were spread across multiple channels
+  - the added RPC/TUI/Emacs parity tests are valuable not just as regression proof but as evidence that the cross-adapter external-message/result-publication contract needed to be made explicit
+  - future shaping direction: keep execution-result return as the bounded-caller contract; treat journals as audit/history rather than semantic recovery; consider introducing one explicit delegated-result publication model consumed consistently by adapters/projectors

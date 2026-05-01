@@ -1,0 +1,29 @@
+- [x] Inspect current workflow child-session prompt assembly path end-to-end
+- [x] Confirm the current child prompt-mode inheritance/override path
+- [x] Confirm whether any explicit prompt-replacement mechanism already exists for workflow child sessions
+- [x] Implement unconditional default child-session full-prompt rebuilding from structured state when `:prompt-component-selection` is nil
+- [x] Preserve deterministic filtered composition when `:prompt-component-selection` is explicit in the workflow execution path
+- [x] Make workflow capability declarations shape rendered prompt visibility coherently
+  - [x] tools
+  - [x] skills
+  - [x] keep extension/workflow prompt-visible treatment coherent where already surfaced
+- [x] Ensure inherited child prompt mode is visibly materialized in workflow child-session prompt text by default
+- [x] Keep prompt introspection surfaces aligned with provider-visible prompt assembly in the unconditional rebuild path
+- [x] Add focused child-session/workflow prompt composition proof
+  - [x] nil selection => full/default composition
+  - [x] explicit selection => filtered composition in workflow execution path
+  - [x] workflow prompt text composes rather than implicitly replaces
+  - [x] capability narrowing is reflected in rendered prompt sections in workflow execution path
+  - [x] prepared provider-visible system prompt is the authoritative proof target
+- [x] Reconcile Allium/runtime parity for workflow child-session recomposition guarantees
+- [x] Add or refine Allium spec coverage for workflow child-session prompt composition
+- [x] Update at least one existing connected prompt/session/lambda spec file
+- [x] If a new Allium file is added, explicitly connect it into the existing prompt/session/workflow spec graph
+- [x] Verify no isolated new Allium file is introduced without graph connection
+
+Follow-up steps before close:
+- [x] Restore representative workflow lifecycle proof on the canonical execution path
+- [x] Converge lifecycle tests on `prompt-execution-result-in!` or preserve an explicit compatibility seam
+- [x] Re-run focused workflow lifecycle and workflow execution unit tests
+- [x] Tighten workflow step config naming/docs so workflow-authored prompt text is clearly a composed developer/instruction layer, not an implicit full system prompt
+- [x] Re-check Allium/runtime/test parity after the lifecycle proof is green

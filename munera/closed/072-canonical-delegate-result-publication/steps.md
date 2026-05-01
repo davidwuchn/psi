@@ -1,0 +1,46 @@
+- [x] Confirm the exact preserved behavior matrix before refactoring
+  - [x] completed + `include_result_in_context` true + nonblank result text
+  - [x] completed + `include_result_in_context` true + blank result text
+  - [x] completed + `include_result_in_context` false
+  - [x] failed/cancelled/timed-out
+- [x] Define the minimal internal delegated-result publication shape
+  - [x] confirm it is an internal workflow-loader decision artifact, not a new public API by default
+  - [x] include enough fields so side-effecting code does not need to re-decide policy
+- [x] Extract one pure publication-decision function from inline branching in async completion
+- [x] Refactor completion side effects to consume the canonical publication value
+  - [x] background-job terminal update consumes the derived publication value
+  - [x] transcript injection consumes the derived publication value
+  - [x] notification / append-entry fallback consumes the derived publication value
+- [x] Preserve existing background-job terminal semantics
+  - [x] preserve terminal payload content
+  - [x] preserve terminal-message suppression only for the conversational success case
+- [x] Preserve existing completed + `include_result_in_context` true + nonblank-result conversational `/delegate` semantics
+  - [x] inject exactly once into the originating chat
+  - [x] preserve existing bridge message shape
+  - [x] suppress fallback `delegate-result` append-entry for that case
+- [x] Preserve fallback append-entry / notification semantics for non-chat-delivery cases
+  - [x] preserve current notification cases
+  - [x] preserve current notification level/text behavior unless a tiny preservation change is required by the refactor
+- [x] Add decision-level tests for the mandatory completion cases
+- [x] Keep or extend side-effect-level tests for visible behavior
+- [x] Review the implementation for policy recomputation
+  - [x] confirm no async-completion side-effect branch re-decides publication policy after derivation
+- [x] Run focused workflow-loader and `/delegate` regression tests
+- [x] Document clarified invariants and any remaining intentional boundaries in `implementation.md`
+
+Follow-up steps from review
+
+- [x] Tighten the focused live `/delegate` TUI e2e assistant-result predicate
+  - [x] require the assistant result to appear after the observed user bridge marker
+  - [x] avoid passing on unrelated non-ack assistant output
+  - [x] keep the predicate semantic rather than model-text-specific
+- [x] Tighten the focused live `/delegate` Emacs e2e assistant-result predicate
+  - [x] require the assistant result to appear after the observed user bridge marker
+  - [x] avoid passing on unrelated non-ack assistant output
+  - [x] keep the predicate semantic rather than model-text-specific
+- [x] Re-run focused `/delegate` e2e verification after predicate tightening
+  - [x] TUI focused live delegate scenario
+  - [x] Emacs focused live delegate scenario
+- [x] Reassess the internal `delegated-result-publication` shape if publication modeling spreads further
+  - [x] consider whether a shared `:outcome` plus slimmer action descriptors would reduce duplication
+  - [x] keep current shape unless a concrete reuse pressure appears

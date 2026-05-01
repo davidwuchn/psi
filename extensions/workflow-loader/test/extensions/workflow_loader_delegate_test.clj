@@ -253,8 +253,8 @@
                 :query-session-result (fn [session-id _query]
                                         {:psi.agent-session/session-entries
                                          (if (= session-id "origin-session")
-                                           [{:psi.session-entry/data {:role "assistant"}}]
-                                           [{:psi.session-entry/data {:role "user"}}])})
+                                           [{:psi.session-entry/data {:message {:role "assistant"}}}]
+                                           [{:psi.session-entry/data {:message {:role "user"}}}])})
                 :mutate-results
                 {'psi.workflow/register-definition
                  (fn [_] {:psi.workflow/registered? true})
@@ -299,15 +299,69 @@
           (is (.contains ^String result "started asynchronously"))
           ;; Wait for async completion
           (Thread/sleep 200)
-          ;; Should have injected into the originating session explicitly
+          ;; Should have injected exactly user + assistant into the originating session explicitly
           (let [session-calls (get-mutate-session-calls)
-                roles (mapv #(get-in % [:params :role]) session-calls)]
-            (is (>= (count session-calls) 2) "should inject at least user + assistant")
+                roles (mapv #(get-in % [:params :role]) session-calls)
+                mutate-calls @(:mutate-calls @test-state)
+                notifications @(:notifications @test-state)]
+            (is (= 2 (count session-calls)) "should inject exactly user + assistant")
             (is (every? #(= "origin-session" (:session-id %)) session-calls))
-            (is (some #(= "user" %) roles))
-            (is (some #(= "assistant" %) roles))
-            (is (some #(= "injected output" (get-in % [:params :content])) session-calls)))
-          (is (seq (get-query-session-calls))))))))
+            (is (= ["user" "assistant"] roles))
+            (is (re-matches #"Workflow run planner-\d+ result:"
+                            (get-in (first session-calls) [:params :content]))
+                "first injected message is the user bridge marker")
+            (is (= "injected output" (get-in (second session-calls) [:params :content])))
+            (is (some #(and (= 'psi.extension/mark-background-job-terminal (:sym %))
+                            (true? (get-in % [:params :suppress-terminal-message?])))
+                      mutate-calls))
+            (is (= [{:msg "workflow-loader: 1 workflows loaded"
+                     :arg {:role "assistant" :custom-type "workflow-loader" :level :info}
+                     :level :info}]
+                   notifications)
+                "successful include_result path should suppress completion notify but keep init notice"))
+          (is (empty? (get-query-session-calls)) "bridge injection no longer queries session role state"))))))
+
+(testing "blank workflow result does not inject an empty assistant message"
+  (let [api (make-mock-api
+             {:query-result {:psi.agent-session/worktree-path "/tmp/test-worktree"
+                             :psi.agent-session/session-id "origin-session"
+                             :psi.agent-session/session-entries []}
+              :query-session-result (fn [_ _]
+                                      {:psi.agent-session/session-entries
+                                       [{:psi.session-entry/data {:message {:role "assistant"}}}]})
+              :mutate-results
+              {'psi.workflow/register-definition (fn [_] {:psi.workflow/registered? true})
+               'psi.workflow/create-run (fn [params]
+                                          {:psi.workflow/run-id (:run-id params)
+                                           :psi.workflow/status :pending})
+               'psi.extension/start-background-job (fn [params]
+                                                     {:psi.background-job/job-id (:job-id params)
+                                                      :psi.background-job/status :running})
+               'psi.extension/mark-background-job-terminal (fn [_]
+                                                             {:psi.background-job/job-id "job-blank"
+                                                              :psi.background-job/status :completed})
+               'psi.workflow/execute-run (fn [_]
+                                           {:psi.workflow/status :completed
+                                            :psi.workflow/result "   "})
+               'psi.workflow/list-runs (fn [_] {:psi.workflow/runs []})
+               'psi.extension/append-message (fn [_] {})
+               'psi.extension/append-entry (fn [_] {})}})]
+    (with-redefs [workflow-file-loader/load-workflow-definitions
+                  (fn [_]
+                    {:definitions {"planner" {:definition-id "planner"
+                                              :name "planner"
+                                              :summary "Plans"
+                                              :step-order ["step-1"]
+                                              :steps {"step-1" {:label "planner"}}}}
+                     :errors []
+                     :warnings []})]
+      (wl/init api)
+      (execute-tool {:action "run"
+                     :workflow "planner"
+                     :prompt "plan it"
+                     :include_result_in_context true})
+      (Thread/sleep 200)
+      (is (empty? (get-mutate-session-calls)) "blank result should not inject transcript bridge messages"))))
 
 (deftest delegate-run-fork-session-test
   (testing "fork_session passes through in workflow-input"
@@ -696,6 +750,82 @@
           (is (= "test-session-1" (:session-id @execute-params)))
           (is (string? (:run-id @execute-params))))))))
 
+(deftest delegated-result-publication-test
+  (testing "completed + include_result_in_context + nonblank result selects chat delivery"
+    (is (= {:completion {:run-id "run-1"
+                         :workflow "planner"
+                         :parent-session-id "session-1"
+                         :status :completed
+                         :result-text "done"
+                         :error nil
+                         :include-result? true
+                         :ok? true}
+            :background-job {:payload {:run-id "run-1"
+                                       :workflow "planner"
+                                       :status :completed
+                                       :result "done"
+                                       :error nil}
+                             :suppress-terminal-message? true}
+            :chat-injection {:enabled? true
+                             :parent-session-id "session-1"
+                             :run-id "run-1"
+                             :result-text "done"}
+            :notification {:enabled? false
+                           :message "Workflow 'planner' completed (run run-1)"
+                           :level :info}
+            :append-entry {:enabled? false
+                           :custom-type "delegate-result"
+                           :data "Workflow 'planner' — completed (run run-1)"}}
+           (orchestration/delegated-result-publication
+            {:run-id "run-1"
+             :workflow-name "planner"
+             :parent-session-id "session-1"
+             :include-result? true
+             :exec-result {:psi.workflow/status :completed
+                           :psi.workflow/result " done "}}))))
+
+  (testing "completed + include_result_in_context + blank result preserves non-chat fallback semantics"
+    (let [publication (orchestration/delegated-result-publication
+                       {:run-id "run-2"
+                        :workflow-name "planner"
+                        :parent-session-id "session-1"
+                        :include-result? true
+                        :exec-result {:psi.workflow/status :completed
+                                      :psi.workflow/result "   "}})]
+      (is (false? (get-in publication [:chat-injection :enabled?])))
+      (is (true? (get-in publication [:notification :enabled?])))
+      (is (false? (get-in publication [:append-entry :enabled?])))
+      (is (false? (get-in publication [:background-job :suppress-terminal-message?])))))
+
+  (testing "completed + no include_result_in_context preserves append-entry fallback semantics"
+    (let [publication (orchestration/delegated-result-publication
+                       {:run-id "run-3"
+                        :workflow-name "planner"
+                        :parent-session-id "session-1"
+                        :include-result? false
+                        :exec-result {:psi.workflow/status :completed
+                                      :psi.workflow/result "done"}})]
+      (is (false? (get-in publication [:chat-injection :enabled?])))
+      (is (true? (get-in publication [:notification :enabled?])))
+      (is (true? (get-in publication [:append-entry :enabled?])))
+      (is (= "Workflow 'planner' — completed (run run-3)\n\nResult:\ndone"
+             (get-in publication [:append-entry :data])))))
+
+  (testing "failed/cancelled/timed-out preserve non-chat semantics"
+    (doseq [status [:failed :cancelled :timed-out]]
+      (let [publication (orchestration/delegated-result-publication
+                         {:run-id "run-4"
+                          :workflow-name "planner"
+                          :parent-session-id "session-1"
+                          :include-result? true
+                          :exec-result {:psi.workflow/status status
+                                        :psi.workflow/error "boom"}})]
+        (is (false? (get-in publication [:chat-injection :enabled?])))
+        (is (true? (get-in publication [:notification :enabled?])))
+        (is (= :warn (get-in publication [:notification :level])))
+        (is (false? (get-in publication [:append-entry :enabled?])))
+        (is (false? (get-in publication [:background-job :suppress-terminal-message?])))))))
+
 (deftest on-async-completion-side-effects-do-not-rewrite-clean-exec-result-test
   (testing "async completion side effects should not turn a clean workflow failure into a keyword contains? error"
     (let [inflight-runs (atom {"run-1" {:job-id "job-1"}})
@@ -713,8 +843,8 @@
                    {})
         :notify! (fn [msg level]
                    (swap! seen-notify conj {:msg msg :level level}))
-        :mark-background-job-terminal! (fn [job-id status payload]
-                                         (reset! seen-terminal {:job-id job-id :status status :payload payload})
+        :mark-background-job-terminal! (fn [job-id status payload opts]
+                                         (reset! seen-terminal {:job-id job-id :status status :payload payload :opts opts})
                                          {})
         :inject-result-into-context! (fn [& _] nil)
         :refresh-widgets! (fn [] (swap! refresh-count inc))
@@ -726,7 +856,8 @@
                         :workflow "lambda-build"
                         :status :failed
                         :result nil
-                        :error "Missing Anthropic API key."}}
+                        :error "Missing Anthropic API key."}
+              :opts {:suppress-terminal-message? false}}
              @seen-terminal))
       (is (= [{:msg "Workflow 'lambda-build' failed (run run-1)"
                :level :warn}]

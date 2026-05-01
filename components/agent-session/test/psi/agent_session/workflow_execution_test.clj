@@ -68,6 +68,25 @@
                              :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}}}
    :workflow-file-meta {:framing-prompt "Coordinate a plan-build cycle."}})
 
+(def workflow-selection-definition
+  {:definition-id "planner-selection"
+   :name "planner-selection"
+   :step-order ["step-1"]
+   :steps {"step-1" {:executor {:type :agent :profile "planner"}
+                     :prompt-template "$INPUT"
+                     :input-bindings {:input {:source :workflow-input :path [:input]}}
+                     :result-schema [:map [:outcome [:= :ok]] [:outputs [:map [:text :string]]]]
+                     :retry-policy {:max-attempts 1 :retry-on #{:execution-failed}}
+                     :session-overrides {:prompt-component-selection {:components #{:skills}
+                                                                      :tool-names ["read"]
+                                                                      :skill-names ["testing-best-practices"]
+                                                                      :extension-prompt-contributions []
+                                                                      :agents-md? false}}}}
+   :workflow-file-meta {:system-prompt "You are a planner."
+                        :tools ["read" "bash"]
+                        :skills ["testing-best-practices"]
+                        :thinking-level :medium}})
+
 (def judged-definition
   {:definition-id "plan-build-review-judged"
    :name "plan-build-review-judged"
@@ -110,7 +129,7 @@
                        s)))
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-1")
           config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1")]
-      (is (= "You are a planner." (:system-prompt config)))
+      (is (= "You are a planner." (:developer-prompt config)))
       (is (= :medium (:thinking-level config)))
       (is (= {:provider :anthropic :id "claude-test"} (:model config)))
       (is (= ["read" "bash"] (mapv :name (:tool-defs config))))
@@ -134,8 +153,8 @@
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-2")
           planner-config (workflow-execution/resolve-step-session-config ctx workflow-run "step-1-planner")
           builder-config (workflow-execution/resolve-step-session-config ctx workflow-run "step-2-builder")]
-      (is (= "You are a planner.\n\nCoordinate a plan-build cycle." (:system-prompt planner-config)))
-      (is (= "You are a builder.\n\nCoordinate a plan-build cycle." (:system-prompt builder-config)))
+      (is (= "You are a planner.\n\nCoordinate a plan-build cycle." (:developer-prompt planner-config)))
+      (is (= "You are a builder.\n\nCoordinate a plan-build cycle." (:developer-prompt builder-config)))
       (is (= ["read" "bash"] (mapv :name (:tool-defs planner-config))))
       (is (= ["read" "bash" "edit" "write"] (mapv :name (:tool-defs builder-config))))
       (is (= {:provider "openai" :id "gpt-test"} (:model planner-config)))
@@ -181,7 +200,7 @@
                      :disable-model-invocation false}])
           workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-overrides")
           builder-config (workflow-execution/resolve-step-session-config ctx workflow-run "step-2-builder")]
-      (is (= "Focus only on correctness.\n\nCoordinate a plan-build cycle." (:system-prompt builder-config)))
+      (is (= "Focus only on correctness.\n\nCoordinate a plan-build cycle." (:developer-prompt builder-config)))
       (is (= [] (mapv :name (:tool-defs builder-config))))
       (is (= ["testing-best-practices"] (mapv :name (:skills builder-config))))
       (is (= "gpt-5" (:model builder-config)))
@@ -279,13 +298,12 @@
                                    :status :pending
                                    :execution-session-id sid}
                          :execution-session (valid-child-session sid)}))
-                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx child-session-id prompt]
-                                                                  (swap! prompts* conj {:session-id child-session-id :prompt prompt})
-                                                                  nil)
-                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
-                                                                                 {:content (let [resp (first @responses*)]
-                                                                                             (swap! responses* subvec 1)
-                                                                                             resp)})]
+                    psi.agent-session.prompt-control/prompt-execution-result-in! (fn [_ctx child-session-id prompt]
+                                                                                   (swap! prompts* conj {:session-id child-session-id :prompt prompt})
+                                                                                   {:execution-result/assistant-message
+                                                                                    {:content (let [resp (first @responses*)]
+                                                                                                (swap! responses* subvec 1)
+                                                                                                resp)}})]
         (let [result (workflow-execution/execute-run! ctx session-id "run-linear")
               run (workflow-runtime/workflow-run-in @(:state* ctx) "run-linear")]
           (is (= :completed (:status result)))
@@ -297,6 +315,20 @@
           (is (= ["ship it"
                   "Execute: planner output"]
                  (mapv :prompt @prompts*))))))))
+
+(deftest resolve-step-session-config-inherits-parent-prompt-mode-test
+  (testing "workflow child sessions inherit parent prompt mode into step session config"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state single-step-definition-with-meta)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "planner"
+                                                                   :run-id "run-mode-1"
+                                                                   :workflow-input {:input "plan it"}})]
+                       (assoc-in s [:agent-session :sessions session-id :data :prompt-mode] :prose))))
+          workflow-run (workflow-runtime/workflow-run-in @(:state* ctx) "run-mode-1")
+          config (workflow-execution/resolve-step-session-config ctx session-id workflow-run "step-1")]
+      (is (= :prose (:prompt-mode config))))))
 
 (deftest execute-run-preserves-parent-extension-prompt-contributions-test
   (testing "workflow child sessions inherit parent extension prompt contributions by default"
@@ -312,7 +344,6 @@
                         :enabled true
                         :created-at (java.time.Instant/parse "2026-04-22T12:00:00Z")
                         :updated-at (java.time.Instant/parse "2026-04-22T12:00:00Z")}
-          created* (atom nil)
           _ (swap! (:state* ctx)
                    (fn [state]
                      (let [[s _ _] (workflow-runtime/register-definition state planner-def)
@@ -321,31 +352,90 @@
                                                                    :workflow-input {:input "plan it"}})
                            s (assoc-in s [:agent-session :sessions session-id :data :tool-defs]
                                        [{:name "read" :description "Read" :parameters {:type "object" :properties {}}}])
+                           s (assoc-in s [:agent-session :sessions session-id :data :system-prompt-build-opts]
+                                       {:selected-tools ["read" "psi-tool"]})
                            s (assoc-in s [:agent-session :sessions session-id :data :prompt-contributions]
                                        [contribution])]
                        s)))]
-      (with-redefs [psi.agent-session.workflow-attempts/create-step-attempt-session!
-                    (fn [_ctx _parent-session-id opts]
-                      (let [sid (str (:workflow-step-id opts) "-child")
-                            child (assoc (valid-child-session sid)
-                                         :prompt-contributions [contribution]
-                                         :system-prompt "You are a planner.\n\ncommand: /work-on")]
-                        (reset! created* child)
-                        {:attempt {:attempt-id (str sid "-attempt")
-                                   :status :pending
-                                   :execution-session-id sid}
-                         :execution-session child}))
-                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx _child-session-id _prompt] nil)
-                    psi.agent-session.prompt-control/last-assistant-message-in (fn [_ctx _child-session-id]
-                                                                                 {:content "planner output"})]
+      (with-redefs [psi.agent-session.prompt-control/prompt-execution-result-in! (fn [_ctx _child-session-id _prompt]
+                                                                                   {:execution-result/assistant-message
+                                                                                    {:content "planner output"}})]
         (let [result (workflow-execution/execute-run! ctx session-id "run-ext-1")
-              child-sd @created*]
+              run (workflow-runtime/workflow-run-in @(:state* ctx) "run-ext-1")
+              child-id (get-in run [:step-runs "step-1" :attempts 0 :execution-session-id])
+              child-sd (get-in @(:state* ctx) [:agent-session :sessions child-id :data])
+              prepared (prompt-request/build-prepared-request
+                        ctx child-id
+                        {:turn-id "wf-child-proof"
+                         :user-message {:role "user"
+                                        :content [{:type :text :text "plan it"}]}})]
           (is (= :completed (:status result)))
           (is (= [contribution]
                  (mapv #(select-keys % [:id :ext-path :section :content :enabled :created-at :updated-at])
                        (:prompt-contributions child-sd))))
-          (is (str/includes? (prompt-request/effective-system-prompt child-sd)
-                             "command: /work-on")))))))
+          (is (str/includes? (:base-system-prompt child-sd) "λ engage(nucleus)."))
+          (is (= "You are a planner." (:developer-prompt child-sd)))
+          (is (str/includes? (:prepared-request/system-prompt prepared) "You are a planner."))
+          (is (str/includes? (:prepared-request/system-prompt prepared) "command: /work-on"))
+          (is (= (:prepared-request/system-prompt prepared)
+                 (get-in prepared [:prepared-request/provider-conversation :system-prompt]))))))))
+
+(deftest execute-run-selection-filters-rendered-prompt-and-tools-test
+  (testing "workflow child explicit prompt-component-selection filters rendered prompt content and provider tools"
+    (let [[ctx session-id] (create-session-context {:persist? false})
+          _ (swap! (:state* ctx)
+                   (fn [state]
+                     (let [[s _ _] (workflow-runtime/register-definition state workflow-selection-definition)
+                           [s _ _] (workflow-runtime/create-run s {:definition-id "planner-selection"
+                                                                   :run-id "run-selection-1"
+                                                                   :workflow-input {:input "plan it"}})]
+                       (-> s
+                           (assoc-in [:agent-session :sessions session-id :data :tool-defs]
+                                     [{:name "read" :description "Read"}
+                                      {:name "bash" :description "Bash"}])
+                           (assoc-in [:agent-session :sessions session-id :data :skills]
+                                     [{:name "testing-best-practices" :description "Testing"
+                                       :file-path "/s/SKILL.md"
+                                       :base-dir "/s"
+                                       :source :project
+                                       :disable-model-invocation false}])
+                           (assoc-in [:agent-session :sessions session-id :data :prompt-contributions]
+                                     [{:id "a"
+                                       :ext-path "/ext/a"
+                                       :content "A"
+                                       :enabled true
+                                       :created-at (java.time.Instant/parse "2026-04-22T12:00:00Z")
+                                       :updated-at (java.time.Instant/parse "2026-04-22T12:00:00Z")}])))))]
+      (with-redefs [psi.agent-session.prompt-control/prompt-execution-result-in!
+                    (fn [_ctx _child-session-id _prompt]
+                      {:execution-result/assistant-message
+                       {:content "planner output"}})]
+        (let [result   (workflow-execution/execute-run! ctx session-id "run-selection-1")
+              run      (workflow-runtime/workflow-run-in @(:state* ctx) "run-selection-1")
+              child-id (get-in run [:step-runs "step-1" :attempts 0 :execution-session-id])
+              child-sd (get-in @(:state* ctx) [:agent-session :sessions child-id :data])
+              prepared (prompt-request/build-prepared-request
+                        ctx child-id
+                        {:turn-id "wf-selection-proof"
+                         :user-message {:role "user"
+                                        :content [{:type :text :text "plan it"}]}})]
+          (is (= :completed (:status result)))
+          (is (= ["read"] (mapv :name (:tool-defs child-sd))))
+          (is (= ["testing-best-practices"] (mapv :name (:skills child-sd))))
+          (is (= {:agents-md? false
+                  :extension-prompt-contributions []
+                  :tool-names ["read"]
+                  :skill-names ["testing-best-practices"]
+                  :components #{:skills}
+                  :include-preamble? false
+                  :include-context-files? false
+                  :include-skills? true
+                  :include-runtime-metadata? false}
+                 (:prompt-component-selection child-sd)))
+          (is (not (str/includes? (:base-system-prompt child-sd) "λ engage(nucleus).")))
+          (is (str/includes? (:base-system-prompt child-sd) "testing-best-practices"))
+          (is (not (str/includes? (:prepared-request/system-prompt prepared) "A")))
+          (is (= ["read"] (mapv :name (:prepared-request/tools prepared)))))))))
 
 (deftest execute-run-with-judge-loop-test
   (testing "execute-run! handles a judge loop via the statechart runtime"
@@ -368,14 +458,14 @@
                                    :status :pending
                                    :execution-session-id sid}
                          :execution-session (valid-child-session sid)}))
-                    psi.agent-session.prompt-control/prompt-in! (fn [_ctx _sid _text] nil)
-                    psi.agent-session.prompt-control/last-assistant-message-in
-                    (fn [_ctx sid]
-                      (cond
-                        (str/includes? sid "step-1-planner") {:content "plan output"}
-                        (str/includes? sid "step-2-builder") {:content "build output"}
-                        (str/includes? sid "step-3-reviewer") {:content "review output"}
-                        :else {:content "unknown"}))
+                    psi.agent-session.prompt-control/prompt-execution-result-in!
+                    (fn [_ctx sid _text]
+                      {:execution-result/assistant-message
+                       (cond
+                         (str/includes? sid "step-1-planner") {:content "plan output"}
+                         (str/includes? sid "step-2-builder") {:content "build output"}
+                         (str/includes? sid "step-3-reviewer") {:content "review output"}
+                         :else {:content "unknown"})})
                     psi.agent-session.workflow-judge/execute-judge!
                     (fn [& _args]
                       (let [n (swap! judge-call-count* inc)]

@@ -1,0 +1,39 @@
+- [x] Inspect the current `/delegate` command handler versus `delegate-run`
+  - current handler calls `(delegate-run {:workflow workflow :prompt prompt :mode "async"})`
+  - inspected async completion path already supports chat injection via `:include_result_in_context true`
+  - inspected fallback path appends custom `delegate-result` entry only when chat injection is disabled
+- [x] Identify the canonical place to opt the command path into result-in-context delivery
+  - smallest fix is in the `/delegate` command handler arguments to `delegate-run`
+- [x] Implement the `/delegate` result-posting fix without introducing duplicate delivery
+  - passed `:include_result_in_context true` from the command path
+- [x] Add focused proof for the slash-command path specifically
+  - asserted immediate acknowledgement string still returns
+  - asserted async completion appends session-targeted messages into the originating session
+  - asserted the bridge shape matches current delivery semantics: synthetic user marker plus assistant result text
+  - asserted result content lands in the assistant message
+- [x] Verify fallback `delegate-result` append-entry is suppressed for successful `/delegate` completion
+- [x] Verify successful `/delegate` completion uses exactly one terminal delivery path for the result
+- [x] Verify background-job tracking still works as intended
+  - asserted background job starts for the delegated run
+  - asserted background job is marked terminal on completion
+- [x] Keep scope explicit
+  - did not broaden this task to failed/cancelled/timeout transcript injection
+- [x] Reduce command-path test brittleness
+  - captured/asserted the run-id from mocked `psi.workflow/create-run` instead of slicing it from the acknowledgement string
+- [x] Reduce timing sensitivity in the command-path async proof
+  - replaced fixed `Thread/sleep` waiting with a small observed-condition wait helper in the command-path test
+- [x] Consider a tiny intent comment at the `/delegate` callsite
+  - added a short comment noting that slash-command delegation is conversational and successful final results should return to the originating chat transcript
+- [x] Diagnose blank final-result propagation after observing an empty injected assistant message
+  - confirmed the symptom was deeper than delivery: workflow/judge runtime paths were rereading the journal after `prompt-in!` instead of using the exact assistant message from the completed turn result
+- [x] Route workflow/judge step execution through execution-result-returning prompt submission
+  - added `prompt-execution-result-in!` and a prompt-lifecycle opt-in so bounded workflow callers can stay on the canonical dispatch/runtime path while receiving the actual completed-turn execution result
+- [x] Use execution-result assistant messages directly in workflow step/judge result recording
+  - workflow statechart runtime and workflow judge now consume `:execution-result/assistant-message` directly instead of rereading via `last-assistant-message-in`
+- [x] Keep the transcript bridge defensive against blank results
+  - workflow-loader async completion and canonical workflow result projection now trim blank strings to nil so empty replies are not injected into chat
+- [x] Add focused regression coverage for the deeper propagation fix
+  - updated workflow statechart/judge/execution tests to stub `prompt-execution-result-in!`
+  - added canonical workflow + workflow-loader regression coverage for blank-result handling
+- [x] Fix the execution-result return seam in prompt preparation
+  - replaced the split `memory/recover-query` + `runtime/prompt-execute-and-record` effect pair with a combined execution-result-returning effect on the opt-in path so workflow callers receive the actual prompt execution result rather than the memory-recovery effect result

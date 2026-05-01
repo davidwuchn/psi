@@ -250,14 +250,21 @@
                         :session-name (str "workflow " step-id " attempt")
                         :tool-defs (:tool-defs step-config)
                         :thinking-level (:thinking-level step-config)}
-                 (:system-prompt step-config)
-                 (assoc :system-prompt (:system-prompt step-config))
+                 (:developer-prompt step-config)
+                 (assoc :developer-prompt (:developer-prompt step-config)
+                        :developer-prompt-source :explicit)
+
+                 (:prompt-mode step-config)
+                 (assoc :prompt-mode (:prompt-mode step-config))
 
                  (:skills step-config)
                  (assoc :skills (:skills step-config))
 
                  (:model step-config)
                  (assoc :model (:model step-config))
+
+                 (contains? step-config :prompt-component-selection)
+                 (assoc :prompt-component-selection (:prompt-component-selection step-config))
 
                  preloaded-messages
                  (assoc :preloaded-messages preloaded-messages)))]
@@ -280,8 +287,8 @@
                        (workflow-progression-recording/start-latest-attempt run-id step-id)
                        (workflow-progression-recording/increment-iteration-count run-id step-id))))
           (try
-            (prompt-control/prompt-in! ctx (:session-id execution-session) prompt)
-            (let [assistant-message (prompt-control/last-assistant-message-in ctx (:session-id execution-session))
+            (let [execution-result (prompt-control/prompt-execution-result-in! ctx (:session-id execution-session) prompt)
+                  assistant-message (:execution-result/assistant-message execution-result)
                   {:keys [turn/outcome]} (assistant-turn-classification assistant-message)
                   failure-payload (when (= :turn.outcome/error outcome)
                                     (execution-failure-payload (:session-id execution-session) assistant-message))]
