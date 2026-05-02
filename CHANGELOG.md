@@ -6,6 +6,8 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 
 ## [Unreleased]
 
+## [0.1.2049] - 2026-05-02
+
 ### Added
 - Extensions can close sessions via `close-session` and `close-session-tree` mutations.
 - Helper sessions from `auto-session-name` are now automatically closed after use.
@@ -40,6 +42,7 @@ Version scheme: `MAJOR.MINOR.PATCH` where PATCH = `git rev-list HEAD --count` at
 ### Fixed
 
 <!-- Comparison links -->
-[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2034...HEAD
+[Unreleased]: https://github.com/hugoduncan/psi/compare/v0.1.2049...HEAD
+[0.1.2049]: https://github.com/hugoduncan/psi/compare/v0.1.2034...v0.1.2049
 [0.1.2034]: https://github.com/hugoduncan/psi/compare/v0.1.2026...v0.1.2034
 [0.1.2026]: https://github.com/hugoduncan/psi/compare/v0.1.2021...v0.1.2026
