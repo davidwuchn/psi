@@ -5,6 +5,7 @@
             [cheshire.core :as json]
             [psi.ai.content :as ai-content]
             [psi.ai.models :as models]
+            [psi.ai.proxy :as proxy]
             [psi.ai.providers.anthropic.request-schema :as request-schema]
             [psi.ai.providers.anthropic.request-support :as request-support])
   (:import [java.io InputStream]
@@ -25,16 +26,13 @@
   "Coerce any value to a string; nil and false become \"\"."
   [x]
   (str (or x "")))
-
 (defn- valid-anthropic-tool-id?
   [id]
   (and (string? id)
        (boolean (re-matches anthropic-tool-id-pattern id))))
-
 (defn- fallback-anthropic-tool-id
   []
   (str "tool_" (UUID/randomUUID)))
-
 (defn- ensure-anthropic-tool-id
   "Return an Anthropic-safe tool id (alnum, underscore, hyphen only).
    Generates a fallback when id is nil/blank/invalid."
@@ -678,7 +676,9 @@
 
 (defn- stream-response
   [url request]
-  (http/post url (merge request {:as :stream :throw-exceptions false})))
+  (http/post url (merge request
+                        (proxy/request-proxy-options url)
+                        {:as :stream :throw-exceptions false})))
 
 (defn- error-status?
   [status]
